@@ -1,8 +1,17 @@
-KAFKA_HOME ?= $(HOME)/mine/projects/wed/kafka_2.13-4.3.1
+# Same path on the dev box and the server, so nothing has to be overridden per
+# machine. `make KAFKA_HOME=... logs-kafka` if yours lives elsewhere.
+KAFKA_HOME ?= /opt/kafka
+
+# Valkey is a drop-in fork of Redis, so the CLI is wire-compatible and only the
+# binary and unit names differ. Detected rather than hardcoded: the server runs
+# valkey while some dev machines still have redis, and the same Makefile has to
+# work on both. Override with `make VALKEY=... status` if yours is elsewhere.
+VALKEY ?= $(shell command -v valkey-cli 2>/dev/null || command -v redis-cli 2>/dev/null || echo valkey-cli)
+VALKEY_UNIT ?= $(shell systemctl list-unit-files 2>/dev/null | grep -qE '^valkey\.service' && echo valkey || echo redis-server)
 DB  ?= postgres://postgres:postgres@localhost:5432/venue?sslmode=disable
 API ?= http://localhost:8080
 
-.PHONY: run worker build start stop restart status logs logs-all logs-api logs-worker logs-error logs-warn logs-debug logs-http logs-clear unlimit limits logs-db logs-redis logs-kafka errors otp postman postman-test test race vet fmt tidy check
+.PHONY: run worker build start stop restart status logs logs-all logs-api logs-worker logs-error logs-warn logs-debug logs-http logs-clear unlimit limits logs-db logs-valkey logs-kafka errors otp postman postman-test test race vet fmt tidy check
 
 ## --- running ---
 run:    ; go run ./cmd/api
@@ -54,7 +63,7 @@ status:
 	@n=$$(echo "$(PIDS_WORKER)" | wc -w); \
 		[ "$$n" = 1 ] && echo "worker: running" || { [ "$$n" = 0 ] && echo "worker: stopped" || echo "worker: running ($$n copies - run 'make restart')"; }
 	@pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 && echo "postgres: up" || echo "postgres: DOWN"
-	@redis-cli ping >/dev/null 2>&1 && echo "redis:    up" || echo "redis:    DOWN"
+	@$(VALKEY) ping >/dev/null 2>&1 && echo "valkey:   up" || echo "valkey:   DOWN"
 	@(ss -ltn 2>/dev/null | grep -q 9092) && echo "kafka:    up" || echo "kafka:    DOWN"
 
 ## --- logs ---
@@ -96,21 +105,21 @@ logs-clear: ; @: > $(LOG) && echo "cleared $(LOG)"
 # but exhausted in a minute of manual Postman testing. This clears the
 # counters; it does not disable the limiter.
 unlimit:
-	@n=$$(redis-cli --scan --pattern 'rate_limit:*' | wc -l); \
-		redis-cli --scan --pattern 'rate_limit:*' | xargs -r redis-cli DEL >/dev/null; \
+	@n=$$($(VALKEY) --scan --pattern 'rate_limit:*' | wc -l); \
+		$(VALKEY) --scan --pattern 'rate_limit:*' | xargs -r $(VALKEY) DEL >/dev/null; \
 		echo "cleared $$n rate-limit counter(s)"
 
 # What is currently counted against you, and for how long.
 limits:
-	@redis-cli --scan --pattern 'rate_limit:*' | sort | while read k; do \
-		printf '%-40s %4s  expires in %ss\n' "$$k" "$$(redis-cli GET $$k)" "$$(redis-cli TTL $$k)"; \
+	@$(VALKEY) --scan --pattern 'rate_limit:*' | sort | while read k; do \
+		printf '%-40s %4s  expires in %ss\n' "$$k" "$$($(VALKEY) GET $$k)" "$$($(VALKEY) TTL $$k)"; \
 	done; echo "(limits: register 5/hr, login 10/15min, otp-resend 3/15min, global 100/min)"
 
 # Infrastructure, kept separate on purpose - none of it belongs in `make logs`.
 logs-db:
 	@sudo tail -f /var/log/postgresql/postgresql-*-main.log
-logs-redis:
-	@sudo journalctl -u redis-server -f
+logs-valkey:
+	@sudo journalctl -u $(VALKEY_UNIT) -f
 logs-kafka:
 	@tail -f $(KAFKA_HOME)/logs/server.log
 

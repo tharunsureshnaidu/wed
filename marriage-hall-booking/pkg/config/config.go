@@ -44,8 +44,12 @@ func Load() Config {
 			env("DB_PORT", "5432"),
 			env("DB_NAME", "venue"),
 		),
-		RedisAddr:    env("REDIS_ADDR", "localhost:6379"),
-		KafkaBrokers: strings.Split(env("KAFKA_BROKERS", "localhost:9092"), ","),
+		RedisAddr: env("REDIS_ADDR", "localhost:6379"),
+		// KAFKA_BROKERS present but empty means "no Kafka", which env() cannot
+		// express - it treats empty as unset and returns the fallback. Checked
+		// here so a deployment without Kafka can turn publishing off rather
+		// than logging a dropped event for every booking.
+		KafkaBrokers: kafkaBrokers(),
 
 		JWTSecret:        env("JWT_SECRET", ""),
 		JWTExpiry:        ms(env("JWT_EXPIRATION_MS", "900000")),            // 15 min
@@ -55,6 +59,19 @@ func Load() Config {
 		WebhookSecret:    env("PAYMENT_WEBHOOK_SECRET", ""),
 		CORSOrigins:      strings.Split(env("CORS_ORIGINS", "http://localhost:3000"), ","),
 	}
+}
+
+// kafkaBrokers reads KAFKA_BROKERS, distinguishing "set to empty" (Kafka
+// disabled) from "not set at all" (use the local default).
+func kafkaBrokers() []string {
+	v, ok := os.LookupEnv("KAFKA_BROKERS")
+	if !ok {
+		return []string{"localhost:9092"}
+	}
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	return strings.Split(v, ",")
 }
 
 func env(key, fallback string) string {

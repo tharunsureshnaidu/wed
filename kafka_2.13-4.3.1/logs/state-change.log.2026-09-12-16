@@ -1,3 +1,0 @@
-[2026-09-12 16:54:27,770] INFO [Broker id=1] Transitioning 1 partition(s) to local leaders. (state.change.logger)
-[2026-09-12 16:54:27,773] INFO [Broker id=1] Creating new partition orders-0 with topic id zDIdkgmESHO_U5N8V50n9g. (state.change.logger)
-[2026-09-12 16:54:27,799] INFO [Broker id=1] Leader orders-0 with topic id Some(zDIdkgmESHO_U5N8V50n9g) starts at leader epoch 0 from offset 0 with partition epoch 0, high watermark 0, ISR [1], adding replicas [] and removing replicas [] . Previous leader None and previous leader epoch was -1. (state.change.logger)
