@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking (Go)",
-    "description": "134 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 15 minutes; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
+    "description": "136 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 15 minutes; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -3030,7 +3030,7 @@
       "description": "Date-range price overrides - weekends, peak season - which take precedence over the base price when a booking is priced."
     },
     {
-      "name": "Facility Media (7)",
+      "name": "Facility Media (9)",
       "item": [
         {
           "name": "Add image",
@@ -3061,7 +3061,7 @@
                 }
               ]
             },
-            "description": "Creates or acts on a facility media record.",
+            "description": "Records an image by URL - for a file already hosted somewhere. To upload an actual file, use the multipart request below, which stores it in S3.\n\nThe first image on a facility becomes the cover; `isCover` moves it, and exactly one image holds it at a time.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -3092,6 +3092,71 @@
                   "const d = pm.response.json().data;",
                   "if (d) pm.collectionVariables.set(\"imageId\", d.id);",
                   "",
+                  "pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b).to.have.property(\"success\");",
+                  "    pm.expect(b).to.have.property(\"message\");",
+                  "    pm.expect(b).to.have.property(\"timestamp\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload image (multipart)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/facilities/:id/images",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "facilities",
+                ":id",
+                "images"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}"
+                }
+              ]
+            },
+            "description": "Uploads an actual image file, which is stored in S3 and served from there - unlike the JSON form above, which only records a URL somebody else is hosting.\n\nThe type is sniffed from the file's bytes, not its name: a .png that is really HTML is rejected. JPEG, PNG, WebP and GIF, up to 10MB.\n\n**Pick a file in the Body tab before sending** - a collection cannot carry one.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": null,
+                  "description": "The file to upload"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
                   "pm.test(\"returns the ApiResponse envelope\", function () {",
                   "    const b = pm.response.json();",
                   "    pm.expect(b).to.have.property(\"success\");",
@@ -3261,7 +3326,7 @@
                 }
               ]
             },
-            "description": "Creates or acts on a facility media record.",
+            "description": "Records a video by URL. To upload an actual file, use the multipart request below.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -3292,6 +3357,71 @@
                   "const d = pm.response.json().data;",
                   "if (d) pm.collectionVariables.set(\"videoId\", d.id);",
                   "",
+                  "pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b).to.have.property(\"success\");",
+                  "    pm.expect(b).to.have.property(\"message\");",
+                  "    pm.expect(b).to.have.property(\"timestamp\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload video (multipart)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/facilities/:id/videos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "facilities",
+                ":id",
+                "videos"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}"
+                }
+              ]
+            },
+            "description": "Uploads an actual video file to S3. MP4 or MOV, up to 200MB.\n\n**Pick a file in the Body tab before sending.**",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "video",
+                  "type": "file",
+                  "src": null,
+                  "description": "The file to upload"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
                   "pm.test(\"returns the ApiResponse envelope\", function () {",
                   "    const b = pm.response.json();",
                   "    pm.expect(b).to.have.property(\"success\");",
@@ -3481,7 +3611,7 @@
           ]
         }
       ],
-      "description": "Images and videos, plus block/unblock. Uploads record a URL; there is no object store wired up locally."
+      "description": "Images and videos, plus block/unblock. Each accepts either a JSON {url} for a file hosted elsewhere, or a multipart file upload that is stored in S3 (local disk when AWS_S3_BUCKET is unset)."
     },
     {
       "name": "Favourites (9)",
@@ -7302,7 +7432,7 @@
                 }
               ]
             },
-            "description": "Deletes the cleanup (destructive) record. Soft delete where the row is still referenced.",
+            "description": "Removes the image row and the stored file behind it. A row recorded by URL leaves the remote file alone - only objects this API uploaded are deleted.",
             "auth": {
               "type": "bearer",
               "bearer": [

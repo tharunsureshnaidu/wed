@@ -87,21 +87,68 @@ have Redis.
 
 ---
 
-## 4. No Kafka
+## 4. Kafka
 
-Set `KAFKA_BROKERS=` (empty) in `.env`. Publishing then becomes a no-op: no
-connection attempts, no retry warnings, no errors on the request path. Verified
-with the full 134-request API suite — 0 failures, 0 Kafka lines in the log.
+Kafka 4.x runs in KRaft mode — no ZooKeeper. It needs a JVM:
+
+```bash
+sudo dnf install -y java-21-amazon-corretto-headless
+```
+
+The tarball is already at `/opt/kafka` (that is what `KAFKA_HOME` in the
+Makefile points at). Format the storage directory once, then start it:
+
+```bash
+cd /opt/kafka
+sudo ./bin/kafka-storage.sh format \
+     -t "$(./bin/kafka-storage.sh random-uuid)" \
+     -c config/server.properties --standalone
+```
+
+Run it under systemd so it survives a reboot:
+
+```bash
+sudo tee /etc/systemd/system/kafka.service >/dev/null <<'EOF'
+[Unit]
+Description=Kafka
+After=network.target
+
+[Service]
+Type=simple
+Environment=KAFKA_HEAP_OPTS=-Xmx512M -Xms256M
+ExecStart=/opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+ExecStop=/opt/kafka/bin/kafka-server-stop.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now kafka
+```
+
+The heap cap matters on a small instance: Kafka's default is 1GB, which on a
+t3.micro/t4g.micro leaves nothing for Postgres and the API.
+
+Check it:
+
+```bash
+ss -ltn | grep 9092          # listening
+/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+```
+
+Topics are created on demand — there is no separate topic-creation step.
+
+**Running without Kafka is supported.** Set `KAFKA_BROKERS=` (empty) in `.env`
+and publishing becomes a no-op: no connection attempts, no retry warnings, no
+errors on the request path (verified with the full 134-request suite — 0
+failures, 0 Kafka lines logged). Don't run `cmd/worker` in that case; it only
+consumes topics.
 
 It must be set **in `.env`**, not exported in the shell: `.env` deliberately
 overrides the process environment, so an exported value is ignored.
-
-Do not run `cmd/worker` in this setup — it exists only to consume Kafka topics
-and will otherwise sit logging `kafka unreachable, retrying`. The API is the
-whole application without it.
-
-If you moved the Kafka tarball to `/opt/kafka`, it is simply unused — nothing
-in the repo references it.
 
 ---
 
@@ -113,9 +160,8 @@ sudo cp -r ~/wed/marriage-hall-booking /opt/venue/app
 sudo chown -R venue:venue /opt/venue
 cd /opt/venue/app
 sudo -u venue /usr/local/go/bin/go build -o bin/api ./cmd/api
+sudo -u venue /usr/local/go/bin/go build -o bin/worker ./cmd/worker
 ```
-
-Only the API binary is needed — see §4.
 
 ### Configuration
 
@@ -129,7 +175,7 @@ sudo -u venue vi /opt/venue/app/.env
 |---|---|
 | `DB_PASSWORD` | as set in §2 |
 | `JWT_SECRET` | **start-up fails without it** — `openssl rand -base64 48` |
-| `KAFKA_BROKERS` | **empty** — disables publishing (§4) |
+| `KAFKA_BROKERS` | `localhost:9092`, or empty to run without Kafka (§4) |
 | `PAYMENT_WEBHOOK_SECRET` | must match the gateway or webhooks are rejected |
 | `AWS_S3_BUCKET` / `AWS_S3_REGION` | empty means media goes to `./uploads` and is lost on redeploy |
 | `APP_ENV` | `production` |
@@ -163,9 +209,28 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+sudo tee /etc/systemd/system/venue-worker.service >/dev/null <<'EOF'
+[Unit]
+Description=Venue booking worker
+After=network.target postgresql.service valkey.service kafka.service
+
+[Service]
+User=venue
+WorkingDirectory=/opt/venue/app
+EnvironmentFile=/opt/venue/app/.env
+ExecStart=/opt/venue/app/bin/worker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 sudo systemctl daemon-reload
-sudo systemctl enable --now venue-api
+sudo systemctl enable --now venue-api venue-worker
 ```
+
+Skip the worker unit entirely if you set `KAFKA_BROKERS=` empty.
 
 `WorkingDirectory` matters: with local storage the app writes to `./uploads`
 relative to it.
@@ -219,7 +284,8 @@ reachable solely through nginx.
 cd /opt/venue/app
 sudo -u venue git pull
 sudo -u venue /usr/local/go/bin/go build -o bin/api ./cmd/api
-sudo systemctl restart venue-api
+sudo -u venue /usr/local/go/bin/go build -o bin/worker ./cmd/worker
+sudo systemctl restart venue-api venue-worker
 ```
 
 Migrations run on start-up and are forward-only — there is no down step, so take

@@ -885,6 +885,15 @@ DESCRIPTIONS = {
         "Uploads are stored and served by the API; the first becomes the cover.\n\n"
         "Captures facilityId, and hallId or hotelId, for the folders that follow.",
     "GET /api/v1/facilities": "Public browse, paged and filterable by type, city and free text.",
+    "POST /api/v1/facilities/{id}/images": "Records an image by URL - for a file already "
+        "hosted somewhere. To upload an actual file, use the multipart request below, "
+        "which stores it in S3.\n\nThe first image on a facility becomes the cover; "
+        "`isCover` moves it, and exactly one image holds it at a time.",
+    "POST /api/v1/facilities/{id}/videos": "Records a video by URL. To upload an actual "
+        "file, use the multipart request below.",
+    "DELETE /api/v1/facilities/{id}/images/{childId}": "Removes the image row and the "
+        "stored file behind it. A row recorded by URL leaves the remote file alone - only "
+        "objects this API uploaded are deleted.",
     "GET /api/v1/halls/{id}": "One hall, with amenities and images. `startingPrice` is its "
         "base price per day.\n\nThe detail fields also come grouped for the venue screen: "
         "`location` (city, state, country, fullAddress, latitude, longitude), `rating` "
@@ -1039,8 +1048,9 @@ FOLDER_DESC = {
     "Facility Policies": "Cancellation terms. Refund amounts are computed from these.",
     "Facility Pricing Rules": "Date-range price overrides - weekends, peak season - which "
                               "take precedence over the base price when a booking is priced.",
-    "Facility Media": "Images and videos, plus block/unblock. Uploads record a URL; there is "
-                      "no object store wired up locally.",
+    "Facility Media": "Images and videos, plus block/unblock. Each accepts either a JSON "
+                      "{url} for a file hosted elsewhere, or a multipart file upload that "
+                      "is stored in S3 (local disk when AWS_S3_BUCKET is unset).",
     "Favourites": "The signed-in user's saved facilities.",
     "Bookings": "Creating and managing bookings. Needs hallId or hotelId, and a customer "
                 "token. Prices are always computed server-side.",
@@ -1256,6 +1266,45 @@ def main():
         # proves the toggle actually reverses. The unblock also has to happen
         # before Cleanup: a blocked user's access token is revoked, which would
         # leave logout unauthenticated.
+        # The image and video endpoints take a real file upload as well as the
+        # JSON {url} form. Postman cannot carry a file's bytes in a collection,
+        # so `src` is left null: pick a file in the request's Body tab before
+        # sending. Kept as separate requests so the JSON form still runs
+        # unattended in the automated pass.
+        if folder == "Facility Media":
+            for suffix, field, name, desc in (
+                ("image", "image", "Upload image (multipart)",
+                 "Uploads an actual image file, which is stored in S3 and served from "
+                 "there - unlike the JSON form above, which only records a URL somebody "
+                 "else is hosting.\n\nThe type is sniffed from the file's bytes, not its "
+                 "name: a .png that is really HTML is rejected. JPEG, PNG, WebP and GIF, "
+                 "up to 10MB.\n\n**Pick a file in the Body tab before sending** - a "
+                 "collection cannot carry one."),
+                ("video", "video", "Upload video (multipart)",
+                 "Uploads an actual video file to S3. MP4 or MOV, up to 200MB.\n\n"
+                 "**Pick a file in the Body tab before sending.**"),
+            ):
+                path = "/api/v1/facilities/{id}/" + suffix + "s"
+                v = {
+                    "name": name,
+                    "request": build_request(folder, "POST", path),
+                    "response": [],
+                    "event": [{"listen": "test", "script": {"type": "text/javascript",
+                        "exec": COMMON_TEST.split("\n")}}],
+                }
+                v["request"]["body"] = {"mode": "formdata", "formdata": [
+                    {"key": field, "type": "file", "src": None,
+                     "description": "The file to upload"},
+                ]}
+                v["request"]["header"] = [
+                    h for h in v["request"].get("header", [])
+                    if h.get("key") != "Content-Type"
+                ]
+                v["request"]["description"] = desc
+                at = next((i for i, x in enumerate(sub)
+                           if x["name"] == "Add " + suffix), len(sub) - 1)
+                sub.insert(at + 1, v)
+
         if folder == "Admin":
             base = "POST /api/v1/admin/block"
             at = next(i for i, x in enumerate(sub) if x["name"] == "Block user")

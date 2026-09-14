@@ -1,6 +1,6 @@
 # Marriage Hall & Hotel Booking — Go
 
-Go rewrite of the Java/Spring monolith. No Docker: PostgreSQL, Redis and Kafka
+Go rewrite of the Java/Spring monolith. No Docker: PostgreSQL, Valkey and Kafka
 run as ordinary local services.
 
 ## Running
@@ -18,7 +18,7 @@ Infrastructure (already running on this machine):
 | Service    | Address          | Notes                    |
 |------------|------------------|--------------------------|
 | PostgreSQL | `localhost:5432` | database `venue`         |
-| Redis      | `localhost:6379` | rate limiting            |
+| Valkey     | `localhost:6379` | rate limiting (Redis-compatible) |
 | Kafka      | `localhost:9092` | domain events            |
 | API        | `localhost:8080` | |
 | Worker     | —                | background process       |
@@ -82,11 +82,37 @@ hardcoded password hash — a known-credential account in every fresh database.
 handler can string-match a constraint name, and targets an `app_auth` schema
 that does not exist here.
 
+## Media
+
+Facility images and videos accept either a JSON `{url}` for a file hosted
+elsewhere, or a multipart file upload. Uploads go to S3 when `AWS_S3_BUCKET` is
+set and to `./uploads` otherwise; `pkg/storage` picks the backend and start-up
+fails rather than silently falling back, since a deployment writing media to a
+container filesystem looks healthy while losing every upload on redeploy.
+
+Object keys match the Java service exactly, so media written by either stack
+resolves: `vendors/vendor-{vendorId}/venue-{facilityId}/gallery/{uuid}.{ext}`,
+`.../videos/...`, `venues/{facilityId}/...` when a facility has no vendor.
+
+The type is sniffed from the file's bytes, not its name or its declared
+Content-Type — both are caller input, and the file is served back from this
+origin. Images 10MB, video 200MB, documents 20MB, as in Java.
+
+Not yet ported: Java re-encodes images server-side (1920px, JPEG q=0.82), which
+cuts stored bytes 80-90%. Go stores the original.
+
 ## API coverage
 
-Every endpoint in `postman_collection.json` (107) and every public Java
-controller route (110) is implemented. Verified by diffing the route tables, not
-by inspection.
+Every route registered in the Go source appears in `postman_collection.json`
+(136 requests across 24 folders), and every public Java controller route is
+implemented. Verified by diffing the extracted route tables and running the
+collection, not by inspection.
+
+The 25 Java routes under `/api/v1/internal/*` are deliberately not ported:
+Java's own comment marks them service-to-service, called by the admin service's
+Feign client and never routed through the gateway. In a single binary they are
+direct function calls; exposing them would add 25 unauthenticated endpoints
+serving user and revenue data.
 
 **Search** runs on PostgreSQL with trigram indexes rather than Elasticsearch,
 which is not available here; recent searches, recently-viewed and trending use
@@ -109,9 +135,8 @@ venue, one per user per facility, and keep `facilities.avg_rating` /
 These need credentials or services this machine does not have. The endpoints,
 storage and rules are real; only the outbound integration is missing:
 
-- **Media** — image/video endpoints record URLs of already-hosted files
-  (ordering, cover-image and ownership rules all work). There is no S3 uploader,
-  so the caller supplies the URL. Same for quote attachments.
+- **Quote attachments** — recorded by URL; the caller supplies it. Facility
+  images and videos are no longer in this list: they upload to S3 (see below).
 - **Email/SMS delivery** — the worker consumes the events and logs what it
   would send. Topics, offsets and consumers are real; only delivery is a stub.
 - **Payment gateway** — a `MOCK` gateway issues order ids and accepts
