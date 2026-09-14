@@ -1,0 +1,498 @@
+package repository
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var (
+	ErrNotFound = errors.New("not found")
+	ErrNotOwner = errors.New("not owner")
+)
+
+type Repo struct{ db *pgxpool.Pool }
+
+func New(db *pgxpool.Pool) *Repo { return &Repo{db: db} }
+
+func (r *Repo) Pool() *pgxpool.Pool { return r.db }
+
+type Facility struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+
+	// Java's FacilityDTO exposes the owner's phone and the vendor profile id
+	// alongside the owner id; clients show them on the listing page.
+	OwnerID          int64   `json:"ownerId"`
+	OwnerPhoneNumber *string `json:"ownerPhoneNumber"`
+	VendorID         *string `json:"vendorId"`
+
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	City        *string `json:"city"`
+	// fullAddress/zipcode, not street/zipCode: these names are the client
+	// contract, and the column names follow Java's entity.
+	FullAddress *string  `json:"fullAddress"`
+	State       *string  `json:"state"`
+	Zipcode     *string  `json:"zipcode"`
+	Country     *string  `json:"country"`
+	Lat         *float64 `json:"lat"`
+	Lng         *float64 `json:"lng"`
+
+	Status string `json:"status"`
+	// Lombok renders boolean getters without the "is" prefix, so Java sends
+	// verified/featured. Keep both spellings: the old ones shipped already.
+	Verified    bool    `json:"verified"`
+	Featured    bool    `json:"featured"`
+	IsVerified  bool    `json:"isVerified"`
+	IsFeatured  bool    `json:"isFeatured"`
+	AvgRating   float64 `json:"avgRating"`
+	ReviewCount int     `json:"reviewCount"`
+
+	// Hall: base price per day. Hotel: cheapest room type. Computed, not stored.
+	StartingPrice *float64 `json:"startingPrice"`
+
+	StarRating   *int    `json:"starRating"`
+	CheckInTime  *string `json:"checkInTime"`
+	CheckOutTime *string `json:"checkOutTime"`
+
+	CapacityPax      *int     `json:"capacityPax"`
+	AreaSqft         *int     `json:"areaSqft"`
+	BasePricePerDay  *float64 `json:"basePricePerDay"`
+	SeatingCapacity  *int     `json:"seatingCapacity"`
+	FloatingCapacity *int     `json:"floatingCapacity"`
+	MinBookingSize   *int     `json:"minBookingSize"`
+
+	Amenities []Amenity `json:"amenities"`
+	Images    []Image   `json:"images"`
+	// Reviews are returned with the detail read only (never the list, which
+	// would be one query per row): the detail page shows them, and avgRating /
+	// reviewCount above are the summary the list needs.
+	Reviews []Review `json:"reviews,omitempty"`
+}
+
+// MarshalJSON adds the grouped blocks the venue detail screen reads -
+// location, rating, price, coordinates - on top of the flat fields, which stay
+// exactly as they were so existing callers keep working.
+//
+// ponytail: a marshaller, not a second DTO and no extra queries; every value
+// below is already loaded.
+func (f Facility) MarshalJSON() ([]byte, error) {
+	type raw Facility // avoids recursing into this method
+	return json.Marshal(struct {
+		raw
+		Location    location    `json:"location"`
+		Rating      rating      `json:"rating"`
+		Price       *price      `json:"price"`
+		Coordinates *coordinate `json:"coordinates"`
+	}{
+		raw:         raw(f),
+		Location:    location{f.City, f.State, f.Country, f.FullAddress, f.Lat, f.Lng},
+		Rating:      rating{f.AvgRating, f.ReviewCount},
+		Price:       f.price(),
+		Coordinates: f.coordinates(),
+	})
+}
+
+type location struct {
+	City        *string  `json:"city"`
+	State       *string  `json:"state"`
+	Country     *string  `json:"country"`
+	FullAddress *string  `json:"fullAddress"`
+	Latitude    *float64 `json:"latitude"`
+	Longitude   *float64 `json:"longitude"`
+}
+
+type rating struct {
+	Value       float64 `json:"value"`
+	ReviewCount int     `json:"reviewCount"`
+}
+
+type price struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+	Period   string  `json:"period"`
+}
+
+type coordinate struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+// price reports the headline figure. A hotel prices per night (its cheapest
+// room type) and a hall per day, which is what StartingPrice already resolves
+// to. Null when there is no price yet - a hotel with no room types - rather
+// than a misleading zero.
+func (f Facility) price() *price {
+	if f.StartingPrice == nil {
+		return nil
+	}
+	period := "DAY"
+	if f.Type == "HOTEL" {
+		period = "NIGHT"
+	}
+	// ponytail: every amount in this system is rupees; add a currency column
+	// if a venue ever prices in something else.
+	return &price{Amount: *f.StartingPrice, Currency: "INR", Period: period}
+}
+
+// coordinates is null unless the venue has both, so a client never plots a
+// pin at (0,0) off the coast of Africa for a venue that was never geocoded.
+func (f Facility) coordinates() *coordinate {
+	if f.Lat == nil || f.Lng == nil {
+		return nil
+	}
+	return &coordinate{Latitude: *f.Lat, Longitude: *f.Lng}
+}
+
+// Review is the subset of a review the facility detail page shows.
+type Review struct {
+	ID        string    `json:"id"`
+	UserID    int64     `json:"userId"`
+	UserName  string    `json:"userName"`
+	Rating    int       `json:"rating"`
+	Title     *string   `json:"title"`
+	Comment   *string   `json:"comment"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type Amenity struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Code           *string `json:"code"`
+	ApplicableType string  `json:"applicableType"`
+}
+
+// MarshalJSON adds `icon`, derived from the code rather than stored: the
+// amenities.icon column exists but is NULL for every row, so reading it would
+// send null to clients that need an icon name for all 40 amenities.
+//
+// ponytail: derived, not a column. If a specific amenity ever needs an icon
+// that is not its code (front-desk for 24_HOUR_FRONT_DESK), populate
+// amenities.icon and prefer it here.
+func (a Amenity) MarshalJSON() ([]byte, error) {
+	type raw Amenity // avoids recursing into this method
+	return json.Marshal(struct {
+		raw
+		Icon string `json:"icon"`
+	}{raw(a), a.icon()})
+}
+
+func (a Amenity) icon() string {
+	if a.Code == nil || *a.Code == "" {
+		// Fall back to the name, so an amenity added without a code still
+		// gets an icon rather than an empty string.
+		return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(a.Name), " ", "-"))
+	}
+	return strings.ToLower(strings.ReplaceAll(*a.Code, "_", "-"))
+}
+
+type Image struct {
+	ID        string `json:"id"`
+	URL       string `json:"url"`
+	IsCover   bool   `json:"isCover"`
+	SortOrder int    `json:"sortOrder"`
+}
+
+const facilityCols = `f.id, f.owner_id, u.phone_number, f.vendor_id, f.name, f.description,
+	f.type, f.city, f.full_address, f.state, f.zipcode, f.country, f.lat, f.lng,
+	f.status, f.is_verified, f.is_featured, COALESCE(f.avg_rating,0), COALESCE(f.review_count,0),
+	f.star_rating, f.check_in_time, f.check_out_time, f.capacity_pax, f.area_sqft,
+	f.base_price_per_day, f.seating_capacity, f.floating_capacity, f.min_booking_size,
+	CASE WHEN f.type = 'MARRIAGE_HALL' THEN f.base_price_per_day
+	     ELSE (SELECT MIN(rt.base_price_per_night) FROM room_types rt
+	            WHERE rt.facility_id = f.id AND rt.is_deleted = FALSE)
+	END`
+
+// facilityFrom joins the owner so ownerPhoneNumber comes back in the same read.
+const facilityFrom = ` FROM facilities f JOIN users u ON u.id = f.owner_id`
+
+func scanFacility(row pgx.Row) (*Facility, error) {
+	var f Facility
+	err := row.Scan(&f.ID, &f.OwnerID, &f.OwnerPhoneNumber, &f.VendorID, &f.Name, &f.Description,
+		&f.Type, &f.City, &f.FullAddress, &f.State, &f.Zipcode, &f.Country, &f.Lat, &f.Lng,
+		&f.Status, &f.IsVerified, &f.IsFeatured,
+		&f.AvgRating, &f.ReviewCount, &f.StarRating, &f.CheckInTime, &f.CheckOutTime,
+		&f.CapacityPax, &f.AreaSqft, &f.BasePricePerDay, &f.SeatingCapacity,
+		&f.FloatingCapacity, &f.MinBookingSize, &f.StartingPrice)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	f.Verified, f.Featured = f.IsVerified, f.IsFeatured
+	f.Amenities, f.Images = []Amenity{}, []Image{}
+	return &f, err
+}
+
+type CreateInput struct {
+	OwnerID     int64
+	Name        string
+	Description *string
+	Type        string
+	City        *string
+	FullAddress *string
+	State       *string
+	Zipcode     *string
+	Country     *string
+	Lat         *float64
+	Lng         *float64
+
+	StarRating   *int
+	CheckInTime  *string
+	CheckOutTime *string
+
+	CapacityPax      *int
+	AreaSqft         *int
+	BasePricePerDay  *float64
+	SeatingCapacity  *int
+	FloatingCapacity *int
+	MinBookingSize   *int
+}
+
+func (r *Repo) Create(ctx context.Context, in CreateInput) (*Facility, error) {
+	var id string
+	err := r.db.QueryRow(ctx,
+		`INSERT INTO facilities (owner_id, name, description, type, city, full_address, state,
+		    zipcode, country, lat, lng, star_rating, check_in_time, check_out_time, capacity_pax,
+		    area_sqft, base_price_per_day, seating_capacity, floating_capacity, min_booking_size)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		 RETURNING id`,
+		in.OwnerID, in.Name, in.Description, in.Type, in.City, in.FullAddress, in.State,
+		in.Zipcode, in.Country, in.Lat, in.Lng, in.StarRating, in.CheckInTime, in.CheckOutTime,
+		in.CapacityPax, in.AreaSqft, in.BasePricePerDay, in.SeatingCapacity,
+		in.FloatingCapacity, in.MinBookingSize).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	// Link the listing to the owner's vendor business, as Java does on create.
+	// A vendor row is guaranteed for non-admin callers (see VendorOf); an admin
+	// creating a listing has none, and vendor_id stays NULL - a valid state.
+	if _, err := r.db.Exec(ctx,
+		`UPDATE facilities SET vendor_id = v.id FROM vendors v
+		 WHERE facilities.id = $1 AND v.user_id = $2`, id, in.OwnerID); err != nil {
+		return nil, err
+	}
+	return r.Get(ctx, id)
+}
+
+func (r *Repo) Get(ctx context.Context, id string) (*Facility, error) {
+	f, err := scanFacility(r.db.QueryRow(ctx,
+		`SELECT `+facilityCols+facilityFrom+` WHERE f.id = $1 AND f.is_deleted = FALSE`, id))
+	if err != nil {
+		return nil, err
+	}
+	if f.Amenities, err = r.amenitiesOf(ctx, id); err != nil {
+		return nil, err
+	}
+	if f.Images, err = r.imagesOf(ctx, id); err != nil {
+		return nil, err
+	}
+	if f.Reviews, err = r.reviewsOf(ctx, id); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// reviewsOf returns the most recent reviews for the detail page. Capped rather
+// than unbounded: a popular venue with thousands of reviews would otherwise
+// make its own detail response enormous. Full history is paged at
+// GET /api/v1/reviews/facility/{id}.
+func (r *Repo) reviewsOf(ctx context.Context, id string) ([]Review, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT rv.id, rv.user_id, u.full_name, rv.rating, rv.title, rv.comment, rv.created_at
+		   FROM reviews rv JOIN users u ON u.id = rv.user_id
+		  WHERE rv.facility_id = $1 AND rv.is_deleted = FALSE
+		  ORDER BY rv.created_at DESC LIMIT 20`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Review{}
+	for rows.Next() {
+		var x Review
+		if err := rows.Scan(&x.ID, &x.UserID, &x.UserName, &x.Rating,
+			&x.Title, &x.Comment, &x.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// HasVendor reports whether the user has created their vendor business.
+// Java refuses facility creation without one (VENDOR_REQUIRED), so the check
+// lives next to Create rather than in each caller.
+func (r *Repo) HasVendor(ctx context.Context, userID int64) (bool, error) {
+	var ok bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM vendors WHERE user_id = $1)`, userID).Scan(&ok)
+	return ok, err
+}
+
+// OwnerOf returns the owner id without loading the whole row, for auth checks.
+func (r *Repo) OwnerOf(ctx context.Context, id string) (int64, error) {
+	var owner int64
+	err := r.db.QueryRow(ctx,
+		`SELECT owner_id FROM facilities WHERE id = $1 AND is_deleted = FALSE`, id).Scan(&owner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return owner, err
+}
+
+func (r *Repo) Update(ctx context.Context, id string, in CreateInput) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE facilities SET name = $2, description = $3, city = $4, full_address = $5,
+		    state = $6, zipcode = $7, country = $8, lat = $9, lng = $10,
+		    star_rating = $11, check_in_time = $12,
+		    check_out_time = $13, capacity_pax = $14, area_sqft = $15, base_price_per_day = $16,
+		    seating_capacity = $17, floating_capacity = $18, min_booking_size = $19,
+		    updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND is_deleted = FALSE`,
+		id, in.Name, in.Description, in.City, in.FullAddress, in.State, in.Zipcode, in.Country,
+		in.Lat, in.Lng,
+		in.StarRating, in.CheckInTime, in.CheckOutTime, in.CapacityPax, in.AreaSqft,
+		in.BasePricePerDay, in.SeatingCapacity, in.FloatingCapacity, in.MinBookingSize)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repo) SoftDelete(ctx context.Context, id string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE facilities SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND is_deleted = FALSE`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+type ListFilter struct {
+	Type    string
+	Search  string
+	City    string
+	OwnerID int64 // 0 means any owner
+	Page    int
+	Size    int
+}
+
+func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error) {
+	// Fixed parameter positions with a sentinel for "not filtering", rather than
+	// building the WHERE clause dynamically - every value stays a bound parameter,
+	// so no caller input can reach the SQL text.
+	args := []any{f.Type, f.City, f.OwnerID, f.Search}
+	// Columns are qualified with f. because facilityFrom joins users.
+	clause := ` WHERE f.is_deleted = FALSE
+		AND ($1 = '' OR f.type = $1)
+		AND ($2 = '' OR LOWER(f.city) = LOWER($2))
+		AND ($3 = 0 OR f.owner_id = $3)
+		AND ($4 = '' OR f.name ILIKE '%' || $4 || '%' OR f.description ILIKE '%' || $4 || '%')`
+
+	var total int64
+	if err := r.db.QueryRow(ctx, `SELECT count(*)`+facilityFrom+clause, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, f.Size, f.Page*f.Size)
+	rows, err := r.db.Query(ctx,
+		`SELECT `+facilityCols+facilityFrom+clause+
+			` ORDER BY f.is_featured DESC, f.created_at DESC LIMIT $5 OFFSET $6`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := []Facility{}
+	for rows.Next() {
+		f, err := scanFacility(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, *f)
+	}
+	return out, total, rows.Err()
+}
+
+func (r *Repo) amenitiesOf(ctx context.Context, id string) ([]Amenity, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT a.id, a.name, a.code, a.applicable_type FROM facility_amenities fa
+		 JOIN amenities a ON a.id = fa.amenity_id WHERE fa.facility_id = $1 ORDER BY a.name`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Amenity{}
+	for rows.Next() {
+		var a Amenity
+		if err := rows.Scan(&a.ID, &a.Name, &a.Code, &a.ApplicableType); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) imagesOf(ctx context.Context, id string) ([]Image, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT id, url, is_cover, sort_order FROM facility_images
+		 WHERE facility_id = $1 ORDER BY sort_order, created_at`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Image{}
+	for rows.Next() {
+		var i Image
+		if err := rows.Scan(&i.ID, &i.URL, &i.IsCover, &i.SortOrder); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) ListAmenities(ctx context.Context, typeFilter string) ([]Amenity, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT id, name, code, applicable_type FROM amenities
+		 WHERE $1 = '' OR applicable_type = $1 OR applicable_type = 'BOTH'
+		 ORDER BY applicable_type, name`, typeFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Amenity{}
+	for rows.Next() {
+		var a Amenity
+		if err := rows.Scan(&a.ID, &a.Name, &a.Code, &a.ApplicableType); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) AddAmenity(ctx context.Context, facilityID, amenityID string) error {
+	_, err := r.db.Exec(ctx,
+		`INSERT INTO facility_amenities (facility_id, amenity_id) VALUES ($1, $2)
+		 ON CONFLICT DO NOTHING`, facilityID, amenityID)
+	return err
+}
+
+func (r *Repo) RemoveAmenity(ctx context.Context, facilityID, amenityID string) error {
+	_, err := r.db.Exec(ctx,
+		`DELETE FROM facility_amenities WHERE facility_id = $1 AND amenity_id = $2`,
+		facilityID, amenityID)
+	return err
+}
