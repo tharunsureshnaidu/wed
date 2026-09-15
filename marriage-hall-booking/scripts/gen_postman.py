@@ -885,12 +885,19 @@ DESCRIPTIONS = {
         "Uploads are stored and served by the API; the first becomes the cover.\n\n"
         "Captures facilityId, and hallId or hotelId, for the folders that follow.",
     "GET /api/v1/facilities": "Public browse, paged and filterable by type, city and free text.",
-    "POST /api/v1/facilities/{id}/images": "Records an image by URL - for a file already "
-        "hosted somewhere. To upload an actual file, use the multipart request below, "
-        "which stores it in S3.\n\nThe first image on a facility becomes the cover; "
-        "`isCover` moves it, and exactly one image holds it at a time.",
-    "POST /api/v1/facilities/{id}/videos": "Records a video by URL. To upload an actual "
-        "file, use the multipart request below.",
+    "POST /api/v1/facilities/{id}/images": "Uploads an image file (form-data, drag and "
+        "drop into the Body tab). Stored in S3 and served from there.\n\n**Compressed "
+        "server-side**: the long edge is capped at 1920px and it is re-encoded as JPEG "
+        "q=82, which takes a typical 3-8MB phone photo under ~300KB. Done here rather "
+        "than in the browser because anything can POST to this endpoint - a client-side "
+        "resize is a courtesy, not a guarantee.\n\nThe type is read from the file's "
+        "bytes, not its name: a .png that is really HTML is rejected. JPEG, PNG, WebP "
+        "and GIF up to 10MB (WebP and GIF are stored as-is - Go has no encoder for "
+        "them).\n\nThe first image on a facility becomes the cover.\n\nThe same route "
+        "still accepts JSON `{\"url\": \"...\"}` for a file hosted elsewhere.",
+    "POST /api/v1/facilities/{id}/videos": "Uploads a video file (form-data). MP4 or MOV "
+        "up to 200MB, stored in S3 unmodified - no transcoding.\n\nAlso accepts JSON "
+        "`{\"url\": \"...\"}` for a file hosted elsewhere.",
     "DELETE /api/v1/facilities/{id}/images/{childId}": "Removes the image row and the "
         "stored file behind it. A row recorded by URL leaves the remote file alone - only "
         "objects this API uploaded are deleted.",
@@ -1266,23 +1273,32 @@ def main():
         # proves the toggle actually reverses. The unblock also has to happen
         # before Cleanup: a blocked user's access token is revoked, which would
         # leave logout unauthenticated.
-        # The image and video endpoints take a real file upload as well as the
-        # JSON {url} form. Postman cannot carry a file's bytes in a collection,
-        # so `src` is left null: pick a file in the request's Body tab before
-        # sending. Kept as separate requests so the JSON form still runs
-        # unattended in the automated pass.
+        # Upload requests carry a file part, which a collection cannot hold -
+        # `src` is null and you pick a file (drag and drop works) in the Body
+        # tab before sending.
+        #
+        # They sit alongside the JSON {url} requests rather than replacing
+        # them: with no file attached an upload is a 400, so making it the
+        # primary request left imageId/videoId unset and broke every later
+        # media request in the automated run.
         if folder == "Facility Media":
             for suffix, field, name, desc in (
-                ("image", "image", "Upload image (multipart)",
-                 "Uploads an actual image file, which is stored in S3 and served from "
-                 "there - unlike the JSON form above, which only records a URL somebody "
-                 "else is hosting.\n\nThe type is sniffed from the file's bytes, not its "
-                 "name: a .png that is really HTML is rejected. JPEG, PNG, WebP and GIF, "
-                 "up to 10MB.\n\n**Pick a file in the Body tab before sending** - a "
-                 "collection cannot carry one."),
-                ("video", "video", "Upload video (multipart)",
-                 "Uploads an actual video file to S3. MP4 or MOV, up to 200MB.\n\n"
+                ("image", "image", "Upload image (drag & drop a file)",
+                 "Uploads an actual image file. Stored in S3 and served from there - "
+                 "unlike the JSON request above, which only records a URL somebody else "
+                 "is hosting.\n\n**Compressed server-side**: the long edge is capped at "
+                 "1920px and it is re-encoded as JPEG q=82. A 3MB phone photo lands at "
+                 "well under half that; measured 3.0MB -> 1.27MB on a 4000x3000 source. "
+                 "Done here, not in the browser, because anything can POST to this "
+                 "endpoint - a client-side resize is a courtesy, not a guarantee.\n\n"
+                 "The type is read from the file's bytes, not its name: a .png that is "
+                 "really HTML is rejected. JPEG, PNG, WebP and GIF up to 10MB (WebP and "
+                 "GIF are stored as uploaded - Go has no encoder for them).\n\n"
                  "**Pick a file in the Body tab before sending.**"),
+                ("video", "video", "Upload video (drag & drop a file)",
+                 "Uploads an actual video file to S3. MP4 or MOV up to 200MB, stored "
+                 "unmodified - no transcoding.\n\n**Pick a file in the Body tab before "
+                 "sending.**"),
             ):
                 path = "/api/v1/facilities/{id}/" + suffix + "s"
                 v = {
@@ -1294,11 +1310,11 @@ def main():
                 }
                 v["request"]["body"] = {"mode": "formdata", "formdata": [
                     {"key": field, "type": "file", "src": None,
-                     "description": "The file to upload"},
+                     "description": "Pick a file - drag and drop works"},
                 ]}
                 v["request"]["header"] = [
-                    h for h in v["request"].get("header", [])
-                    if h.get("key") != "Content-Type"
+                    hdr for hdr in v["request"].get("header", [])
+                    if hdr.get("key") != "Content-Type"
                 ]
                 v["request"]["description"] = desc
                 at = next((i for i, x in enumerate(sub)

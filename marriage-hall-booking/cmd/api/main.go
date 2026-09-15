@@ -132,6 +132,20 @@ func main() {
 	}
 
 	fh := facilityhandler.New(facilities, signer, media)
+	// With Kafka configured, media uploads are queued for the worker instead of
+	// running on the request - the S3 PUT is seconds of network the caller has
+	// no reason to wait for. Without it the handler uploads inline.
+	if publisher.Enabled {
+		fh.OnMediaUpload = func(ctx context.Context, m events.MediaUpload) error {
+			return publisher.PublishSync(ctx, events.TopicMediaUploadRequested, m.MediaID,
+				map[string]any{
+					"mediaId": m.MediaID, "table": m.Table,
+					"facilityId": m.FacilityID, "vendorId": m.VendorID,
+					"spoolPath": m.SpoolPath, "contentType": m.ContentType,
+					"ext": m.Ext, "size": m.Size, "kind": m.Kind,
+				})
+		}
+	}
 	fh.Register(mux)
 	fh.RegisterInventory(mux)
 	fh.RegisterMedia(mux)

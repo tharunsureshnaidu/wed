@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
 )
 
@@ -125,14 +127,76 @@ func (h *Handler) saveUpload(ctx context.Context, fh *multipart.FileHeader, kind
 		return "", err
 	}
 
+	// Images are re-encoded before they leave this process, as Java does: a
+	// phone photo arrives at 3-8MB and nothing displaying a gallery needs it
+	// larger than 1920px. Formats with no stdlib encoder (WebP, GIF) fall
+	// through and are stored as uploaded.
+	body, size := io.Reader(f), fh.Size
+	if kind == storage.Image {
+		if small, ct, newExt, ok := compressImage(f); ok {
+			body, size, sniffed, ext = bytes.NewReader(small), int64(len(small)), ct, newExt
+			logger.Debug("image compressed", logger.Component, "storage",
+				"from", fh.Size, "to", size)
+		} else if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return "", err
+		}
+	}
+
 	res, err := h.media.Put(ctx, storage.Upload{
-		Kind: kind, Body: f, Size: fh.Size, ContentType: sniffed, Ext: ext,
+		Kind: kind, Body: body, Size: size, ContentType: sniffed, Ext: ext,
 		FacilityID: facilityID, VendorID: vendorID,
 	})
 	if err != nil {
 		return "", err
 	}
 	return res.URL, nil
+}
+
+// spoolUpload validates and compresses a file, then parks it in the spool
+// directory for the worker instead of uploading inline.
+//
+// The expensive part of an upload is the network leg - 1.7-6s against S3 in
+// another region - and the caller has no reason to wait for it. Validation and
+// compression stay here so a bad file is still rejected with a 400 rather than
+// being accepted and failing invisibly in the worker.
+func (h *Handler) spoolUpload(fh *multipart.FileHeader, kind storage.Kind) (
+	path, contentType, ext string, size int64, err error) {
+
+	if limit := storage.Limit(kind); fh.Size > limit {
+		return "", "", "", 0, fmt.Errorf("%s exceeds the maximum size of %dMB",
+			fh.Filename, limit/(1<<20))
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return "", "", "", 0, err
+	}
+	defer f.Close()
+
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(f, head)
+	sniffed := http.DetectContentType(head[:n])
+	ext, ok := allowedTypes(kind)[sniffed]
+	if !ok {
+		return "", "", "", 0, fmt.Errorf("%s is not %s", fh.Filename, describeKind(kind))
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", "", "", 0, err
+	}
+
+	body, limit := io.Reader(f), fh.Size
+	if kind == storage.Image {
+		if small, ct, newExt, ok := compressImage(f); ok {
+			body, limit, sniffed, ext = bytes.NewReader(small), int64(len(small)), ct, newExt
+		} else if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return "", "", "", 0, err
+		}
+	}
+
+	path, size, err = storage.Spool(body, ext, limit)
+	if err != nil {
+		return "", "", "", 0, err
+	}
+	return path, sniffed, ext, size, nil
 }
 
 // allowedTypes is an allowlist per kind, not a blocklist: the file is served

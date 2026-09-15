@@ -19,6 +19,7 @@ import (
 	"github.com/tripfcatory/marriage-hall-booking/pkg/database"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/events"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
+	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
 )
 
 func main() {
@@ -67,6 +68,14 @@ func main() {
 	for _, topic := range topics {
 		go consume(ctx, cfg.KafkaBrokers, topic)
 	}
+
+	// Media uploads get their own consumer: it needs the database and a storage
+	// backend, and a slow S3 PUT must not delay notification events.
+	media, err := storage.New(ctx, "uploads", os.Getenv("PUBLIC_BASE_URL"))
+	if err != nil {
+		logger.Fatal("media storage unavailable", logger.Err(err))
+	}
+	go consumeMediaUploads(ctx, cfg.KafkaBrokers, db, media)
 
 	logger.Info("worker started", "kafka", cfg.KafkaBrokers)
 	stop := make(chan os.Signal, 1)

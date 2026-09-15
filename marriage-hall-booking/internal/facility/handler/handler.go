@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
 	"github.com/tripfcatory/marriage-hall-booking/internal/facility/repository"
+	"github.com/tripfcatory/marriage-hall-booking/pkg/events"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/jwt"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
@@ -25,6 +27,9 @@ type Handler struct {
 	repo   *repository.Repo
 	signer *jwt.Signer
 	media  storage.Store
+	// OnMediaUpload queues a file for the worker to upload. Nil means no
+	// publisher (Kafka disabled), and uploads run inline on the request.
+	OnMediaUpload func(ctx context.Context, m events.MediaUpload) error
 }
 
 func New(repo *repository.Repo, signer *jwt.Signer, media storage.Store) *Handler {

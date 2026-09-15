@@ -4,6 +4,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
 	"time"
 
@@ -16,7 +17,28 @@ const (
 	TopicBookingCancelled = "booking.cancelled"
 	TopicPaymentCompleted = "payment.completed"
 	TopicPaymentFailed    = "payment.failed"
+
+	// TopicMediaUploadRequested carries a reference to a file already written
+	// to the spool directory - never the bytes. Kafka's default max message is
+	// 1MB and a compressed venue photo is often larger, so a payload carrying
+	// the image would simply be rejected; brokers are also a poor place to
+	// store blobs that a filesystem holds for free.
+	TopicMediaUploadRequested = "media.upload.requested"
 )
+
+// MediaUpload is the payload of TopicMediaUploadRequested. Every field is
+// small: the worker reads SpoolPath off disk and uploads it under Key.
+type MediaUpload struct {
+	MediaID     string `json:"mediaId"`
+	Table       string `json:"table"` // facility_images or facility_videos
+	FacilityID  string `json:"facilityId"`
+	VendorID    string `json:"vendorId"`
+	SpoolPath   string `json:"spoolPath"`
+	ContentType string `json:"contentType"`
+	Ext         string `json:"ext"`
+	Size        int64  `json:"size"`
+	Kind        int    `json:"kind"` // storage.Kind
+}
 
 type Envelope struct {
 	Type       string         `json:"type"`
@@ -67,6 +89,30 @@ func NewPublisher(brokers []string) *Publisher {
 // own goroutine with its own timeout, detached from the request context - using
 // the request's context would cancel the publish the moment the HTTP response
 // is written, which is usually before the broker has acknowledged anything.
+// PublishSync publishes and reports whether the broker accepted the message.
+//
+// Publish is fire-and-forget, which is right for a notification - a dropped
+// welcome email is a nuisance. It is wrong when the event is the only record
+// that work still needs doing: a dropped media event leaves an uploaded file
+// spooled forever and its row PENDING with nobody to finish it. Callers in that
+// position use this and fall back to doing the work themselves.
+func (p *Publisher) PublishSync(ctx context.Context, topic, key string, payload map[string]any) error {
+	if !p.Enabled {
+		return errors.New("publisher disabled")
+	}
+	body, err := json.Marshal(Envelope{
+		Type: topic, OccurredAt: time.Now(), Payload: payload,
+	})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return p.writer.WriteMessages(ctx, kafka.Message{
+		Topic: topic, Key: []byte(key), Value: body,
+	})
+}
+
 func (p *Publisher) Publish(_ context.Context, topic, key string, payload map[string]any) {
 	if !p.Enabled {
 		return

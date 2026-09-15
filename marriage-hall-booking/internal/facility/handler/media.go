@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"os"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
+	"github.com/tripfcatory/marriage-hall-booking/pkg/events"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
@@ -52,8 +55,9 @@ func (h *Handler) addImage(w http.ResponseWriter, r *http.Request) {
 	// {url} form is kept because it shipped and clients send it, but a real file
 	// upload is the path that stores bytes anywhere.
 	var req imageReq
+	var queued pendingUpload
 	if isMultipart(r) {
-		url, err := h.uploadPart(w, r, facilityID, storage.Image, "image")
+		url, err := h.uploadPart(w, r, facilityID, storage.Image, "image", &queued)
 		if err != nil {
 			return // uploadPart has already written the response
 		}
@@ -87,11 +91,15 @@ func (h *Handler) addImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	status := "READY"
+	if queued.path != "" {
+		status = "PENDING"
+	}
 	var id string
 	if err := tx.QueryRow(r.Context(),
-		`INSERT INTO facility_images (facility_id, url, is_cover, sort_order)
-		 VALUES ($1,$2,$3,$4) RETURNING id`,
-		facilityID, req.URL, req.IsCover, req.SortOrder).Scan(&id); err != nil {
+		`INSERT INTO facility_images (facility_id, url, is_cover, sort_order, status)
+		 VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		facilityID, req.URL, req.IsCover, req.SortOrder, status).Scan(&id); err != nil {
 		httpx.Fail(w, err)
 		return
 	}
@@ -99,10 +107,83 @@ func (h *Handler) addImage(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	// Queued after the commit, because the worker needs an id that exists. If
+	// the broker will not take it, upload here instead: the event is the only
+	// record that the file still needs uploading, so a dropped one would leave
+	// this row PENDING forever with nobody to finish it.
+	if status == "PENDING" && !h.queueUpload(r.Context(), id, "facility_images", queued) {
+		req.URL, status = h.finishInline(r.Context(), id, "facility_images", queued)
+	}
+
 	response.OK(w, "Image added successfully", map[string]any{
 		"id": id, "facilityId": facilityID, "url": req.URL,
-		"isCover": req.IsCover, "sortOrder": req.SortOrder,
+		"isCover": req.IsCover, "sortOrder": req.SortOrder, "status": status,
 	})
+}
+
+func videoStatus(q pendingUpload) string {
+	if q.path != "" {
+		return "PENDING"
+	}
+	return "READY"
+}
+
+// queueUpload hands a spooled file to the worker. Returns false when the broker
+// would not take it, so the caller uploads inline instead: the event is the
+// only record that the file still needs uploading, and a dropped one would
+// leave the row PENDING forever with nobody to finish it.
+func (h *Handler) queueUpload(ctx context.Context, mediaID, table string, q pendingUpload) bool {
+	if q.path == "" || h.OnMediaUpload == nil {
+		return false
+	}
+	if err := h.OnMediaUpload(ctx, events.MediaUpload{
+		MediaID: mediaID, Table: table, FacilityID: q.facilityID, VendorID: q.vendorID,
+		SpoolPath: q.path, ContentType: q.contentType, Ext: q.ext,
+		Size: q.size, Kind: int(q.kind),
+	}); err != nil {
+		logger.Warn("media upload could not be queued, uploading inline",
+			logger.Component, "storage", "mediaId", mediaID, logger.Err(err))
+		return false
+	}
+	return true
+}
+
+// finishInline uploads a spooled file on this request and records the result,
+// for when the broker would not accept the job. Returns the URL and status the
+// response should report.
+func (h *Handler) finishInline(ctx context.Context, id, table string, q pendingUpload) (string, string) {
+	url, err := h.uploadSpooled(ctx, q)
+	if err != nil {
+		logger.Error("inline media upload failed", logger.Component, "storage",
+			"mediaId", id, logger.Err(err))
+		_, _ = h.repo.Pool().Exec(ctx,
+			`UPDATE `+table+` SET status = 'FAILED', error_message = $2 WHERE id = $1`,
+			id, err.Error())
+		return "", "FAILED"
+	}
+	if _, err := h.repo.Pool().Exec(ctx,
+		`UPDATE `+table+` SET url = $2, status = 'READY' WHERE id = $1`, id, url); err != nil {
+		logger.Error("media row update failed", "mediaId", id, logger.Err(err))
+	}
+	return url, "READY"
+}
+
+// uploadSpooled does the work the worker would have done, on this request.
+func (h *Handler) uploadSpooled(ctx context.Context, q pendingUpload) (string, error) {
+	f, err := os.Open(q.path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	res, err := h.media.Put(ctx, storage.Upload{
+		Kind: q.kind, Body: f, Size: q.size, ContentType: q.contentType, Ext: q.ext,
+		FacilityID: q.facilityID, VendorID: q.vendorID,
+	})
+	if err != nil {
+		return "", err
+	}
+	_ = storage.Unspool(q.path)
+	return res.URL, nil
 }
 
 func (h *Handler) deleteImage(w http.ResponseWriter, r *http.Request) {
@@ -253,8 +334,11 @@ func (h *Handler) reorder(w http.ResponseWriter, r *http.Request, table string) 
 // uploadPart reads one named file part, stores it, and returns its URL. On any
 // failure it writes the error response and returns a non-nil error, so callers
 // just return.
+// uploadPart reads one named file part. It either returns a URL (uploaded
+// inline) or fills *queued with a spooled file for the worker to upload; on any
+// failure it writes the error response and returns a non-nil error.
 func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, facilityID string,
-	kind storage.Kind, field string) (string, error) {
+	kind storage.Kind, field string, queued *pendingUpload) (string, error) {
 
 	if err := r.ParseMultipartForm(storage.Limit(kind)); err != nil {
 		response.Error(w, http.StatusBadRequest, "Malformed multipart body", "VALIDATION_ERROR")
@@ -278,12 +362,38 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, facilityID 
 		vid = *vendorID
 	}
 
-	url, err := h.saveUpload(r.Context(), files[0], kind, facilityID, vid)
+	// With a publisher, park the file and let the worker do the network leg:
+	// the S3 PUT is 1.7-6s of the request and the caller gains nothing by
+	// waiting. Without one (Kafka disabled) upload inline, so the endpoint
+	// behaves the same either way.
+	if h.OnMediaUpload == nil {
+		url, err := h.saveUpload(r.Context(), files[0], kind, facilityID, vid)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, err.Error(), "INVALID_FILE")
+			return "", err
+		}
+		return url, nil
+	}
+
+	path, ct, ext, size, err := h.spoolUpload(files[0], kind)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, err.Error(), "INVALID_FILE")
 		return "", err
 	}
-	return url, nil
+	*queued = pendingUpload{
+		path: path, contentType: ct, ext: ext, size: size,
+		facilityID: facilityID, vendorID: vid, kind: kind,
+	}
+	return "", nil
+}
+
+// pendingUpload describes a file parked in the spool for the worker. An empty
+// path means the upload already happened inline.
+type pendingUpload struct {
+	path, contentType, ext string
+	size                   int64
+	facilityID, vendorID   string
+	kind                   storage.Kind
 }
 
 var errNoFile = errors.New("no file part")
@@ -303,8 +413,9 @@ func (h *Handler) addVideo(w http.ResponseWriter, r *http.Request) {
 	// Java's POST /{id}/videos is multipart with a "video" file part, capped at
 	// 200MB. The JSON {url} form is kept for the same reason as images.
 	var req videoReq
+	var queued pendingUpload
 	if isMultipart(r) {
-		url, err := h.uploadPart(w, r, facilityID, storage.Video, "video")
+		url, err := h.uploadPart(w, r, facilityID, storage.Video, "video", &queued)
 		if err != nil {
 			return
 		}
@@ -322,12 +433,16 @@ func (h *Handler) addVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	var id string
 	if err := h.repo.Pool().QueryRow(r.Context(),
-		`INSERT INTO facility_videos (facility_id, url, thumbnail_url, duration_seconds, sort_order)
-		 VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-		facilityID, req.URL, req.ThumbnailURL, req.DurationSeconds, req.SortOrder).
-		Scan(&id); err != nil {
+		`INSERT INTO facility_videos (facility_id, url, thumbnail_url, duration_seconds,
+		    sort_order, status)
+		 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+		facilityID, req.URL, req.ThumbnailURL, req.DurationSeconds, req.SortOrder,
+		videoStatus(queued)).Scan(&id); err != nil {
 		httpx.Fail(w, err)
 		return
+	}
+	if videoStatus(queued) == "PENDING" && !h.queueUpload(r.Context(), id, "facility_videos", queued) {
+		req.URL, _ = h.finishInline(r.Context(), id, "facility_videos", queued)
 	}
 	response.OK(w, "Video added successfully", map[string]any{
 		"id": id, "facilityId": facilityID, "url": req.URL,
