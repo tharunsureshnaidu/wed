@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,12 +16,20 @@ import (
 	"github.com/segmentio/kafka-go"
 
 	bookingrepo "github.com/tripfcatory/marriage-hall-booking/internal/booking/repository"
+	notifyrepo "github.com/tripfcatory/marriage-hall-booking/internal/notification/repository"
+	notifysvc "github.com/tripfcatory/marriage-hall-booking/internal/notification/service"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/config"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/database"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/events"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
+	"github.com/tripfcatory/marriage-hall-booking/pkg/notify"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
 )
+
+// notifier is package-level because handle() is called from every consumer
+// goroutine and threading it through each one buys nothing - there is exactly
+// one, set once before the consumers start.
+var notifier *notifysvc.Service
 
 func main() {
 	logger.Init("worker")
@@ -35,6 +44,26 @@ func main() {
 	defer db.Close()
 
 	bookings := bookingrepo.New(db)
+
+	// Notifications: the consumer below only writes outbox rows; this ticker
+	// does the vendor calls and the retry-until-acknowledged chasing.
+	notifier = notifysvc.New(notifyrepo.New(db), notify.FromEnv(nil))
+	if d := envDuration("NOTIFY_RETRY_EVERY", 0); d > 0 {
+		notifier.RetryEvery = d
+	}
+	// Tick faster than the retry interval: the tick only decides how promptly a
+	// due row is noticed, RetryEvery decides how often one becomes due.
+	go notifier.Run(ctx, envDuration("NOTIFY_TICK", 30*time.Second))
+
+	// Users who never sent a location get one inferred from the venues they
+	// have booked, so geo targeting is not empty on day one. Weakest source,
+	// so a real fix from the app replaces it.
+	if n, err := notifier.BackfillLocations(ctx); err != nil {
+		logger.Error("geo: backfill locations", logger.Err(err))
+	} else if n > 0 {
+		logger.Info("geo: inferred locations from bookings", "users", n)
+	}
+	logChannels(notify.FromEnv(nil), notifier.RetryEvery)
 
 	// Sweeper: release slots held by bookings that were never paid for. This is
 	// what stops an abandoned checkout from blocking a date forever.
@@ -128,22 +157,40 @@ func consume(ctx context.Context, brokers []string, topic string) {
 			logger.Error("malformed event", "topic", topic, logger.Err(err))
 			continue
 		}
-		handle(e)
+		handle(ctx, e)
 	}
 }
 
 // handle is where notifications would be dispatched. There is no mail or SMS
 // provider configured, so for now each event is logged - the consumer, topics
 // and offsets are real, only the delivery side is a stub.
-func handle(e events.Envelope) {
+func handle(ctx context.Context, e events.Envelope) {
 	switch e.Type {
 	case events.TopicUserRegistered:
 		logger.Info("notify: welcome email", "userId", e.Payload["userId"])
 	case events.TopicBookingCreated:
-		logger.Info("notify: booking confirmation",
-			"bookingId", e.Payload["bookingId"], "amount", e.Payload["totalAmount"])
+		id, _ := e.Payload["bookingId"].(string)
+		if id == "" || notifier == nil {
+			return
+		}
+		// Enqueue only. A booking that is not against a facility (or was
+		// already deleted) has no owner to chase, and is skipped rather than
+		// retried - the event is not coming back.
+		if err := notifier.EnqueueBookingCreated(ctx, id); err != nil {
+			if errors.Is(err, notifyrepo.ErrNotFound) {
+				logger.Warn("notify: booking not found, skipping", "bookingId", id)
+				return
+			}
+			logger.Error("notify: enqueue", "bookingId", id, logger.Err(err))
+		}
 	case events.TopicBookingCancelled:
-		logger.Info("notify: cancellation", "bookingId", e.Payload["bookingId"])
+		id, _ := e.Payload["bookingId"].(string)
+		logger.Info("notify: cancellation", "bookingId", id)
+		if id != "" && notifier != nil {
+			if err := notifier.Cancel(ctx, id); err != nil {
+				logger.Error("notify: cancel", "bookingId", id, logger.Err(err))
+			}
+		}
 	case events.TopicPaymentCompleted:
 		logger.Info("notify: payment receipt",
 			"bookingId", e.Payload["bookingId"], "paymentId", e.Payload["paymentId"])
@@ -153,4 +200,34 @@ func handle(e events.Envelope) {
 	default:
 		logger.Warn("unhandled event type", "type", e.Type)
 	}
+}
+
+// envDuration reads a Go duration string ("45s", "30m"). An unparseable value
+// falls back rather than refusing to start: a typo in an interval must not take
+// the worker down.
+func envDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		logger.Warn("bad duration, using default", "key", key, "value", v, "default", fallback)
+		return fallback
+	}
+	return d
+}
+
+// logChannels says once, at startup, which channels will really send. Without
+// it a log full of "would send" looks like a bug rather than missing config.
+func logChannels(s notify.Senders, retry time.Duration) {
+	var live, stub []string
+	for _, ch := range []notify.Channel{notify.Email, notify.SMS, notify.WhatsApp, notify.Push} {
+		if s[ch].Live() {
+			live = append(live, string(ch))
+		} else {
+			stub = append(stub, string(ch))
+		}
+	}
+	logger.Info("notify: channels ready", "live", live, "log-only", stub, "retryEvery", retry)
 }

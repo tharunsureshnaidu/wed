@@ -22,6 +22,10 @@ import (
 type Handler struct {
 	db     *pgxpool.Pool
 	signer *jwt.Signer
+
+	// OnReviewCreated tells the venue owner someone rated them. The reviewer
+	// is not notified - they just wrote it.
+	OnReviewCreated func(ctx context.Context, facilityID string, rating int)
 }
 
 func New(db *pgxpool.Pool, signer *jwt.Signer) *Handler {
@@ -113,6 +117,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.OnReviewCreated != nil {
+		h.OnReviewCreated(r.Context(), req.FacilityID, req.Rating)
+	}
 	response.OK(w, "Review submitted successfully", map[string]any{
 		"id": id, "facilityId": req.FacilityID, "rating": req.Rating,
 		"title": req.Title, "comment": req.Comment,
@@ -121,6 +128,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 // recalcRating keeps facilities.avg_rating/review_count consistent with the
 // reviews table, in the same transaction as the change that caused it.
+//
+// Skips a facility whose rating an admin has pinned (rating_is_manual): an
+// imported venue carries a rating earned on the source platform, with no
+// review rows here to derive it from, and the first review posted in this
+// system would otherwise replace "4.3 from 218 reviews" with "5.0 from 1".
 func (h *Handler) recalcRating(ctx context.Context, tx pgx.Tx, facilityID string) error {
 	_, err := tx.Exec(ctx,
 		`UPDATE facilities f SET
@@ -129,7 +141,7 @@ func (h *Handler) recalcRating(ctx context.Context, tx pgx.Tx, facilityID string
 		    review_count = (SELECT count(*) FROM reviews
 		        WHERE facility_id = f.id AND is_deleted = FALSE),
 		    updated_at = CURRENT_TIMESTAMP
-		 WHERE f.id = $1`, facilityID)
+		 WHERE f.id = $1 AND f.rating_is_manual = FALSE`, facilityID)
 	return err
 }
 

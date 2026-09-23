@@ -126,16 +126,26 @@ func lowerAll(in []string) []string {
 	return out
 }
 
-// attachAmenities links the resolved amenities to a facility.
-func (h *Handler) attachAmenities(ctx context.Context, facilityID string, list []amenityRow) error {
+// attachAmenities links amenities to a facility and reports which were
+// genuinely new.
+//
+// The added list matters because re-adding an amenity a venue already has is a
+// no-op, and announcing "now offers WiFi" to every nearby customer for a
+// no-op is spam.
+func (h *Handler) attachAmenities(ctx context.Context, facilityID string, list []amenityRow) ([]string, error) {
+	var added []string
 	for _, a := range list {
-		if _, err := h.repo.Pool().Exec(ctx,
+		tag, err := h.repo.Pool().Exec(ctx,
 			`INSERT INTO facility_amenities (facility_id, amenity_id) VALUES ($1,$2)
-			 ON CONFLICT DO NOTHING`, facilityID, a.ID); err != nil {
-			return err
+			 ON CONFLICT DO NOTHING`, facilityID, a.ID)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() > 0 {
+			added = append(added, a.Name)
 		}
 	}
-	return nil
+	return added, nil
 }
 
 // amenityRefs pulls amenityIds out of a multipart form, where the field is

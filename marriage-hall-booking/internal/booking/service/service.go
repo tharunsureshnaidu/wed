@@ -11,6 +11,7 @@ import (
 
 	"github.com/tripfcatory/marriage-hall-booking/internal/booking/repository"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/apperr"
+	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
 )
 
 // holdWindow is how long an unpaid booking keeps its slot before the sweeper
@@ -43,9 +44,12 @@ type HallBookingRequest struct {
 	EventDate time.Time
 	EndDate   time.Time
 	// StartTime/EndTime are "HH:MM", empty when the caller booked by slot.
-	StartTime     string
-	EndTime       string
-	GuestCount    *int
+	StartTime  string
+	EndTime    string
+	GuestCount *int
+	// RoomCount is how many guest rooms the customer needs alongside the hall.
+	// Optional, and deliberately not priced - see migration 041.
+	RoomCount     *int
 	EventType     *string
 	SlotType      string
 	PackageIDs    []string
@@ -166,7 +170,7 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		UserID: userID, FacilityID: req.FacilityID,
 		EventDate: req.EventDate, EndDate: req.EndDate,
 		StartTime: req.StartTime, EndTime: req.EndTime,
-		GuestCount: req.GuestCount, EventType: req.EventType,
+		GuestCount: req.GuestCount, RoomCount: req.RoomCount, EventType: req.EventType,
 		SlotType: req.SlotType, TotalAmount: total, IdempotentKey: req.IdempotentKey,
 		GuestName: req.GuestName, GuestEmail: req.GuestEmail, GuestPhone: req.GuestPhone,
 		HoldFor: holdWindow, PackageIDs: req.PackageIDs, Addons: req.Addons,
@@ -286,6 +290,11 @@ func (s *Service) Get(ctx context.Context, id string, userID int64, isAdmin bool
 	if err != nil {
 		return nil, err
 	}
+	// Enriched for the same reason as List: the detail screen shows the venue,
+	// and a Rate button that depends on review state.
+	if err := s.repo.Enrich(ctx, userID, []*repository.Booking{b}); err != nil {
+		logger.Error("bookings: enrich detail", "bookingId", id, logger.Err(err))
+	}
 	// A booking is readable by the customer who made it, the facility owner, or an admin.
 	if b.UserID != userID && !isAdmin {
 		var owner int64
@@ -320,8 +329,23 @@ func (s *Service) Cancel(ctx context.Context, id string, userID int64, isAdmin b
 	return err
 }
 
+// List is the "my bookings" screen. Each row carries its venue summary and
+// review state so the client renders the whole list from one response.
 func (s *Service) List(ctx context.Context, userID int64, page, size int) ([]repository.Booking, int64, error) {
-	return s.repo.ListForUser(ctx, userID, page, size)
+	items, total, err := s.repo.ListForUser(ctx, userID, page, size)
+	if err != nil {
+		return nil, 0, err
+	}
+	ptrs := make([]*repository.Booking, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	if err := s.repo.Enrich(ctx, userID, ptrs); err != nil {
+		// The bookings themselves are correct; only the venue summary is
+		// missing. Returning an error here would blank the whole screen.
+		logger.Error("bookings: enrich list", "userId", userID, logger.Err(err))
+	}
+	return items, total, nil
 }
 
 func (s *Service) ExpireHolds(ctx context.Context) (int, error) {

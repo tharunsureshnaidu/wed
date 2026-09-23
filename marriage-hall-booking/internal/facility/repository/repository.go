@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -56,6 +57,18 @@ type Facility struct {
 
 	// Hall: base price per day. Hotel: cheapest room type. Computed, not stored.
 	StartingPrice *float64 `json:"startingPrice"`
+
+	// An advertised discount on the listing. DiscountPercent is nil when the
+	// venue has none, or when the one it had has expired - an expired offer is
+	// filtered out in SQL so it can never reach a client.
+	//
+	// DiscountedPrice is computed here rather than left to each client: four
+	// apps rounding a percentage four ways is four different prices on the
+	// same venue.
+	DiscountPercent *float64 `json:"discountPercent"`
+	DiscountLabel   *string  `json:"discountLabel"`
+	DiscountedPrice *float64 `json:"discountedPrice"`
+	HasDiscount     bool     `json:"hasDiscount"`
 
 	StarRating   *int    `json:"starRating"`
 	CheckInTime  *string `json:"checkInTime"`
@@ -207,7 +220,29 @@ const facilityCols = `f.id, f.owner_id, u.phone_number, f.vendor_id, f.name, f.d
 	CASE WHEN f.type = 'MARRIAGE_HALL' THEN f.base_price_per_day
 	     ELSE (SELECT MIN(rt.base_price_per_night) FROM room_types rt
 	            WHERE rt.facility_id = f.id AND rt.is_deleted = FALSE)
-	END`
+	END,
+	CASE WHEN f.discount_valid_until IS NULL OR f.discount_valid_until > CURRENT_TIMESTAMP
+	     THEN f.discount_percent END,
+	CASE WHEN f.discount_valid_until IS NULL OR f.discount_valid_until > CURRENT_TIMESTAMP
+	     THEN f.discount_label END`
+
+// applyDiscount derives the struck-through price.
+//
+// A discount with no starting price to apply it to is still reported - the card
+// can show "15% off" without a number - but there is nothing to compute.
+// Rounded to whole currency units: a listing price of 84999.9999 is not a price
+// anyone would print.
+func (f *Facility) applyDiscount() {
+	if f.DiscountPercent == nil || *f.DiscountPercent <= 0 {
+		return
+	}
+	f.HasDiscount = true
+	if f.StartingPrice == nil {
+		return
+	}
+	d := math.Round(*f.StartingPrice * (100 - *f.DiscountPercent) / 100)
+	f.DiscountedPrice = &d
+}
 
 // facilityFrom joins the owner so ownerPhoneNumber comes back in the same read.
 const facilityFrom = ` FROM facilities f JOIN users u ON u.id = f.owner_id`
@@ -219,10 +254,12 @@ func scanFacility(row pgx.Row) (*Facility, error) {
 		&f.Status, &f.IsVerified, &f.IsFeatured,
 		&f.AvgRating, &f.ReviewCount, &f.StarRating, &f.CheckInTime, &f.CheckOutTime,
 		&f.CapacityPax, &f.AreaSqft, &f.BasePricePerDay, &f.SeatingCapacity,
-		&f.FloatingCapacity, &f.MinBookingSize, &f.StartingPrice)
+		&f.FloatingCapacity, &f.MinBookingSize, &f.StartingPrice,
+		&f.DiscountPercent, &f.DiscountLabel)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
+	f.applyDiscount()
 	f.Verified, f.Featured = f.IsVerified, f.IsFeatured
 	f.Amenities, f.Images = []Amenity{}, []Image{}
 	return &f, err

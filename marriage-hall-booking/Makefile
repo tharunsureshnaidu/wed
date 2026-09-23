@@ -11,7 +11,7 @@ VALKEY_UNIT ?= $(shell systemctl list-unit-files 2>/dev/null | grep -qE '^valkey
 DB  ?= postgres://postgres:postgres@localhost:5432/venue?sslmode=disable
 API ?= http://localhost:8080
 
-.PHONY: run worker build start stop restart status logs logs-all logs-api logs-worker logs-error logs-warn logs-debug logs-http logs-clear unlimit limits logs-db logs-valkey logs-kafka errors otp postman postman-test test race vet fmt tidy check
+.PHONY: run worker build start stop restart kafka-up kafka-down status logs logs-all logs-api logs-worker logs-error logs-warn logs-debug logs-http logs-clear unlimit limits logs-db logs-valkey logs-kafka errors otp postman postman-test test race vet fmt tidy check
 
 ## --- running ---
 run:    ; go run ./cmd/api
@@ -26,7 +26,7 @@ build:  ; go build -o bin/api ./cmd/api && go build -o bin/worker ./cmd/worker
 # Each is skipped if already running. The API would refuse a second copy anyway
 # (the port is taken), but the worker binds no port, so without this check a
 # second `make start` silently leaves two of them running.
-start: build
+start: build kafka-up
 	@mkdir -p logs
 	@[ -n "$(PIDS_API)" ] \
 		&& echo "api    already running" \
@@ -51,11 +51,35 @@ stop:
 	@p="$(PIDS_API)";    [ -n "$$p" ] && { kill $$p 2>/dev/null; echo "api stopped";    } || echo "api not running"
 	@p="$(PIDS_WORKER)"; [ -n "$$p" ] && { kill $$p 2>/dev/null; echo "worker stopped"; } || echo "worker not running"
 	@sleep 1
-	@sleep 1
+	@$(MAKE) --no-print-directory kafka-down
+
+# Kafka is the only piece heavy enough to be worth stopping (~512M of heap);
+# postgres and valkey idle in a few MB and other projects on this box use them,
+# so `make stop` leaves those alone. Kafka does not start at boot either
+# (systemctl disable), so it runs only between `make start` and `make stop`.
+#
+# KAFKA_MANAGED=0 turns both targets into no-ops, for a machine where kafka is
+# shared or managed elsewhere and must not be stopped from here.
+KAFKA_MANAGED ?= 1
+
+kafka-up:
+	@[ "$(KAFKA_MANAGED)" = 1 ] || exit 0; \
+	 systemctl is-active --quiet kafka && echo "kafka  already running" && exit 0; \
+	 sudo -n systemctl start kafka 2>/dev/null || { echo "kafka  start FAILED (sudo? 'sudo systemctl start kafka')"; exit 0; }; \
+	 for i in $$(seq 1 40); do ss -ltn 2>/dev/null | grep -q 9092 && { echo "kafka  started"; exit 0; }; sleep 1; done; \
+	 echo "kafka  started but 9092 not listening yet - check 'journalctl -u kafka -n50'"
+
+# restart bounces api/worker only: stopping kafka here would throw away ~20s of
+# broker startup for nothing, and `restart` is the inner-loop command.
+kafka-down:
+	@[ "$(KAFKA_MANAGED)" = 1 ] || exit 0; \
+	 [ -n "$(KEEP_KAFKA)" ] && exit 0; \
+	 systemctl is-active --quiet kafka || { echo "kafka  not running"; exit 0; }; \
+	 sudo -n systemctl stop kafka 2>/dev/null && echo "kafka  stopped" || echo "kafka  stop FAILED (sudo? 'sudo systemctl stop kafka')"
 
 restart:
-	@$(MAKE) stop
-	@$(MAKE) start
+	@$(MAKE) --no-print-directory KEEP_KAFKA=1 stop
+	@$(MAKE) --no-print-directory start
 
 status:
 	@n=$$(echo "$(PIDS_API)" | wc -w); \

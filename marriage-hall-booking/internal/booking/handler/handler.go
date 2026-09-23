@@ -42,13 +42,16 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // eventDate/slotType are still accepted: they are what every existing client
 // sends, and dropping them would break those callers for no gain.
 type hallReq struct {
-	HallID     string   `json:"hallId"`
-	FacilityID string   `json:"facilityId"`
-	StartDate  string   `json:"startDate"`
-	EndDate    string   `json:"endDate"`
-	StartTime  string   `json:"startTime"` // HH:MM, optional
-	EndTime    string   `json:"endTime"`   // HH:MM, optional
-	GuestCount *int     `json:"guestCount"`
+	HallID     string `json:"hallId"`
+	FacilityID string `json:"facilityId"`
+	StartDate  string `json:"startDate"`
+	EndDate    string `json:"endDate"`
+	StartTime  string `json:"startTime"` // HH:MM, optional
+	EndTime    string `json:"endTime"`   // HH:MM, optional
+	GuestCount *int   `json:"guestCount"`
+	// RoomCount is optional: how many guest rooms the party needs alongside
+	// the hall. Not priced - the owner arranges it offline.
+	RoomCount  *int     `json:"roomCount"`
 	EventType  *string  `json:"eventType"`
 	PackageIDs []string `json:"packageIds"`
 
@@ -160,6 +163,12 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 	if req.GuestCount != nil && *req.GuestCount <= 0 {
 		e = append(e, "guestCount must be positive")
 	}
+	// 0 is allowed - "no rooms needed" is a real answer, distinct from not
+	// stating a number at all. An upper bound stops a typo becoming a
+	// nonsensical request the owner has to query.
+	if req.RoomCount != nil && (*req.RoomCount < 0 || *req.RoomCount > 1000) {
+		e = append(e, "roomCount must be between 0 and 1000")
+	}
 	if req.EventType != nil && !eventTypes[strings.ToUpper(*req.EventType)] {
 		e = append(e, "eventType must be WEDDING, RECEPTION, ENGAGEMENT, BIRTHDAY or OTHER")
 	}
@@ -178,7 +187,7 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 	b, err := h.svc.CreateHallBooking(r.Context(), userID, service.HallBookingRequest{
 		FacilityID: facilityID, EventDate: startDate, EndDate: endDate,
 		StartTime: startTime, EndTime: endTime,
-		GuestCount: req.GuestCount, EventType: eventType,
+		GuestCount: req.GuestCount, RoomCount: req.RoomCount, EventType: eventType,
 		SlotType: slot, PackageIDs: req.PackageIDs, IdempotentKey: req.IdempotentKey,
 	})
 	if err != nil {

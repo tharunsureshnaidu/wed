@@ -29,12 +29,26 @@ type Booking struct {
 	CheckIn    time.Time `json:"checkIn"`
 	// StartDate/EndDate are checkIn/checkOut under the names the booking screen
 	// uses; both spellings are returned so neither client has to translate.
-	StartDate      time.Time  `json:"startDate"`
-	CheckOut       time.Time  `json:"checkOut"`
-	EndDate        time.Time  `json:"endDate"`
-	StartTime      *string    `json:"startTime"`
-	EndTime        *string    `json:"endTime"`
-	GuestCount     *int       `json:"guestCount"`
+	StartDate  time.Time `json:"startDate"`
+	CheckOut   time.Time `json:"checkOut"`
+	EndDate    time.Time `json:"endDate"`
+	StartTime  *string   `json:"startTime"`
+	EndTime    *string   `json:"endTime"`
+	GuestCount *int      `json:"guestCount"`
+	RoomCount  *int      `json:"roomCount"`
+
+	// Facility and review state are joined in for the "my bookings" screen:
+	// without them a client holds a bare targetId and has to fetch each venue
+	// separately to render a list.
+	Facility *BookingFacility `json:"facility,omitempty"`
+	// CanReview is true when the stay is reviewable and the user has not
+	// already reviewed this venue. Reviews are unique per (user, facility),
+	// not per booking, so a second booking at the same hall is not a second
+	// chance to review it.
+	CanReview      bool       `json:"canReview"`
+	HasReviewed    bool       `json:"hasReviewed"`
+	MyRating       *int       `json:"myRating"`
+	MyReviewID     *string    `json:"myReviewId"`
 	EventType      *string    `json:"eventType"`
 	SlotType       *string    `json:"slotType,omitempty"`
 	TotalAmount    float64    `json:"totalAmount"`
@@ -52,14 +66,15 @@ type Booking struct {
 const cols = `id, user_id, target_type, target_id, check_in, check_out, slot_type,
 	total_amount, COALESCE(discount_amount,0), COALESCE(paid_amount,0), status,
 	idempotent_key, expires_at, guest_name, guest_email, guest_phone, created_at,
-	to_char(start_time,'HH24:MI'), to_char(end_time,'HH24:MI'), guest_count, event_type`
+	to_char(start_time,'HH24:MI'), to_char(end_time,'HH24:MI'), guest_count, event_type,
+	room_count`
 
 func scan(row pgx.Row) (*Booking, error) {
 	var b Booking
 	err := row.Scan(&b.ID, &b.UserID, &b.TargetType, &b.TargetID, &b.CheckIn, &b.CheckOut,
 		&b.SlotType, &b.TotalAmount, &b.DiscountAmount, &b.PaidAmount, &b.Status,
 		&b.IdempotentKey, &b.ExpiresAt, &b.GuestName, &b.GuestEmail, &b.GuestPhone, &b.CreatedAt,
-		&b.StartTime, &b.EndTime, &b.GuestCount, &b.EventType)
+		&b.StartTime, &b.EndTime, &b.GuestCount, &b.EventType, &b.RoomCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -79,16 +94,33 @@ func (r *Repo) FindByIdempotencyKey(ctx context.Context, key string) (*Booking, 
 		`SELECT `+cols+` FROM bookings WHERE idempotent_key = $1 AND $1 <> ''`, key))
 }
 
+// BookingFacility is the venue summary a bookings list needs to render a row.
+type BookingFacility struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	City       *string  `json:"city"`
+	Address    *string  `json:"fullAddress"`
+	CoverImage *string  `json:"coverImage"`
+	Phone      *string  `json:"contactPhone"`
+	AvgRating  float64  `json:"avgRating"`
+	Lat        *float64 `json:"lat"`
+	Lng        *float64 `json:"lng"`
+}
+
 type HallBookingInput struct {
 	UserID     int64
 	FacilityID string
 	EventDate  time.Time
 	// EndDate is the last day of the event; equal to EventDate for a
 	// single-day booking.
-	EndDate       time.Time
-	StartTime     string
-	EndTime       string
-	GuestCount    *int
+	EndDate    time.Time
+	StartTime  string
+	EndTime    string
+	GuestCount *int
+	// RoomCount is how many guest rooms the customer needs alongside the hall.
+	// Optional and unpriced - see migration 041.
+	RoomCount     *int
 	EventType     *string
 	SlotType      string
 	TotalAmount   float64
@@ -135,12 +167,12 @@ func (r *Repo) CreateHallBooking(ctx context.Context, in HallBookingInput) (*Boo
 	err = tx.QueryRow(ctx,
 		`INSERT INTO bookings (user_id, target_type, target_id, check_in, check_out,
 		    slot_type, total_amount, idempotent_key, expires_at, guest_name, guest_email,
-		    guest_phone, start_time, end_time, guest_count, event_type)
+		    guest_phone, start_time, end_time, guest_count, event_type, room_count)
 		 VALUES ($1,'HALL',$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10,$11,
-		         NULLIF($12,'')::time, NULLIF($13,'')::time, $14, $15) RETURNING id`,
+		         NULLIF($12,'')::time, NULLIF($13,'')::time, $14, $15, $16) RETURNING id`,
 		in.UserID, in.FacilityID, in.EventDate, in.EndDate, in.SlotType, in.TotalAmount,
 		in.IdempotentKey, expiresAt, in.GuestName, in.GuestEmail, in.GuestPhone,
-		in.StartTime, in.EndTime, in.GuestCount, in.EventType).Scan(&bookingID)
+		in.StartTime, in.EndTime, in.GuestCount, in.EventType, in.RoomCount).Scan(&bookingID)
 	if err != nil {
 		if isUnique(err, "idx_bookings_idempotent") {
 			return nil, ErrDuplicateKey
@@ -468,4 +500,78 @@ func isUnique(err error, index string) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" &&
 		(index == "" || pgErr.ConstraintName == index)
+}
+
+// Enrich fills in the venue summary and review state for a page of bookings.
+//
+// One query for the whole page, not one per booking: a 20-row bookings screen
+// would otherwise issue 40 round trips, and the list endpoint is the most
+// frequently hit screen in the app.
+//
+// Missing facilities are left nil rather than failing the request - a booking
+// whose venue was deleted must still appear in the customer's history.
+func (r *Repo) Enrich(ctx context.Context, userID int64, bookings []*Booking) error {
+	if len(bookings) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(bookings))
+	seen := map[string]bool{}
+	for _, b := range bookings {
+		if !seen[b.TargetID] {
+			seen[b.TargetID] = true
+			ids = append(ids, b.TargetID)
+		}
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT f.id::text, f.name, f.type, f.city, f.full_address,
+		       f.contact_phone, COALESCE(f.avg_rating,0),
+		       f.lat::double precision, f.lng::double precision,
+		       (SELECT i.url FROM facility_images i
+		         WHERE i.facility_id = f.id
+		         ORDER BY i.is_cover DESC, i.sort_order LIMIT 1),
+		       rv.id::text, rv.rating
+		  FROM facilities f
+		  LEFT JOIN reviews rv
+		         ON rv.facility_id = f.id AND rv.user_id = $2 AND rv.is_deleted = FALSE
+		 WHERE f.id::text = ANY($1)`, ids, userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type info struct {
+		f        BookingFacility
+		reviewID *string
+		rating   *int
+	}
+	byID := map[string]info{}
+	for rows.Next() {
+		var x info
+		if err := rows.Scan(&x.f.ID, &x.f.Name, &x.f.Type, &x.f.City, &x.f.Address,
+			&x.f.Phone, &x.f.AvgRating, &x.f.Lat, &x.f.Lng, &x.f.CoverImage,
+			&x.reviewID, &x.rating); err != nil {
+			return err
+		}
+		byID[x.f.ID] = x
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, b := range bookings {
+		x, ok := byID[b.TargetID]
+		if !ok {
+			continue
+		}
+		f := x.f
+		b.Facility = &f
+		b.HasReviewed = x.reviewID != nil
+		b.MyReviewID, b.MyRating = x.reviewID, x.rating
+		// Matches what POST /api/v1/reviews actually enforces: a confirmed or
+		// completed stay, and one review per venue per user.
+		b.CanReview = !b.HasReviewed &&
+			(b.Status == "CONFIRMED" || b.Status == "COMPLETED")
+	}
+	return nil
 }

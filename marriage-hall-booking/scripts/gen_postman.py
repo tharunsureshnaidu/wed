@@ -146,7 +146,47 @@ BODIES = {
         "startDate": "2027-06-25", "endDate": "2027-06-26",
         "startTime": "18:00", "endTime": "23:00",
         "guestCount": 400, "eventType": "WEDDING",
+        # Optional: guest rooms the party needs alongside the hall. Not priced.
+        "roomCount": 12,
         "idempotentKey": "hall-{{runId}}",
+    },
+    "PATCH /api/v1/admin/facilities/{id}": {
+        "name": "Royal Grand Palace",
+        "contactPhone": "+919876543210",
+        "basePricePerDay": 125000,
+        "discountPercent": 15,
+        "discountLabel": "Monsoon offer",
+    },
+    "PUT /api/v1/admin/facilities/{id}/rating": {
+        "avgRating": 4.3, "reviewCount": 218,
+    },
+    "PUT /api/v1/admin/support": {
+        "supportEmail": "support@tripfactory.travel",
+        "supportPhone": "+91 80 4000 0000",
+        "supportWhatsapp": "",
+        "supportHours": "Mon-Sat, 9:00 AM - 7:00 PM",
+        "supportAddress": "",
+    },
+    "POST /api/v1/devices": {
+        "token": "fcm-device-token-{{runId}}", "platform": "ANDROID",
+    },
+    "PUT /api/v1/users/me/location": {
+        "lat": 12.9716, "lng": 77.5946, "source": "DEVICE",
+    },
+    "PUT /api/v1/users/me/geo-notifications": {
+        "enabled": True,
+    },
+    "POST /api/v1/coupons": {
+        "code": "WED{{runId}}", "discountType": "PERCENT", "discountValue": 15,
+        "maxDiscount": 10000, "minBookingAmount": 50000,
+        "facilityId": "{{hallId}}",
+    },
+    "PUT /api/v1/coupons/{id}": {
+        "code": "WED{{runId}}", "discountType": "PERCENT", "discountValue": 20,
+        "maxDiscount": 12000, "isActive": True,
+    },
+    "POST /api/v1/coupons/validate": {
+        "code": "WED{{runId}}", "amount": 200000, "facilityId": "{{hallId}}",
     },
     "POST /api/v1/bookings/quote": {
         "hallId": "{{hallId}}",
@@ -303,6 +343,14 @@ FOLDER_TOKEN = {
     "Refunds": "accessToken",
     "Quotes & Negotiation": "accessToken",
     "Reviews": "accessToken",
+    # Device registration, location and acknowledge are all customer actions.
+    # The public /ack/ and /decline/ links carry their own token in the path
+    # and need no header, but sending one does no harm.
+    "Notifications": "accessToken",
+    # Coupons are created by a vendor or an admin, so the owner token.
+    "Coupons": "ownerToken",
+    # GET /api/v1/support is public; the admin PUT lives in the Admin folder.
+    "Support": None,
     "Search": "accessToken",
     "Admin": "adminToken",
     "Cleanup (destructive)": "ownerToken",
@@ -333,7 +381,8 @@ MODULE_FOLDER = {
     "health": "Health", "auth": "Auth", "user": "User Profile",
     "vendors": "Vendors", "booking": "Bookings", "payment": "Payments",
     "quote": "Quotes & Negotiation", "review": "Reviews", "search": "Search",
-    "admin": "Admin",
+    "admin": "Admin", "notification": "Notifications", "support": "Support",
+    "coupon": "Coupons",
 }
 
 FOLDER_ORDER = ["Health", "Auth", "User Profile", "Vendors",
@@ -342,7 +391,8 @@ FOLDER_ORDER = ["Health", "Auth", "User Profile", "Vendors",
                 "Token Advance Rules", "Amenities", "Facility Policies",
                 "Facility Pricing Rules", "Facility Media",
                 "Favourites", "Bookings", "Payments", "Refunds",
-                "Quotes & Negotiation", "Reviews", "Search", "Admin",
+                "Quotes & Negotiation", "Reviews", "Notifications",
+                "Coupons", "Support", "Search", "Admin",
                 "Cleanup (destructive)"]
 
 # One folder per resource, as in the Java collection. A single "Facility
@@ -362,7 +412,11 @@ PATH_FOLDER = [
     ("/favourites", "Favourites"),
     ("/cancellation-policies", "Facility Policies"),
     ("/api/v1/admin/reviews", "Admin"),
+    ("/api/v1/admin/support", "Admin"),
     ("/api/v1/bookings/quote", "Bookings"),
+    # Acknowledge/decline act on a booking, so they must run after one exists -
+    # the folder decides run order, and Notifications comes after Bookings.
+    ("/acknowledge", "Notifications"),
     ("/api/v1/refunds", "Refunds"),
     ("/api/v1/halls", "Marriage Halls"),
     ("/api/v1/hotels", "Hotels"),
@@ -734,7 +788,10 @@ SKIP_ROUTES = {"GET /uploads/"}
 
 
 def collect_routes():
-    pat = re.compile(r'(?:mux\.(?:HandleFunc|Handle)\("|get\(")(GET|POST|PUT|DELETE) ([^"]+)"')
+    # PATCH included: the admin facility editor is a PATCH, and a method missing
+    # from this list is dropped silently - the route simply never appears in the
+    # collection and nobody notices until someone looks for it.
+    pat = re.compile(r'(?:mux\.(?:HandleFunc|Handle)\("|get\(")(GET|POST|PUT|PATCH|DELETE) ([^"]+)"')
     seen, routes = set(), []
     for root, _, files in os.walk(os.path.join(ROOT, "internal")):
         for f in sorted(files):
@@ -1027,6 +1084,8 @@ def describe(method, path, folder):
         return f"Creates or acts on a {resource} record."
     if method == "PUT":
         return f"Updates the {resource} record. Send the full object, not a partial one."
+    if method == "PATCH":
+        return f"Updates the {resource} record. Send only the fields you are changing; anything omitted is left alone."
     if method == "DELETE":
         return f"Deletes the {resource} record. Soft delete where the row is still referenced."
     return ""
@@ -1200,13 +1259,23 @@ if (d && d.length) pm.collectionVariables.set("ruleId", d[0].id);""",
 if (d) pm.collectionVariables.set("reportId", d.id);""",
 }
 
-# Every response uses the same envelope, so one test covers the whole collection.
-COMMON_TEST = """pm.test("returns the ApiResponse envelope", function () {
-    const b = pm.response.json();
-    pm.expect(b).to.have.property("success");
-    pm.expect(b).to.have.property("message");
-    pm.expect(b).to.have.property("timestamp");
-});"""
+# Almost every response uses the same envelope, so one test covers the whole
+# collection. The exception is the one-tap acknowledge/decline links, which
+# render an HTML page: they are opened in a phone browser from an SMS, not
+# called by the app, so asserting JSON on them fails for the wrong reason.
+COMMON_TEST = """const ct = pm.response.headers.get("Content-Type") || "";
+if (ct.indexOf("text/html") !== -1) {
+    pm.test("renders a page", function () {
+        pm.expect(pm.response.text()).to.include("<html");
+    });
+} else {
+    pm.test("returns the ApiResponse envelope", function () {
+        const b = pm.response.json();
+        pm.expect(b).to.have.property("success");
+        pm.expect(b).to.have.property("message");
+        pm.expect(b).to.have.property("timestamp");
+    });
+}"""
 
 
 def main():

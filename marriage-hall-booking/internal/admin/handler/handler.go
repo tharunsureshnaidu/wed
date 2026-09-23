@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -24,6 +25,35 @@ import (
 type Handler struct {
 	db     *pgxpool.Pool
 	signer *jwt.Signer
+
+	// OnStatusChange is called after an admin decision lands, so the affected
+	// user can be told. One hook rather than four: KYC decisions, facility
+	// approvals and blocks are all "an admin changed a status on something you
+	// own", and differ only in the words.
+	//
+	// A func rather than a dependency on the notification package: this handler
+	// must stay usable - and testable - without one.
+	OnStatusChange func(ctx context.Context, ev StatusChange)
+}
+
+// StatusChange is one admin decision. UserID is who to tell; zero means the
+// decision had no identifiable owner and nothing is sent.
+type StatusChange struct {
+	Entity   string // "vendor.kyc", "facility", "user"
+	EntityID string
+	UserID   int64
+	Status   string // APPROVED, REJECTED, BLOCKED, ACTIVE, ...
+	Reason   string
+	Name     string // facility or vendor name, for the message
+}
+
+// notifyStatus fires the hook if one is wired. Failures are the hook's own
+// problem: an admin decision that succeeded must not be reported as failed
+// because a notification could not be queued.
+func (h *Handler) notifyStatus(ctx context.Context, ev StatusChange) {
+	if h.OnStatusChange != nil && ev.UserID != 0 {
+		h.OnStatusChange(ctx, ev)
+	}
 }
 
 func New(db *pgxpool.Pool, signer *jwt.Signer) *Handler {
@@ -477,6 +507,11 @@ func (h *Handler) blockUser(w http.ResponseWriter, r *http.Request) {
 	if status == "SUSPENDED" {
 		middleware.RevokeAccessTokens(r.Context(), userID)
 	}
+	// After the commit, so a user is never told about a block that rolled back.
+	h.notifyStatus(r.Context(), StatusChange{
+		Entity: "user", EntityID: strconv.FormatInt(userID, 10), UserID: userID,
+		Status: status, Reason: req.Reason,
+	})
 	response.OK(w, msg, nil)
 }
 
@@ -541,16 +576,22 @@ func (h *Handler) setKyc(w http.ResponseWriter, r *http.Request, status, reason 
 	//
 	// The guard is in the WHERE clause rather than a separate read, so two
 	// admins clicking at once cannot both pass a check and then both write.
-	tag, err := h.db.Exec(r.Context(),
+	// RETURNING the owning user so the decision can be told to them: without
+	// it the vendor learns their KYC outcome only by looking.
+	var ownerUserID int64
+	var vendorName string
+	err := h.db.QueryRow(r.Context(),
 		`UPDATE vendors SET kyc_status = $2, kyc_rejection_reason = NULLIF($3,''),
 		    updated_at = CURRENT_TIMESTAMP
 		 WHERE id = $1 AND is_deleted = FALSE
-		   AND kyc_status IN ('SUBMITTED','PENDING_REVIEW')`, vendorID, status, reason)
-	if err != nil {
+		   AND kyc_status IN ('SUBMITTED','PENDING_REVIEW')
+		 RETURNING user_id, COALESCE(business_name,'your account')`,
+		vendorID, status, reason).Scan(&ownerUserID, &vendorName)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		httpx.Fail(w, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Distinguish "no such vendor" from "nothing to decide on": an admin
 		// told only "not found" would go looking for the wrong problem.
 		var current string
@@ -566,6 +607,10 @@ func (h *Handler) setKyc(w http.ResponseWriter, r *http.Request, status, reason 
 			"KYC_NOT_SUBMITTED")
 		return
 	}
+	h.notifyStatus(r.Context(), StatusChange{
+		Entity: "vendor.kyc", EntityID: vendorID, UserID: ownerUserID,
+		Status: status, Reason: reason, Name: vendorName,
+	})
 	response.OK(w, "KYC "+status, nil)
 }
 
@@ -620,17 +665,26 @@ func (h *Handler) approveFacility(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "Invalid status", "VALIDATION_ERROR")
 		return
 	}
-	tag, err := h.db.Exec(r.Context(),
+	// RETURNING the owner so they learn the outcome. A listing sitting at
+	// PENDING is the vendor's whole business waiting on this decision.
+	var ownerID int64
+	var name string
+	err := h.db.QueryRow(r.Context(),
 		`UPDATE facilities SET status = $2, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = $1 AND is_deleted = FALSE`, id, status)
+		 WHERE id = $1 AND is_deleted = FALSE
+		 RETURNING owner_id, name`, id, status).Scan(&ownerID, &name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
+		return
+	}
 	if err != nil {
 		httpx.Fail(w, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
-		return
-	}
+	h.notifyStatus(r.Context(), StatusChange{
+		Entity: "facility", EntityID: id, UserID: ownerID,
+		Status: status, Name: name,
+	})
 	response.OK(w, "Facility "+status, nil)
 }
 

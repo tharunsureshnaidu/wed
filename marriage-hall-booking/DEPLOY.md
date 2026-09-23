@@ -95,8 +95,23 @@ Kafka 4.x runs in KRaft mode — no ZooKeeper. It needs a JVM:
 sudo dnf install -y java-21-amazon-corretto-headless
 ```
 
-The tarball is already at `/opt/kafka` (that is what `KAFKA_HOME` in the
-Makefile points at). Format the storage directory once, then start it:
+Install the tarball to `/opt/kafka` (that is what `KAFKA_HOME` in the Makefile
+points at) if it is not there already:
+
+```bash
+curl -fsSLO https://dlcdn.apache.org/kafka/4.1.2/kafka_2.13-4.1.2.tgz
+sudo tar -xzf kafka_2.13-4.1.2.tgz -C /opt && sudo mv /opt/kafka_2.13-4.1.2 /opt/kafka
+sudo chown -R "$(id -un):$(id -gn)" /opt/kafka
+```
+
+`log.dirs` defaults to `/tmp/kraft-combined-logs`, which a reboot wipes along
+with every topic. Point it somewhere persistent BEFORE formatting:
+
+```bash
+sudo sed -i 's|^log.dirs=.*|log.dirs=/opt/kafka/data|' /opt/kafka/config/server.properties
+```
+
+Format the storage directory once, then start it:
 
 ```bash
 cd /opt/kafka

@@ -30,6 +30,13 @@ type Handler struct {
 	// OnMediaUpload queues a file for the worker to upload. Nil means no
 	// publisher (Kafka disabled), and uploads run inline on the request.
 	OnMediaUpload func(ctx context.Context, m events.MediaUpload) error
+	// OnFacilityCreated tells the platform a new listing needs approval. It
+	// goes to admins, not the owner: the owner just created it and knows.
+	OnFacilityCreated func(ctx context.Context, facilityID, name string, ownerID int64)
+	// OnAmenitiesAdded announces new facilities at an existing venue to nearby
+	// users. Fired only from the add-amenity route, not from create: a new
+	// listing already has its own announcement.
+	OnAmenitiesAdded func(ctx context.Context, facilityID string, names []string)
 }
 
 func New(repo *repository.Repo, signer *jwt.Signer, media storage.Store) *Handler {
@@ -81,7 +88,10 @@ func (h *Handler) requireOwner(w http.ResponseWriter, r *http.Request) (string, 
 		return "", false
 	}
 	userID, _ := middleware.UserID(r.Context())
-	if ownerID != userID && middleware.Role(r.Context()) != domain.RoleAdmin {
+	// HasRole, not Role: Role returns only the primary role, so an admin whose
+	// token lists ROLE_ADMIN second was refused access to a facility they are
+	// entitled to edit.
+	if ownerID != userID && !middleware.HasRole(r.Context(), domain.RoleAdmin) {
 		response.Error(w, http.StatusForbidden, "You do not own this facility", "NOT_FACILITY_OWNER")
 		return "", false
 	}
@@ -203,7 +213,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.attachAmenities(r.Context(), f.ID, amenities); err != nil {
+	// The create path does not announce: a brand-new listing is PENDING and
+	// gets its own announcement when an admin approves it.
+	if _, err := h.attachAmenities(r.Context(), f.ID, amenities); err != nil {
 		httpx.Fail(w, err)
 		return
 	}
@@ -235,6 +247,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			f = reloaded
 		}
 		if len(failed) > 0 {
+			h.notifyCreated(r.Context(), f.ID, f.Name, userID)
 			response.OK(w, "Facility created, but some images were rejected: "+
 				strings.Join(failed, "; "), f)
 			return
@@ -243,7 +256,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if reloaded, err := h.repo.Get(r.Context(), f.ID); err == nil {
 		f = reloaded
 	}
+	h.notifyCreated(r.Context(), f.ID, f.Name, userID)
 	response.OK(w, "Facility created successfully", f)
+}
+
+// notifyCreated fires the hook if one is wired. The listing exists either way:
+// a notification that cannot be queued must not fail the create.
+func (h *Handler) notifyCreated(ctx context.Context, id, name string, ownerID int64) {
+	if h.OnFacilityCreated != nil {
+		h.OnFacilityCreated(ctx, id, name, ownerID)
+	}
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -370,9 +392,15 @@ func (h *Handler) addAmenity(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, aerr)
 		return
 	}
-	if err := h.attachAmenities(r.Context(), id, list); err != nil {
+	added, err := h.attachAmenities(r.Context(), id, list)
+	if err != nil {
 		httpx.Fail(w, err)
 		return
+	}
+	// Only genuinely new amenities are announced; re-adding an existing one
+	// changes nothing and must not notify anyone.
+	if h.OnAmenitiesAdded != nil && len(added) > 0 {
+		h.OnAmenitiesAdded(r.Context(), id, added)
 	}
 	response.OK(w, "Amenity added", nil)
 }

@@ -7,6 +7,8 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -43,10 +45,38 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/search/recently-viewed", h.recentlyViewed)
 	mux.HandleFunc("GET /api/v1/search/trending", h.trending)
 	mux.HandleFunc("GET /api/v1/search/popular-cities", h.popularCities)
+	// Clearing history is the other half of having it: a user who searched
+	// something they would rather not see again needs a way to remove it.
+	mux.HandleFunc("DELETE /api/v1/search/recent", h.clearRecentSearches)
 }
 
-// viewer identifies the caller for personalised lists. An unauthenticated
-// caller is "anonymous", matching the Java behaviour.
+// clearRecentSearches wipes the caller's own search history. Scoped to their
+// viewer key, so one caller can never clear another's.
+func (h *Handler) clearRecentSearches(w http.ResponseWriter, r *http.Request) {
+	if h.rdb == nil {
+		response.OK(w, "Recent searches cleared", nil)
+		return
+	}
+	if err := h.rdb.Del(r.Context(), "search:recent:"+h.viewer(r)).Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	response.OK(w, "Recent searches cleared", nil)
+}
+
+// viewer identifies the caller for personalised lists: recent searches and
+// recently viewed venues.
+//
+// A signed-in caller is keyed by user id. Everyone else used to share one
+// "anonymous" bucket, which meant one logged-out visitor's search history was
+// served to the next - a stranger could see that someone had searched for
+// "divorce party venue". Anonymous callers are now keyed by a hash of their
+// address and user agent, so the feature still works before sign-in without
+// pooling unrelated people together.
+//
+// That key is a best-effort device fingerprint, not an identity: visitors
+// behind one NAT with the same browser still share a bucket. It is good enough
+// for a convenience list and deliberately not used for anything else.
 func (h *Handler) viewer(r *http.Request) string {
 	if tok := r.Header.Get("Authorization"); len(tok) > 7 {
 		if claims, err := h.signer.Parse(tok[7:]); err == nil {
@@ -56,7 +86,8 @@ func (h *Handler) viewer(r *http.Request) string {
 	if id, ok := middleware.UserID(r.Context()); ok {
 		return strconv.FormatInt(id, 10)
 	}
-	return "anonymous"
+	sum := sha256.Sum256([]byte(httpx.IP(r) + "|" + r.UserAgent()))
+	return "anon-" + hex.EncodeToString(sum[:8])
 }
 
 type venue struct {

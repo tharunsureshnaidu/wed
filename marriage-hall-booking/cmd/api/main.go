@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	adminhandler "github.com/tripfcatory/marriage-hall-booking/internal/admin/handler"
@@ -19,15 +22,20 @@ import (
 	bookinghandler "github.com/tripfcatory/marriage-hall-booking/internal/booking/handler"
 	bookingrepo "github.com/tripfcatory/marriage-hall-booking/internal/booking/repository"
 	bookingservice "github.com/tripfcatory/marriage-hall-booking/internal/booking/service"
+	couponhandler "github.com/tripfcatory/marriage-hall-booking/internal/coupon/handler"
 	facilityhandler "github.com/tripfcatory/marriage-hall-booking/internal/facility/handler"
 	facilityrepo "github.com/tripfcatory/marriage-hall-booking/internal/facility/repository"
 	"github.com/tripfcatory/marriage-hall-booking/internal/health"
 	"github.com/tripfcatory/marriage-hall-booking/internal/migrations"
+	notifyhandler "github.com/tripfcatory/marriage-hall-booking/internal/notification/handler"
+	notifyrepo "github.com/tripfcatory/marriage-hall-booking/internal/notification/repository"
+	notifysvc "github.com/tripfcatory/marriage-hall-booking/internal/notification/service"
 	paymenthandler "github.com/tripfcatory/marriage-hall-booking/internal/payment/handler"
 	paymentservice "github.com/tripfcatory/marriage-hall-booking/internal/payment/service"
 	quotehandler "github.com/tripfcatory/marriage-hall-booking/internal/quote/handler"
 	reviewhandler "github.com/tripfcatory/marriage-hall-booking/internal/review/handler"
 	searchhandler "github.com/tripfcatory/marriage-hall-booking/internal/search/handler"
+	supporthandler "github.com/tripfcatory/marriage-hall-booking/internal/support/handler"
 	userhandler "github.com/tripfcatory/marriage-hall-booking/internal/user/handler"
 	userrepo "github.com/tripfcatory/marriage-hall-booking/internal/user/repository"
 	vendorhandler "github.com/tripfcatory/marriage-hall-booking/internal/vendors/handler"
@@ -37,6 +45,7 @@ import (
 	"github.com/tripfcatory/marriage-hall-booking/pkg/jwt"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
+	"github.com/tripfcatory/marriage-hall-booking/pkg/notify"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
 )
 
@@ -153,14 +162,58 @@ func main() {
 	// Serves files uploaded with a facility (see internal/facility/handler/upload.go).
 	facilityhandler.ServeUploads(mux)
 	bookinghandler.New(bookingSvc, signer).Register(mux)
+	// Sending happens in the worker; the API only enqueues, so this service
+	// has no senders wired. The trigger hooks below share it.
+	notifier := notifysvc.New(notifyrepo.New(db), nil)
+	notifyhandler.New(notifier, signer).Register(mux)
 	paymenthandler.New(paymentSvc, signer).Register(mux)
 	vendorhandler.New(db, signer).Register(mux)
 	quotehandler.New(db, signer, bookingSvc).Register(mux)
+
+	coupons := couponhandler.New(db, signer)
+	coupons.OnCouponCreated = func(ctx context.Context, couponID, code, facilityID string, createdBy int64) {
+		notifier.AnnounceFacilityNearby(ctx, facilityID, "has a new offer: "+code, "coupon:"+couponID)
+	}
+	coupons.Register(mux)
+
 	reviews := reviewhandler.New(db, signer)
+	reviews.OnReviewCreated = func(ctx context.Context, facilityID string, rating int) {
+		notifyFacilityOwner(ctx, db, notifier, facilityID, rating)
+	}
 	reviews.Register(mux)
 	reviews.RegisterAdmin(mux)
 	searchhandler.New(db, rdb, signer).Register(mux)
-	adminhandler.New(db, signer).Register(mux)
+	supporthandler.New(db, signer).Register(mux)
+
+	admins := adminhandler.New(db, signer)
+	admins.OnStatusChange = func(ctx context.Context, ev adminhandler.StatusChange) {
+		onAdminStatusChange(ctx, notifier, ev)
+	}
+	admins.Register(mux)
+	admins.RegisterFacilityAdmin(mux)
+
+	// New amenities at an existing venue: told to nearby customers, not to
+	// admins - it needs no approval.
+	fh.OnAmenitiesAdded = func(ctx context.Context, facilityID string, names []string) {
+		if len(names) == 0 {
+			return
+		}
+		notifier.AnnounceFacilityNearby(ctx, facilityID,
+			"now offers "+strings.Join(names, ", "),
+			"amenities:"+strings.Join(names, ","))
+	}
+
+	fh.OnFacilityCreated = func(ctx context.Context, facilityID, name string, ownerID int64) {
+		if err := notifier.NotifyAdmins(ctx, notifysvc.Event{
+			Type:      "facility.created",
+			SubjectID: facilityID,
+			Subject:   "[ops] New listing awaiting approval: " + name,
+			Body: fmt.Sprintf("A new facility has been submitted and is waiting for approval.\n\n%s\nFacility ref: %s\n\nIt stays invisible to customers until approved.",
+				name, facilityID),
+		}); err != nil {
+			logger.Error("notify: facility created", "facilityId", facilityID, logger.Err(err))
+		}
+	}
 
 	handler := middleware.Chain(mux,
 		middleware.Recover,
@@ -196,4 +249,105 @@ func main() {
 		logger.Error("shutdown", logger.Err(err))
 	}
 	logger.Info("stopped")
+}
+
+// onAdminStatusChange turns one admin decision into a notification the
+// affected user can act on. Wording matters more than usual here: these are
+// the messages that tell someone their livelihood listing was rejected.
+func onAdminStatusChange(ctx context.Context, n *notifysvc.Service, ev adminhandler.StatusChange) {
+	var subject, body string
+	// A blocked user's sessions are revoked as part of the block, so push and
+	// anything in-app is unreadable by the time it arrives. Email and SMS are
+	// the only channels that still reach them.
+	var channels []notify.Channel
+
+	switch ev.Entity {
+	case "vendor.kyc":
+		if ev.Status == "APPROVED" {
+			subject = "Your KYC has been approved"
+			body = "Good news - your KYC verification for " + ev.Name + " has been approved.\n\nYou can now publish listings and accept bookings."
+		} else {
+			subject = "Your KYC needs attention"
+			body = "Your KYC verification for " + ev.Name + " was not approved."
+			if ev.Reason != "" {
+				body += "\n\nReason: " + ev.Reason
+			}
+			body += "\n\nYou can correct the details and submit again."
+		}
+	case "facility":
+		switch ev.Status {
+		case "APPROVED":
+			subject = "Your listing is live: " + ev.Name
+			body = ev.Name + " has been approved and is now visible to customers."
+			// Announced on approval rather than on creation: a PENDING venue is
+			// invisible to customers, so telling them about it sends them to a
+			// listing they cannot open.
+			n.AnnounceFacilityNearby(ctx, ev.EntityID, "is a new venue near you", "approved")
+		case "REJECTED":
+			subject = "Your listing was not approved: " + ev.Name
+			body = ev.Name + " was not approved."
+			if ev.Reason != "" {
+				body += "\n\nReason: " + ev.Reason
+			}
+		case "BLOCKED":
+			subject = "Your listing has been suspended: " + ev.Name
+			body = ev.Name + " has been suspended and is no longer visible to customers."
+		default:
+			// PENDING and anything added later: no message worth sending.
+			return
+		}
+	case "user":
+		if ev.Status == "SUSPENDED" {
+			subject = "Your account has been suspended"
+			body = "Your account has been suspended and you have been signed out."
+			if ev.Reason != "" {
+				body += "\n\nReason: " + ev.Reason
+			}
+			body += "\n\nContact support if you believe this is a mistake."
+			channels = []notify.Channel{notify.Email, notify.SMS}
+		} else {
+			subject = "Your account has been reactivated"
+			body = "Your account is active again. You can sign in as usual."
+		}
+	default:
+		return
+	}
+
+	if err := n.NotifyUser(ctx, notifysvc.Event{
+		Type:      ev.Entity + "." + strings.ToLower(ev.Status),
+		SubjectID: ev.EntityID,
+		UserID:    ev.UserID,
+		Subject:   subject,
+		Body:      body,
+		Channels:  channels,
+	}); err != nil {
+		logger.Error("notify: admin status change",
+			"entity", ev.Entity, "entityId", ev.EntityID, logger.Err(err))
+	}
+}
+
+// notifyFacilityOwner tells a venue owner they have a new review. The owner is
+// looked up here rather than passed in: the review handler has no reason to
+// know who owns the facility.
+func notifyFacilityOwner(ctx context.Context, db *pgxpool.Pool, n *notifysvc.Service, facilityID string, rating int) {
+	var ownerID int64
+	var name string
+	if err := db.QueryRow(ctx,
+		`SELECT owner_id, name FROM facilities WHERE id = $1 AND is_deleted = FALSE`,
+		facilityID).Scan(&ownerID, &name); err != nil {
+		logger.Error("notify: review owner lookup", "facilityId", facilityID, logger.Err(err))
+		return
+	}
+	// The review id would be the natural subject, but the handler does not
+	// return it; facility+rating is enough to dedupe a redelivery.
+	if err := n.NotifyUser(ctx, notifysvc.Event{
+		Type:      "review.created",
+		SubjectID: facilityID + ":" + strconv.Itoa(rating),
+		UserID:    ownerID,
+		Subject:   fmt.Sprintf("New %d-star review for %s", rating, name),
+		Body: fmt.Sprintf("%s received a new %d-star review.\n\nOpen the app to read it and reply.",
+			name, rating),
+	}); err != nil {
+		logger.Error("notify: review created", "facilityId", facilityID, logger.Err(err))
+	}
 }
