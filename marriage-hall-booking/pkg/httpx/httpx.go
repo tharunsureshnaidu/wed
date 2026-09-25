@@ -4,11 +4,9 @@ package httpx
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/tripfcatory/marriage-hall-booking/pkg/apperr"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
@@ -35,17 +33,11 @@ func Fail(w http.ResponseWriter, err error) {
 	response.Error(w, http.StatusInternalServerError, "Something went wrong", "INTERNAL_ERROR")
 }
 
-func IP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		hops := strings.Split(xff, ",")
-		return strings.TrimSpace(hops[len(hops)-1])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// IP is the caller's address. Deprecated in favour of ClientIP, which it now
+// delegates to: this version trusted X-Forwarded-For from anyone, and it keys
+// the anonymous search-history bucket - a forged header let one visitor read
+// another's history.
+func IP(r *http.Request) string { return ClientIP(r) }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 

@@ -366,6 +366,76 @@ Duplicate ids are rejected rather than collapsed (comparing a venue with itself
 is a client bug), and a well-formed id that does not exist gives 404 rather than
 silently returning fewer columns than the client asked for.
 
+## Production configuration
+
+`cfg.Validate()` runs at boot in both binaries. In production (`APP_ENV=prod`
+or `production`) any problem is **fatal**; in development they are warnings, so a
+laptop still starts on defaults. Every check names the consequence, not the
+setting — "acknowledge links sent by SMS would point at the server itself", not
+"PUBLIC_BASE_URL looks wrong".
+
+It catches what is silent at startup and only visible once a customer hits it: a
+localhost `PUBLIC_BASE_URL` baked into SMS links and media URLs, an empty
+`PAYMENT_WEBHOOK_SECRET` (anyone who finds the URL can mark a booking paid),
+`sslmode=disable` to a remote host, `OTP_FIXED_CODE`, `LOG_OTP_CODES`, a `*` or
+localhost CORS origin, and a short `JWT_SECRET`.
+
+**`.env` overrides the real environment — except for the keys in `envWins`.**
+That override exists for stale exported `DB_*` vars from the Java service, but
+it meant a container could not set `APP_ENV=production`: the `.env` in the image
+won, the service believed it was in development, and every check above was
+skipped. `APP_ENV`, `PUBLIC_BASE_URL`, `TRUSTED_PROXIES`, `JWT_SECRET`,
+`OTP_FIXED_CODE`, `LOG_OTP_CODES`, `CORS_ORIGINS` and `LOG_LEVEL` now come from
+the deployment.
+
+### X-Forwarded-For is only trusted from a configured proxy
+
+`httpx.ClientIP` honours the header **only** when the direct peer matches
+`TRUSTED_PROXIES` (CIDRs or bare IPs, comma-separated). Empty means trust
+nothing — correct for a directly exposed service.
+
+The previous code trusted the last XFF hop unconditionally, on the reasoning
+that a proxy appends it. With no proxy in front the client supplies the whole
+header, so one machine bypassed the 5-per-hour registration limit by varying a
+string. **Verified before and after**: seven forged requests were all accepted
+before, and now give 200 x5 then 429, 429.
+
+This keys the rate limiter *and* the anonymous search-history bucket, so the
+same forgery also let one visitor read another's searches.
+
+### 201 vs 200 on a POST
+
+`response.Created(w, message, location, data)` returns **201 with a Location
+header**. The envelope is byte-identical to `OK`'s, so a client reading
+`body.data` is unaffected — only the status line and one header change.
+
+**Use it only for a true create.** An upsert returns 200, because a client that
+branches on 201 would otherwise be told a resource was created when an existing
+row was updated. These are upserts and deliberately stay 200:
+
+- `PUT /vendors/me`, `/vendors/me/bank-account` — `ON CONFLICT`
+- `POST /devices` — re-registering an install is an upsert by design
+- `POST /admin/reviews` — admin correcting a rating
+- advance rules, cancellation policies — `ON CONFLICT (facility_id)`
+
+**`POST /bookings/halls` also stays 200**, and this one is subtle: an idempotent
+retry returns the *original* booking, so 201 would claim a creation that did not
+happen. Reporting it correctly needs the service to tell the handler which of
+the two occurred, which is a larger change than the status code.
+
+The Postman `COMMON_TEST` now asserts that any 201 carries a Location header —
+the envelope check passes either way, which is exactly how every create sat at
+200 unnoticed.
+
+### List responses
+
+Every paginated list returns `httpx.NewPaged`: `content`, `page`, `size`,
+`totalElements`, `totalPages`. Three handlers had drifted to ad-hoc maps with
+`items`/`venues` keys and no `totalPages`, which breaks a client's single
+pagination helper. The notification feed keeps `content` but deliberately has no
+page number — it is a keyset cursor, and a page number over a shifting feed is a
+number no client can act on.
+
 ## Geo-targeted announcements
 
 Facility approved, amenities added and coupon created push to customers within

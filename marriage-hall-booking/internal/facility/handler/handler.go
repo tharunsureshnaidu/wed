@@ -261,7 +261,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		f = reloaded
 	}
 	h.notifyCreated(r.Context(), f.ID, f.Name, userID)
-	response.OK(w, "Facility created successfully", f)
+	response.Created(w, "Facility created successfully", "/api/v1/facilities/"+f.ID, f)
 }
 
 // notifyCreated fires the hook if one is wired. The listing exists either way:

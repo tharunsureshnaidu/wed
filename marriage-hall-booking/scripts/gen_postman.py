@@ -1370,7 +1370,15 @@ if (d) pm.collectionVariables.set("reportId", d.id);""",
 # collection. The exception is the one-tap acknowledge/decline links, which
 # render an HTML page: they are opened in a phone browser from an SMS, not
 # called by the app, so asserting JSON on them fails for the wrong reason.
-COMMON_TEST = """const ct = pm.response.headers.get("Content-Type") || "";
+COMMON_TEST = """// A create returns 201 and a Location header; an upsert returns 200. Asserted
+// so the distinction cannot silently regress - the envelope check below passes
+// either way, which is how every create sat at 200 unnoticed.
+if (pm.response.code === 201) {
+    pm.test("201 carries a Location header", function () {
+        pm.expect(pm.response.headers.get("Location")).to.be.a("string").and.not.empty;
+    });
+}
+const ct = pm.response.headers.get("Content-Type") || "";
 if (ct.indexOf("text/html") !== -1) {
     pm.test("renders a page", function () {
         pm.expect(pm.response.text()).to.include("<html");

@@ -123,7 +123,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if h.OnReviewCreated != nil {
 		h.OnReviewCreated(r.Context(), req.FacilityID, req.Rating)
 	}
-	response.OK(w, "Review submitted successfully", map[string]any{
+	response.Created(w, "Review submitted successfully", "/api/v1/reviews/"+id, map[string]any{
 		"id": id, "facilityId": req.FacilityID, "rating": req.Rating,
 		"title": req.Title, "comment": req.Comment,
 	})

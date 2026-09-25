@@ -168,12 +168,13 @@ func (h *Handler) createRoomType(w http.ResponseWriter, r *http.Request) {
 	}
 	// Same shape as the list endpoint: a hand-built map here had dropped
 	// description, so POST and GET disagreed about the same resource.
-	response.OK(w, "Room type created successfully", map[string]any{
-		"id": id, "facilityId": facilityID, "name": req.Name,
-		"description":    req.Description,
-		"capacityAdults": req.CapacityAdults, "capacityChildren": req.CapacityChildren,
-		"basePricePerNight": req.BasePricePerNight, "totalRooms": req.TotalRooms,
-	})
+	response.Created(w, "Room type created successfully",
+		"/api/v1/hotels/"+facilityID+"/room-types/"+id, map[string]any{
+			"id": id, "facilityId": facilityID, "name": req.Name,
+			"description":    req.Description,
+			"capacityAdults": req.CapacityAdults, "capacityChildren": req.CapacityChildren,
+			"basePricePerNight": req.BasePricePerNight, "totalRooms": req.TotalRooms,
+		})
 }
 
 func (h *Handler) listRoomTypes(w http.ResponseWriter, r *http.Request) {
@@ -257,10 +258,11 @@ func (h *Handler) createPackage(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	response.OK(w, "Package created successfully", map[string]any{
-		"id": id, "facilityId": facilityID, "name": req.Name, "price": req.Price,
-		"guestCapacity": req.GuestCapacity, "includesCatering": req.IncludesCatering,
-	})
+	response.Created(w, "Package created successfully",
+		"/api/v1/halls/"+facilityID+"/packages/"+id, map[string]any{
+			"id": id, "facilityId": facilityID, "name": req.Name, "price": req.Price,
+			"guestCapacity": req.GuestCapacity, "includesCatering": req.IncludesCatering,
+		})
 }
 
 func (h *Handler) listPackages(w http.ResponseWriter, r *http.Request) {
@@ -341,10 +343,11 @@ func (h *Handler) createAddon(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	response.OK(w, "Add-on created successfully", map[string]any{
-		"id": id, "facilityId": facilityID, "name": req.Name,
-		"price": req.Price, "serviceType": req.ServiceType,
-	})
+	response.Created(w, "Add-on created successfully",
+		"/api/v1/halls/"+facilityID+"/addons/"+id, map[string]any{
+			"id": id, "facilityId": facilityID, "name": req.Name,
+			"price": req.Price, "serviceType": req.ServiceType,
+		})
 }
 
 func (h *Handler) listAddons(w http.ResponseWriter, r *http.Request) {
@@ -506,10 +509,11 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	response.OK(w, "Policy created successfully", map[string]any{
-		"id": id, "facilityId": facilityID,
-		"policyType": req.PolicyType, "description": req.Description,
-	})
+	response.Created(w, "Policy created successfully",
+		"/api/v1/facilities/"+facilityID+"/policies/"+id, map[string]any{
+			"id": id, "facilityId": facilityID,
+			"policyType": req.PolicyType, "description": req.Description,
+		})
 }
 
 func (h *Handler) updatePolicy(w http.ResponseWriter, r *http.Request) {
@@ -632,7 +636,8 @@ func (h *Handler) createPricing(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	response.OK(w, "Pricing rule created successfully", pricingView(id, facilityID, req))
+	response.Created(w, "Pricing rule created successfully",
+		"/api/v1/facilities/"+facilityID+"/pricing/"+id, pricingView(id, facilityID, req))
 }
 
 func (h *Handler) updatePricing(w http.ResponseWriter, r *http.Request) {

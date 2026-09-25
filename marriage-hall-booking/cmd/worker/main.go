@@ -34,6 +34,23 @@ var notifier *notifysvc.Service
 func main() {
 	logger.Init("worker")
 	cfg := config.Load()
+
+	// Refuse to serve real users on a development configuration. Each of these
+	// is silent at startup and only visible once a customer hits it - a dead
+	// acknowledge link, an unauthenticated payment webhook, an OTP that is
+	// always 000000. In development they are warnings so a laptop still starts.
+	if problems := cfg.Validate(); len(problems) > 0 {
+		if config.IsProduction() {
+			for _, p := range problems {
+				logger.Error("config", "problem", p)
+			}
+			logger.Fatal("refusing to start in production with an unsafe configuration",
+				"problems", len(problems))
+		}
+		for _, p := range problems {
+			logger.Warn("config (dev)", "problem", p)
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

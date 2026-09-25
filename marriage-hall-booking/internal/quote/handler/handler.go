@@ -251,7 +251,7 @@ func (h *Handler) request(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	response.OK(w, "Quote request submitted successfully", out)
+	response.Created(w, "Quote request submitted successfully", "/api/v1/quotes/"+id, out)
 }
 
 type lineItem struct {

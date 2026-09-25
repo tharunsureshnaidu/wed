@@ -177,7 +177,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	response.OK(w, "Thank you for your feedback", map[string]any{
+	response.Created(w, "Thank you for your feedback", "/api/v1/feedback/"+id, map[string]any{
 		"id": id, "status": "NEW", "createdAt": createdAt,
 		"attachmentUrl": attachmentURL,
 	})
@@ -318,9 +318,11 @@ func (h *Handler) respondList(w http.ResponseWriter, r *http.Request,
 		httpx.Fail(w, err)
 		return
 	}
-	response.OK(w, "Feedback retrieved successfully", map[string]any{
-		"content": out, "page": page, "size": size, "totalElements": total,
-	})
+	// httpx.NewPaged, not an ad-hoc map: every other list in this service
+	// returns content/page/size/totalElements/totalPages, and a client should
+	// need only one pagination helper.
+	response.OK(w, "Feedback retrieved successfully",
+		httpx.NewPaged(out, page, size, total))
 }
 
 // update is the ops triage action: change status, leave a note.

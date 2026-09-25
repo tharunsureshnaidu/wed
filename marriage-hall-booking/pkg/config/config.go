@@ -100,8 +100,33 @@ func loadDotEnv(path string) {
 		if !ok {
 			continue
 		}
-		os.Setenv(strings.TrimSpace(k), strings.TrimSpace(v))
+		k = strings.TrimSpace(k)
+		// The override above is a workaround for stale exported DB_* vars, and
+		// it must not extend to the deployment's own identity. A container or
+		// systemd unit sets APP_ENV in the real environment; if a .env that
+		// shipped in the image overrode it, the service would believe it is in
+		// development and skip every production safety check.
+		if _, present := os.LookupEnv(k); present && envWins[k] {
+			continue
+		}
+		os.Setenv(k, strings.TrimSpace(v))
 	}
+}
+
+// envWins lists the keys where a real environment variable beats .env. These
+// describe where the process is running rather than what it talks to, so the
+// deployment - not a file baked into the image - has the final say.
+var envWins = map[string]bool{
+	"APP_ENV":         true,
+	"PUBLIC_BASE_URL": true,
+	"TRUSTED_PROXIES": true,
+	"LOG_LEVEL":       true,
+	// Security-relevant switches a deployment must be able to turn off even
+	// when a development .env is present in the image.
+	"OTP_FIXED_CODE": true,
+	"LOG_OTP_CODES":  true,
+	"CORS_ORIGINS":   true,
+	"JWT_SECRET":     true,
 }
 
 func ms(v string) time.Duration {

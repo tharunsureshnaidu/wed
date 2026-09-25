@@ -206,7 +206,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if h.OnCouponCreated != nil && active && req.FacilityID != nil && *req.FacilityID != "" {
 		h.OnCouponCreated(r.Context(), id, req.Code, *req.FacilityID, userID)
 	}
-	response.OK(w, "Coupon created successfully", map[string]any{"id": id, "code": req.Code})
+	response.Created(w, "Coupon created successfully", "/api/v1/coupons/"+id,
+		map[string]any{"id": id, "code": req.Code})
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -372,12 +373,12 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		id, dtype                string
-		dvalue                   float64
-		maxDisc, minBooking      *float64
-		facilityID               *string
-		usageLimit               *int
-		usedCount                int
+		id, dtype           string
+		dvalue              float64
+		maxDisc, minBooking *float64
+		facilityID          *string
+		usageLimit          *int
+		usedCount           int
 	)
 	err := h.db.QueryRow(r.Context(), `
 		SELECT id::text, discount_type, discount_value, max_discount,

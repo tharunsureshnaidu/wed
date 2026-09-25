@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"net"
+	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
 	"net/http"
 	"os"
 	"strconv"
@@ -75,20 +75,11 @@ func RateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 	}
 }
 
-// clientIP trusts the LAST X-Forwarded-For entry, which is what the nearest
-// proxy appended and a client cannot forge. With no proxy it falls back to the
-// socket peer.
+// clientIP defers to httpx.ClientIP, which honours X-Forwarded-For only when
+// the direct peer is a configured trusted proxy.
 //
-// ponytail: assumes at most one trusted proxy hop. Revisit if a load balancer is
-// ever put in front of this service.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		hops := strings.Split(xff, ",")
-		return strings.TrimSpace(hops[len(hops)-1])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// The previous version trusted the last XFF entry unconditionally. With no
+// proxy in front the client supplies the entire header, so one machine could
+// bypass the 5-per-hour registration limit by varying a string - confirmed
+// against the running service.
+func clientIP(r *http.Request) string { return httpx.ClientIP(r) }

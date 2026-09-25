@@ -22,6 +22,25 @@ func OK(w http.ResponseWriter, message string, data any) {
 	})
 }
 
+// Created is 201 for a request that brought a new resource into existence.
+//
+// The envelope is identical to OK's, so a client reading body.data is
+// unaffected; only the status line changes. location, when non-empty, is sent
+// as the Location header - the canonical way to tell a client where the new
+// resource lives without it having to construct the URL.
+//
+// Use OK, not this, for an upsert: PUT /vendors/me and device registration may
+// update an existing row, and a client that branches on 201 would be told a
+// resource was created when nothing was.
+func Created(w http.ResponseWriter, message, location string, data any) {
+	if location != "" {
+		w.Header().Set("Location", location)
+	}
+	write(w, http.StatusCreated, Envelope{
+		Success: true, Message: message, Data: data, Timestamp: now(),
+	})
+}
+
 func Error(w http.ResponseWriter, status int, message, errorCode string) {
 	write(w, status, Envelope{
 		Success: false, Message: message, ErrorCode: errorCode, Timestamp: now(),

@@ -80,14 +80,20 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// avgRatingGiven is what this user awarded, not what the venues scored.
-	// Null with no reviews rather than 0, which would render as a zero-star
-	// average on a screen that has no reviews at all.
+	// httpx.NewPaged is the shape every other list in this service returns.
+	// An ad-hoc map here would break the client's one pagination helper and
+	// silently omit totalPages.
+	paged := httpx.NewPaged(out, page, size, total)
+
+	// The header stats ride alongside the page. avgRatingGiven is what this
+	// user awarded, not what the venues scored, and it is null rather than 0
+	// with no reviews - 0 would draw as a zero-star average.
 	response.OK(w, "Reviews retrieved successfully", map[string]any{
-		"content":        out,
-		"page":           page,
-		"size":           size,
-		"totalElements":  total,
+		"content":        paged.Content,
+		"page":           paged.Page,
+		"size":           paged.Size,
+		"totalElements":  paged.TotalElements,
+		"totalPages":     paged.TotalPages,
 		"totalReviews":   total,
 		"avgRatingGiven": avg,
 	})

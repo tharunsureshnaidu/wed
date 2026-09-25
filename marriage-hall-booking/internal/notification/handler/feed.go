@@ -73,7 +73,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		nextBefore = &items[len(items)-1].CreatedAt
 	}
 
+	// "content" matches every other list in this service, so one client helper
+	// reads them all. There is deliberately no page/totalElements here: this is
+	// a keyset cursor, and reporting a page number for a feed that shifts as
+	// notifications arrive would be a number the client could not act on.
+	//
+	// "items" is kept as an alias because the app shipped against it.
 	response.OK(w, "Notifications retrieved successfully", map[string]any{
+		"content":     items,
 		"items":       items,
 		"unreadCount": unread,
 		"nextBefore":  nextBefore,

@@ -25,6 +25,7 @@ import (
 	couponhandler "github.com/tripfcatory/marriage-hall-booking/internal/coupon/handler"
 	facilityhandler "github.com/tripfcatory/marriage-hall-booking/internal/facility/handler"
 	facilityrepo "github.com/tripfcatory/marriage-hall-booking/internal/facility/repository"
+	feedbackhandler "github.com/tripfcatory/marriage-hall-booking/internal/feedback/handler"
 	"github.com/tripfcatory/marriage-hall-booking/internal/health"
 	"github.com/tripfcatory/marriage-hall-booking/internal/migrations"
 	notifyhandler "github.com/tripfcatory/marriage-hall-booking/internal/notification/handler"
@@ -35,7 +36,6 @@ import (
 	quotehandler "github.com/tripfcatory/marriage-hall-booking/internal/quote/handler"
 	reviewhandler "github.com/tripfcatory/marriage-hall-booking/internal/review/handler"
 	searchhandler "github.com/tripfcatory/marriage-hall-booking/internal/search/handler"
-	feedbackhandler "github.com/tripfcatory/marriage-hall-booking/internal/feedback/handler"
 	supporthandler "github.com/tripfcatory/marriage-hall-booking/internal/support/handler"
 	userhandler "github.com/tripfcatory/marriage-hall-booking/internal/user/handler"
 	userrepo "github.com/tripfcatory/marriage-hall-booking/internal/user/repository"
@@ -53,6 +53,23 @@ import (
 func main() {
 	logger.Init("api")
 	cfg := config.Load()
+
+	// Refuse to serve real users on a development configuration. Each of these
+	// is silent at startup and only visible once a customer hits it - a dead
+	// acknowledge link, an unauthenticated payment webhook, an OTP that is
+	// always 000000. In development they are warnings so a laptop still starts.
+	if problems := cfg.Validate(); len(problems) > 0 {
+		if config.IsProduction() {
+			for _, p := range problems {
+				logger.Error("config", "problem", p)
+			}
+			logger.Fatal("refusing to start in production with an unsafe configuration",
+				"problems", len(problems))
+		}
+		for _, p := range problems {
+			logger.Warn("config (dev)", "problem", p)
+		}
+	}
 	ctx := context.Background()
 
 	if cfg.JWTSecret == "" {
