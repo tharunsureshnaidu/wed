@@ -36,13 +36,19 @@ func Load() Config {
 
 	return Config{
 		ServerPort: env("SERVER_PORT", "8080"),
+		// sslmode is configurable because it was hardcoded to disable, which
+		// sends the password and every row in clear text. That is fine over a
+		// loopback socket and wrong across a VPC, and Validate() rejects
+		// disable against a remote host - but it could not be fixed without
+		// this knob.
 		DatabaseURL: fmt.Sprintf(
-			"postgres://%s:%s@%s:%s/%s?sslmode=disable",
+			"postgres://%s:%s@%s:%s/%s?sslmode=%s",
 			env("DB_USERNAME", "postgres"),
 			env("DB_PASSWORD", "postgres"),
 			env("DB_HOST", "localhost"),
 			env("DB_PORT", "5432"),
 			env("DB_NAME", "venue"),
+			env("DB_SSLMODE", "disable"),
 		),
 		RedisAddr: env("REDIS_ADDR", "localhost:6379"),
 		// KAFKA_BROKERS present but empty means "no Kafka", which env() cannot
@@ -121,6 +127,7 @@ var envWins = map[string]bool{
 	"PUBLIC_BASE_URL": true,
 	"TRUSTED_PROXIES": true,
 	"LOG_LEVEL":       true,
+	"DB_SSLMODE":      true,
 	// Security-relevant switches a deployment must be able to turn off even
 	// when a development .env is present in the image.
 	"OTP_FIXED_CODE": true,
