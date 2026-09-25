@@ -302,6 +302,10 @@ QUERIES = {
     # before is left empty on purpose: it is a keyset cursor the client copies
     # from the previous page's nextBefore, not a value anyone types.
     "GET /api/v1/notifications": "limit=20&unreadOnly=&before=",
+    # Two venues the run has already created. hallId and hotelId are different
+    # types on purpose - it exercises the cross-type path, which is the one with
+    # the price-unit rule in it.
+    "GET /api/v1/facilities/compare": "ids={{hallId}},{{hotelId}}",
     "GET /api/v1/users/me/favourites": "",
     "GET /api/v1/vendors/me/properties": "page=0&size=20",
     "GET /api/v1/quotes/my-requests": "status=&page=0&size=20",
@@ -617,6 +621,8 @@ REQUEST_ORDER = [
     # "read-all" precedes "{id}/read", so the unlisted default would mark
     # everything read before the single-item request ran - it would then assert
     # against updated: 0 and pass without testing anything.
+    "GET /api/v1/facilities/compare",
+
     "GET /api/v1/reviews/my-reviews",
 
     "POST /api/v1/feedback",
@@ -910,6 +916,19 @@ def to_postman_path(path):
 # collection documented 105 of its 114 requests and was far easier to work
 # through as a result. Anything not listed falls back to describe(), below.
 DESCRIPTIONS = {
+    "GET /api/v1/facilities/compare": "Side-by-side comparison of 2-3 venues, for the "
+        "Compare Venues screen. Public.\n\n"
+        "`ids` is a comma-separated list. Duplicates and more than 3 are rejected; a "
+        "well-formed id that does not exist gives 404 rather than silently comparing "
+        "fewer venues than asked for.\n\n"
+        "PRICES ARE NOT NORMALISED. A hotel quotes per night and a hall per event day, "
+        "so each venue carries `price.unit` and the response carries `comparablePrice: "
+        "false` when they differ. Dividing one into the other would make a 4,500 hotel "
+        "look ten times cheaper than a 50,000 hall.\n\n"
+        "`missing` lists what a venue does not publish - half the hotels have no price "
+        "and 16 of 43 halls no capacity - so the client renders a dash, never a zero. "
+        "`amenities` is the union of all venues' amenities with a per-venue flag, and "
+        "`distanceKm` is nil for any pair where either venue has no coordinates.",
     "GET /health": "Liveness check. No auth. Also reports whether Postgres is reachable.",
 
     # --- auth ---
@@ -1247,26 +1266,56 @@ if (d) pm.collectionVariables.set("cancellationId", d.id);""",
     "POST /api/v1/auth/login": """const d = pm.response.json().data;
 if (d) {
   pm.collectionVariables.set("accessToken", d.accessToken);
+  pm.environment.set("accessToken", d.accessToken);
   pm.collectionVariables.set("refreshToken", d.refreshToken);
+  pm.environment.set("refreshToken", d.refreshToken);
   pm.collectionVariables.set("userId", d.user.id);
+  pm.environment.set("userId", d.user.id);
 }""",
     "POST /api/v1/auth/register/verify-email": """const d = pm.response.json().data;
 if (d) {
   pm.collectionVariables.set("accessToken", d.accessToken);
+  pm.environment.set("accessToken", d.accessToken);
   pm.collectionVariables.set("refreshToken", d.refreshToken);
+  pm.environment.set("refreshToken", d.refreshToken);
   pm.collectionVariables.set("userId", d.user.id);
+  pm.environment.set("userId", d.user.id);
   // A vendor signup lands here too; keep an owner token for the venue folders.
   if ((d.user.roles || []).includes("ROLE_HALL_OWNER")) {
     pm.collectionVariables.set("ownerToken", d.accessToken);
+    pm.environment.set("ownerToken", d.accessToken);
   }
   if ((d.user.roles || []).includes("ROLE_ADMIN")) {
     pm.collectionVariables.set("adminToken", d.accessToken);
+    pm.environment.set("adminToken", d.accessToken);
   }
 }""",
     "POST /api/v1/auth/refresh": """const d = pm.response.json().data;
 if (d) {
   pm.collectionVariables.set("accessToken", d.accessToken);
   pm.collectionVariables.set("refreshToken", d.refreshToken);
+  // Also the environment scope: the runner seeds these with --env-var, and an
+  // environment variable shadows a collection one, so a collection-only write
+  // would never be seen by {{refreshToken}}.
+  pm.environment.set("accessToken", d.accessToken);
+  pm.environment.set("refreshToken", d.refreshToken);
+}""",
+    # The alias is the same endpoint under an older path. Refresh tokens ROTATE,
+    # so by the time this runs the token the runner seeded is already burnt, and
+    # replaying one is the theft signal - the API revokes every session for that
+    # user and the rest of the run 401s. The API is right; the collection was
+    # replaying.
+    #
+    # Writing to BOTH scopes is what actually fixes it: postman_run.py seeds
+    # refreshToken with --env-var, and an environment variable SHADOWS a
+    # collection variable, so pm.collectionVariables.set alone is invisible to
+    # {{refreshToken}}.
+    "POST /api/v1/auth/login/refresh": """const d = pm.response.json().data;
+if (d) {
+  pm.collectionVariables.set("accessToken", d.accessToken);
+  pm.collectionVariables.set("refreshToken", d.refreshToken);
+  pm.environment.set("accessToken", d.accessToken);
+  pm.environment.set("refreshToken", d.refreshToken);
 }""",
     "POST /api/v1/facilities": """const d = pm.response.json().data;
 if (d) {
@@ -1300,7 +1349,8 @@ if (d && d.searchId) pm.collectionVariables.set("searchId", d.searchId);""",
     "GET /api/v1/vendors/me": """const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("vendorId", d.id);""",
     "GET /api/v1/users/me": """const d = pm.response.json().data;
-if (d) pm.collectionVariables.set("userId", d.id);""",
+if (d) pm.collectionVariables.set("userId", d.id);
+pm.environment.set("userId", d.id);""",
     "GET /api/v1/amenities": """// Grab an id so Attach/Detach amenity have something to point at.
 const d = pm.response.json().data;
 if (d && d.length) pm.collectionVariables.set("amenityId", d[0].id);""",

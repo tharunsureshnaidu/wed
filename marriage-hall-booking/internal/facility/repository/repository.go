@@ -533,3 +533,95 @@ func (r *Repo) RemoveAmenity(ctx context.Context, facilityID, amenityID string) 
 		facilityID, amenityID)
 	return err
 }
+
+// ByIDs loads several facilities in one round trip, each with its amenities and
+// cover image. It exists for the compare screen: calling Get once per venue
+// would be three queries plus three more for amenities and three for images.
+//
+// Order follows the ids argument, not the database's, so the comparison columns
+// stay in the order the user picked them. A missing or deleted id is simply
+// absent from the result - the handler decides whether that is an error.
+func (r *Repo) ByIDs(ctx context.Context, ids []string) ([]Facility, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT `+facilityCols+facilityFrom+
+			` WHERE f.id::text = ANY($1) AND f.is_deleted = FALSE`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byID := map[string]*Facility{}
+	for rows.Next() {
+		f, err := scanFacility(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[f.ID] = f
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(byID) == 0 {
+		return nil, nil
+	}
+
+	// Amenities for every venue in one query, then distributed - the N+1 this
+	// method exists to avoid.
+	arows, err := r.db.Query(ctx,
+		`SELECT fa.facility_id::text, a.id, a.name, a.code, a.applicable_type
+		   FROM facility_amenities fa
+		   JOIN amenities a ON a.id = fa.amenity_id
+		  WHERE fa.facility_id::text = ANY($1)
+		  ORDER BY a.name`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer arows.Close()
+	for arows.Next() {
+		var fid string
+		var a Amenity
+		if err := arows.Scan(&fid, &a.ID, &a.Name, &a.Code, &a.ApplicableType); err != nil {
+			return nil, err
+		}
+		if f, ok := byID[fid]; ok {
+			f.Amenities = append(f.Amenities, a)
+		}
+	}
+	if err := arows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Cover image only: the compare card shows one thumbnail per venue, and
+	// pulling every gallery image would be the same N+1 by another name.
+	irows, err := r.db.Query(ctx, `
+		SELECT DISTINCT ON (i.facility_id)
+		       i.facility_id::text, i.id, i.url, i.is_cover, i.sort_order
+		  FROM facility_images i
+		 WHERE i.facility_id::text = ANY($1)
+		 ORDER BY i.facility_id, i.is_cover DESC, i.sort_order`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer irows.Close()
+	for irows.Next() {
+		var fid string
+		var im Image
+		if err := irows.Scan(&fid, &im.ID, &im.URL, &im.IsCover, &im.SortOrder); err != nil {
+			return nil, err
+		}
+		if f, ok := byID[fid]; ok {
+			f.Images = append(f.Images, im)
+		}
+	}
+	if err := irows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]Facility, 0, len(byID))
+	for _, id := range ids {
+		if f, ok := byID[id]; ok {
+			out = append(out, *f)
+		}
+	}
+	return out, nil
+}

@@ -52,6 +52,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	// Public reads.
 	mux.HandleFunc("GET /api/v1/facilities", h.list)
+	// Side-by-side comparison. Public, like the other facility reads: comparing
+	// venues is what a visitor does before signing up. The literal path beats
+	// /{id} in ServeMux's specificity rules, so "compare" is never read as an id.
+	mux.HandleFunc("GET /api/v1/facilities/compare", h.compare)
 	mux.HandleFunc("GET /api/v1/amenities", h.listAmenities)
 	mux.HandleFunc("GET /api/v1/halls", h.listHalls)
 	mux.HandleFunc("GET /api/v1/hotels/{id}", h.get)

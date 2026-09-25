@@ -278,6 +278,17 @@ and each fails *silently* — the run stays green while testing nothing:
 - **A captured variable needs a fallback.** An unset one collapses the URL to
   `/notifications//read`, which 307s to a route that does not exist. The feed
   capture seeds the nil UUID when the list is empty.
+- **An environment variable shadows a collection variable.** `postman_run.py`
+  seeds `accessToken`/`refreshToken`/`userId` with `--env-var`, so a capture
+  that only calls `pm.collectionVariables.set` is invisible to `{{...}}` — the
+  request keeps sending the runner's original value. Any capture writing a
+  seeded name must write **both** scopes.
+
+  This shipped as a real failure: refresh tokens rotate, so `Refresh token
+  (alias)` replayed the token the request before it had already burnt. Replay is
+  the theft signal, so the API revoked every session for that user and 14
+  assertions failed across Bookings, Quotes and Refunds. The API was correct
+  throughout; the collection was replaying.
 
 ## My reviews and app feedback
 
@@ -321,6 +332,39 @@ partial unique index `WHERE is_deleted = FALSE`.
 statement with a 500 — which is exactly what happened to `POST /admin/reviews`
 and was caught by newman, not by the build. The admin upsert now reads
 `ON CONFLICT (user_id, facility_id) WHERE is_deleted = FALSE`.
+
+## Comparing venues
+
+`GET /api/v1/facilities/compare?ids=a,b,c` — public, 2 to 3 venues.
+
+**Prices are never normalised.** A hotel quotes per night and a hall per event
+day; these are different quantities, and three nights is not a wedding. Each
+venue carries `price.unit` (`PER_NIGHT` / `PER_EVENT_DAY`) and the response
+carries `comparablePrice: false` when they differ. Dividing one into the other
+would make a ₹4,500 hotel look ten times cheaper than a ₹50,000 hall.
+
+**A missing attribute is reported, never defaulted.** `missing: ["startingPrice",
+"capacity"]` lets the client draw a dash. Half the hotels publish no price and 16
+of 43 halls no capacity — this is the common case, not an edge. A missing price
+is not a free venue, and a missing capacity is not zero guests.
+
+`repository.ByIDs` loads all three venues, their amenities and their cover images
+in **3 queries regardless of venue count** — measured with `log_statement=all`,
+not assumed. Never call `Get` in a loop here: that is 9 queries for 3 venues.
+
+Two smaller rules that each hid a bug:
+
+- **`amenityKey` falls back to the name when `code` is NULL**, or every
+  code-less amenity collapses into a single row keyed on `""`.
+- **The matrix is sorted by display name.** Map iteration order would reshuffle
+  the comparison table on every refresh.
+
+`distanceKm` is nil for any pair where either venue lacks coordinates — 35 of 52
+facilities still have none, and a guessed 0 reads as "same location".
+
+Duplicate ids are rejected rather than collapsed (comparing a venue with itself
+is a client bug), and a well-formed id that does not exist gives 404 rather than
+silently returning fewer columns than the client asked for.
 
 ## Geo-targeted announcements
 
