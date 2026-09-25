@@ -668,3 +668,140 @@ func (s *Service) AnnounceFacilityNearby(ctx context.Context, facilityID, what, 
 		ExcludeUserID: ownerID,
 	})
 }
+
+// Feed, UnreadCount, MarkRead and MarkAllRead are thin passthroughs: the feed
+// is a read of rows this package already owns, and there is nothing to decide
+// between the handler and the query.
+func (s *Service) Feed(ctx context.Context, userID int64, unreadOnly bool, before *time.Time, limit int) ([]repository.FeedItem, error) {
+	return s.repo.Feed(ctx, userID, unreadOnly, before, limit)
+}
+
+func (s *Service) UnreadCount(ctx context.Context, userID int64) (int, error) {
+	return s.repo.UnreadCount(ctx, userID)
+}
+
+func (s *Service) MarkRead(ctx context.Context, userID int64, id string) (int64, error) {
+	return s.repo.MarkRead(ctx, userID, id)
+}
+
+func (s *Service) MarkAllRead(ctx context.Context, userID int64) (int64, error) {
+	return s.repo.MarkAllRead(ctx, userID)
+}
+
+// NotifyPaymentReceived tells the customer their payment landed. Fired from the
+// payment.completed consumer, which previously only logged.
+//
+// Customer-side and terminal: a receipt is informational, so it is told once
+// and never chased. The amount comes from the event payload rather than the
+// booking total - a partial or advance payment is not the full amount.
+func (s *Service) NotifyPaymentReceived(ctx context.Context, bookingID, paymentID string, amount float64) error {
+	c, err := s.repo.LoadBookingContext(ctx, bookingID)
+	if err != nil {
+		return err
+	}
+	body := fmt.Sprintf("Payment of %.2f for your booking at %s has been received.\n\nBooking ref: %s",
+		amount, c.Facility, shortRef(bookingID))
+	return s.NotifyUser(ctx, Event{
+		Type:      "payment.received",
+		SubjectID: paymentID,
+		UserID:    c.CustomerUserID,
+		Subject:   "Payment Received",
+		Body:      body,
+	})
+}
+
+// NotifyUpcoming is the T-minus reminder before a stay or event. Enqueued by
+// the reminder sweep, not by an event: nothing happens at T-3 days for a hook
+// to hang off.
+//
+// SubjectID is the booking plus the day count, so the 3-day and 1-day reminders
+// are separate rows. Keyed on the booking alone the second would collide with
+// the first on the outbox unique index and never send - the same bug the geo
+// announcements hit.
+func (s *Service) NotifyUpcoming(ctx context.Context, bookingID string, daysOut int) error {
+	c, err := s.repo.LoadBookingContext(ctx, bookingID)
+	if err != nil {
+		return err
+	}
+	when := fmt.Sprintf("in %d days", daysOut)
+	if daysOut == 1 {
+		when = "tomorrow"
+	}
+	body := fmt.Sprintf("Reminder: your booking at %s starts %s (%s).\n\nBooking ref: %s",
+		c.Facility, when, c.StartDate.Format("02 Jan 2006"), shortRef(bookingID))
+	return s.NotifyUser(ctx, Event{
+		Type:      "booking.upcoming",
+		SubjectID: fmt.Sprintf("%s:%d", bookingID, daysOut),
+		UserID:    c.CustomerUserID,
+		Subject:   "Upcoming Event Reminder",
+		Body:      body,
+	})
+}
+
+// NotifyReviewRequest asks for a review after the stay. Enqueued by the same
+// sweep, looking the other way down the calendar.
+//
+// PUSH and EMAIL only: this is a nudge, not something worth an SMS bill per
+// completed booking.
+func (s *Service) NotifyReviewRequest(ctx context.Context, bookingID string) error {
+	c, err := s.repo.LoadBookingContext(ctx, bookingID)
+	if err != nil {
+		return err
+	}
+	body := fmt.Sprintf("How was your experience? Please share your review for your recent stay at %s.",
+		c.Facility)
+	return s.NotifyUser(ctx, Event{
+		Type:      "review.request",
+		SubjectID: bookingID,
+		UserID:    c.CustomerUserID,
+		Subject:   "How was your experience?",
+		Body:      body,
+		Channels:  []notify.Channel{notify.Push, notify.Email},
+	})
+}
+
+// shortRef is the booking id as a human quotes it over the phone. The full UUID
+// is unreadable in an SMS and nobody types it back.
+func shortRef(id string) string {
+	if len(id) >= 8 {
+		return strings.ToUpper(id[:8])
+	}
+	return id
+}
+
+// SweepReminders enqueues the date-driven notifications: upcoming bookings and
+// review requests for finished ones.
+//
+// Idempotency is the outbox unique index, not a "reminded" column: running this
+// sweep every hour must not send an hourly reminder, and ON CONFLICT DO NOTHING
+// already gives that for free.
+func (s *Service) SweepReminders(ctx context.Context) (int, error) {
+	sent := 0
+	for _, days := range []int{3, 1} {
+		ids, err := s.repo.BookingsStartingIn(ctx, days)
+		if err != nil {
+			return sent, err
+		}
+		for _, id := range ids {
+			if err := s.NotifyUpcoming(ctx, id, days); err != nil {
+				// One unreachable booking must not stop the sweep: the next
+				// booking in the list is someone else's reminder.
+				logger.Error("notify: upcoming", "bookingId", id, logger.Err(err))
+				continue
+			}
+			sent++
+		}
+	}
+	ids, err := s.repo.BookingsAwaitingReview(ctx)
+	if err != nil {
+		return sent, err
+	}
+	for _, id := range ids {
+		if err := s.NotifyReviewRequest(ctx, id); err != nil {
+			logger.Error("notify: review request", "bookingId", id, logger.Err(err))
+			continue
+		}
+		sent++
+	}
+	return sent, nil
+}

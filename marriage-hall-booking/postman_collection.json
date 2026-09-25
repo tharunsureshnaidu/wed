@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking (Go)",
-    "description": "156 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 15 minutes; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
+    "description": "160 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 15 minutes; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -6375,8 +6375,257 @@
       "description": "Reviews and rating summaries. Reviewing requires a COMPLETED booking."
     },
     {
-      "name": "Notifications (7)",
+      "name": "Notifications (11)",
       "item": [
+        {
+          "name": "GET Notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications?limit=20&unreadOnly=&before=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "unreadOnly",
+                  "value": ""
+                },
+                {
+                  "key": "before",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Lists notification data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (d && d.items && d.items.length) {",
+                  "  pm.collectionVariables.set(\"notificationId\", d.items[0].id);",
+                  "} else {",
+                  "  // The feed can legitimately be empty here: the booking notification is",
+                  "  // enqueued asynchronously by the worker, and the admin actions that notify",
+                  "  // this user run in a later folder. Fall back to a well-formed UUID so the",
+                  "  // next request still exercises the route - an empty variable collapses the",
+                  "  // URL to \"/notifications//read\", which 404s on the router and tests nothing.",
+                  "  pm.collectionVariables.set(\"notificationId\",",
+                  "    \"00000000-0000-0000-0000-000000000000\");",
+                  "}",
+                  "",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Notifications Unread Count",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/unread-count",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "unread-count"
+              ]
+            },
+            "description": "Lists notification data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Notifications Read",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/:id/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                ":id",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{notificationId}}"
+                }
+              ]
+            },
+            "description": "Updates the notification record. Send the full object, not a partial one.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Notifications Read All",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "read-all"
+              ]
+            },
+            "description": "Updates the notification record. Send the full object, not a partial one.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "GET Ack",
           "request": {
@@ -10564,6 +10813,11 @@
     {
       "key": "bookingId",
       "value": ""
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "description": "Captured from GET /notifications. Empty until a notification exists - the feed is populated by the booking the run creates."
     },
     {
       "key": "paymentId",

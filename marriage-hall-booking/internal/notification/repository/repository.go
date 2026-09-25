@@ -578,3 +578,184 @@ func (r *Repo) BackfillLocationsFromBookings(ctx context.Context) (int64, error)
 	}
 	return tag.RowsAffected(), nil
 }
+
+// FeedItem is one row of the in-app notification list. It is a collapsed view
+// of the outbox: the same event delivered by email, SMS, WhatsApp and push is
+// four rows here but one line in the app.
+type FeedItem struct {
+	ID        string     `json:"id"`
+	EventType string     `json:"eventType"`
+	SubjectID string     `json:"subjectId,omitempty"`
+	BookingID *string    `json:"bookingId,omitempty"`
+	Title     string     `json:"title"`
+	Body      string     `json:"body"`
+	IsRead    bool       `json:"isRead"`
+	ReadAt    *time.Time `json:"readAt,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+}
+
+// feedCols is shared by Feed and the collapse subquery so the two cannot drift.
+//
+// DISTINCT ON collapses the channel fan-out: one event to one person is up to
+// four outbox rows with identical text, and a feed that showed all four would
+// repeat "Booking Confirmed!" four times. The row kept is the earliest, which
+// is when the user was first told.
+//
+// COALESCE on the grouping key matters: subject_id is NULL on older rows, and
+// NULLs are distinct from each other in DISTINCT ON, so without it every
+// pre-migration row would survive the collapse.
+const feedCols = `
+	SELECT DISTINCT ON (n.event_type, COALESCE(n.subject_id, n.id::text))
+	       n.id, COALESCE(n.event_type, 'unknown'), COALESCE(n.subject_id, ''),
+	       n.booking_id, COALESCE(n.subject, ''), n.body,
+	       n.read_at, n.created_at
+	  FROM notifications n
+	 WHERE n.recipient_user_id = $1`
+
+// Feed returns one page of a user's notifications, newest first.
+//
+// unreadOnly is a filter rather than a separate method because the app uses the
+// same list with a toggle. before is a keyset cursor: OFFSET would drift as new
+// notifications arrive while the user is scrolling.
+func (r *Repo) Feed(ctx context.Context, userID int64, unreadOnly bool, before *time.Time, limit int) ([]FeedItem, error) {
+	// The collapse has to happen before the ordering: DISTINCT ON forces its
+	// own ORDER BY, so the newest-first sort is applied to the collapsed set in
+	// an outer query.
+	q := feedCols
+	if unreadOnly {
+		q += ` AND n.read_at IS NULL`
+	}
+	if before != nil {
+		q += ` AND n.created_at < $3`
+	}
+	q += ` ORDER BY n.event_type, COALESCE(n.subject_id, n.id::text), n.created_at`
+	q = `SELECT * FROM (` + q + `) f ORDER BY f.created_at DESC LIMIT $2`
+
+	args := []any{userID, limit}
+	if before != nil {
+		args = append(args, *before)
+	}
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []FeedItem{}
+	for rows.Next() {
+		var it FeedItem
+		var bookingID *string
+		if err := rows.Scan(&it.ID, &it.EventType, &it.SubjectID, &bookingID,
+			&it.Title, &it.Body, &it.ReadAt, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		it.BookingID = bookingID
+		it.IsRead = it.ReadAt != nil
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// UnreadCount is the badge. Counts collapsed events, not outbox rows, or one
+// booking would show as 4 unread.
+func (r *Repo) UnreadCount(ctx context.Context, userID int64) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT (event_type, COALESCE(subject_id, id::text)))
+		  FROM notifications
+		 WHERE recipient_user_id = $1 AND read_at IS NULL`, userID).Scan(&n)
+	return n, err
+}
+
+// MarkRead marks every outbox row behind one feed item as read. The app sends
+// the feed item's id; the other channels of the same event must go read with
+// it, or the badge would still count the SMS copy of a push the user just
+// opened.
+//
+// Scoped to the caller's own rows: an id from another user's feed matches
+// nothing rather than revealing that it exists.
+func (r *Repo) MarkRead(ctx context.Context, userID int64, id string) (int64, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE notifications SET read_at = CURRENT_TIMESTAMP
+		 WHERE recipient_user_id = $1 AND read_at IS NULL
+		   AND (event_type, COALESCE(subject_id, id::text)) IN (
+		       SELECT event_type, COALESCE(subject_id, id::text)
+		         FROM notifications
+		        WHERE id = $2 AND recipient_user_id = $1)`, userID, id)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MarkAllRead is the "Read All" button.
+func (r *Repo) MarkAllRead(ctx context.Context, userID int64) (int64, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE notifications SET read_at = CURRENT_TIMESTAMP
+		 WHERE recipient_user_id = $1 AND read_at IS NULL`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// BookingsStartingIn returns confirmed bookings whose stay or event begins
+// exactly daysOut days from today.
+//
+// Exact day, not a range: the sweep runs hourly and a range would match the
+// same booking on every run. The outbox unique index would absorb the repeats,
+// but matching one day keeps the query small as the table grows.
+func (r *Repo) BookingsStartingIn(ctx context.Context, daysOut int) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT b.id::text
+		  FROM bookings b
+		 WHERE b.status = 'CONFIRMED'
+		   AND b.is_deleted = false
+		   AND b.check_in = CURRENT_DATE + make_interval(days => $1)`, daysOut)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanIDs(rows)
+}
+
+// BookingsAwaitingReview returns bookings whose stay has ended and whose
+// customer has not reviewed that venue.
+//
+// The NOT EXISTS mirrors what POST /reviews enforces - reviews are unique per
+// (user, facility), not per booking. Without it a repeat customer would be
+// asked to review a venue they already rated and the link would 403.
+//
+// The 30-day floor stops the sweep asking about bookings from last year the
+// first time it runs.
+func (r *Repo) BookingsAwaitingReview(ctx context.Context) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT b.id::text
+		  FROM bookings b
+		 WHERE b.status IN ('CONFIRMED', 'COMPLETED')
+		   AND b.is_deleted = false
+		   AND b.check_out < CURRENT_DATE
+		   AND b.check_out >= CURRENT_DATE - INTERVAL '30 days'
+		   AND NOT EXISTS (
+		       SELECT 1 FROM reviews rv
+		        WHERE rv.user_id = b.user_id
+		          AND rv.facility_id = b.target_id
+		          AND rv.is_deleted = false)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanIDs(rows)
+}
+
+func scanIDs(rows pgx.Rows) ([]string, error) {
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

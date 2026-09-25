@@ -26,6 +26,10 @@ const (
 	TopicMediaUploadRequested = "media.upload.requested"
 )
 
+// topics is every topic above; ensureTopics creates them at start-up.
+var topics = []string{TopicUserRegistered, TopicBookingCreated, TopicBookingCancelled,
+	TopicPaymentCompleted, TopicPaymentFailed, TopicMediaUploadRequested}
+
 // MediaUpload is the payload of TopicMediaUploadRequested. Every field is
 // small: the worker reads SpoolPath off disk and uploads it under Key.
 type MediaUpload struct {
@@ -57,6 +61,7 @@ func NewPublisher(brokers []string) *Publisher {
 	if len(brokers) == 0 || brokers[0] == "" {
 		return &Publisher{Enabled: false}
 	}
+	ensureTopics(brokers)
 	return &Publisher{
 		Enabled: true,
 		writer: &kafka.Writer{
@@ -81,6 +86,35 @@ func NewPublisher(brokers []string) *Publisher {
 			WriteTimeout: 5 * time.Second,
 			RequiredAcks: kafka.RequireOne,
 		},
+	}
+}
+
+// ensureTopics creates the topics up front. Relying on auto-creation alone
+// drops the first event of every type on a fresh broker: the sync retries below
+// lose the race against metadata propagation (observed on a clean docker
+// compose up - user.registered was dropped with UNKNOWN_TOPIC_OR_PARTITION). It
+// also lets a worker that starts later join a group that has partitions.
+//
+// Best-effort: a broker that is down now is not fatal, and auto-creation stays
+// on as the fallback. -1 takes the broker's own partition/replication defaults,
+// exactly what auto-creation would have used.
+func ensureTopics(brokers []string) {
+	cfgs := make([]kafka.TopicConfig, len(topics))
+	for i, t := range topics {
+		cfgs[i] = kafka.TopicConfig{Topic: t, NumPartitions: -1, ReplicationFactor: -1}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := &kafka.Client{Addr: kafka.TCP(brokers...)}
+	res, err := c.CreateTopics(ctx, &kafka.CreateTopicsRequest{Topics: cfgs})
+	if err != nil {
+		logger.Warn("kafka topics not created, relying on auto-creation", logger.Err(err))
+		return
+	}
+	for t, e := range res.Errors {
+		if e != nil && !errors.Is(e, kafka.TopicAlreadyExists) {
+			logger.Warn("kafka topic not created, relying on auto-creation", "topic", t, logger.Err(e))
+		}
 	}
 }
 

@@ -290,6 +290,9 @@ QUERIES = {
     "GET /api/v1/hotels/my-hotels": "page=0&size=20",
     "GET /api/v1/amenities": "",
     "GET /api/v1/bookings": "page=0&size=20",
+    # before is left empty on purpose: it is a keyset cursor the client copies
+    # from the previous page's nextBefore, not a value anyone types.
+    "GET /api/v1/notifications": "limit=20&unreadOnly=&before=",
     "GET /api/v1/users/me/favourites": "",
     "GET /api/v1/vendors/me/properties": "page=0&size=20",
     "GET /api/v1/quotes/my-requests": "status=&page=0&size=20",
@@ -597,6 +600,15 @@ REQUEST_ORDER = [
     "DELETE /api/v1/hotels/{id}",
     "DELETE /api/v1/users/me",
 
+    # The feed, in the order that actually proves it works. Alphabetically
+    # "read-all" precedes "{id}/read", so the unlisted default would mark
+    # everything read before the single-item request ran - it would then assert
+    # against updated: 0 and pass without testing anything.
+    "GET /api/v1/notifications",
+    "GET /api/v1/notifications/unread-count",
+    "PUT /api/v1/notifications/{id}/read",
+    "PUT /api/v1/notifications/read-all",
+
     "POST /api/v1/bookings/{id}/cancel",
     # Dead last: logout revokes every access token the user holds, so anything
     # after it in the run is unauthenticated.
@@ -838,6 +850,12 @@ def path_var(path, name):
             return "facilityId"
         if path.startswith("/api/v1/search"):
             return "hallId"
+        if path.startswith("/api/v1/notifications"):
+            # The feed id is captured by GET /notifications, which runs first
+            # in the folder. Without this the fallback binds facilityId and the
+            # request silently addresses nothing - a 200 with updated: 0, which
+            # no assertion would catch.
+            return "notificationId"
         return "facilityId"
     if name == "facilityId" and "/favourites" in path:
         # Favourites take a facility id; the run creates a hall, so point at it.
@@ -1183,6 +1201,21 @@ def build_request(folder, method, path):
 
 # Scripts that capture ids so the collection chains without manual copy-paste.
 CAPTURE = {
+    # The feed is a read, so this is the rare capture off a GET. The list may
+    # legitimately be empty on a fresh run - guard rather than blow up, and the
+    # Read request then falls back to the seeded variable.
+    "GET /api/v1/notifications": """const d = pm.response.json().data;
+if (d && d.items && d.items.length) {
+  pm.collectionVariables.set("notificationId", d.items[0].id);
+} else {
+  // The feed can legitimately be empty here: the booking notification is
+  // enqueued asynchronously by the worker, and the admin actions that notify
+  // this user run in a later folder. Fall back to a well-formed UUID so the
+  // next request still exercises the route - an empty variable collapses the
+  // URL to "/notifications//read", which 404s on the router and tests nothing.
+  pm.collectionVariables.set("notificationId",
+    "00000000-0000-0000-0000-000000000000");
+}""",
     "POST /api/v1/admin/reviews": """const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("adminReviewId", d.id);""",
     "POST /api/v1/facilities/{id}/cancellation-policies": """const d = pm.response.json().data;
@@ -1500,6 +1533,10 @@ def main():
             {"key": "videoId", "value": ""},
             {"key": "videoId2", "value": ""},
             {"key": "bookingId", "value": ""},
+            {"key": "notificationId", "value": "",
+             "description": "Captured from GET /notifications. Empty until a "
+                            "notification exists - the feed is populated by the "
+                            "booking the run creates."},
             {"key": "paymentId", "value": ""},
             {"key": "gatewayOrderId", "value": ""},
             {"key": "quoteId", "value": ""},

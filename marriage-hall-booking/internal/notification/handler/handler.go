@@ -42,6 +42,15 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/devices", auth(http.HandlerFunc(h.registerDevice)))
 	mux.Handle("DELETE /api/v1/devices/{token}", auth(http.HandlerFunc(h.deleteDevice)))
 
+	// The in-app notification feed. Read-your-own only: every query is scoped
+	// to the caller, so an id from someone else's feed matches nothing.
+	mux.Handle("GET /api/v1/notifications", auth(http.HandlerFunc(h.list)))
+	mux.Handle("GET /api/v1/notifications/unread-count", auth(http.HandlerFunc(h.unreadCount)))
+	// PUT, not POST: marking read is idempotent and the app fires it on scroll.
+	// read-all is registered before {id} so the literal wins the match.
+	mux.Handle("PUT /api/v1/notifications/read-all", auth(http.HandlerFunc(h.markAllRead)))
+	mux.Handle("PUT /api/v1/notifications/{id}/read", auth(http.HandlerFunc(h.markRead)))
+
 	// Location drives the radius targeting; the preference is how a user opts
 	// out of it without unregistering their device.
 	mux.Handle("PUT /api/v1/users/me/location", auth(http.HandlerFunc(h.setLocation)))

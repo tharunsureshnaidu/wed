@@ -219,6 +219,66 @@ That key is a best-effort device fingerprint, not an identity: visitors behind
 one NAT on the same browser still share a bucket. Fine for a convenience list,
 never to be used for anything else.
 
+## Notification feed
+
+`GET /api/v1/notifications` is the in-app list; `/unread-count` is the badge,
+`PUT /{id}/read` and `PUT /read-all` are the read state. All four are scoped to
+the caller — an id from someone else's feed matches nothing and returns
+`updated: 0`, the same shape as an already-read call, so it reveals nothing.
+
+**The feed collapses the channel fan-out.** One event to one person is up to
+four outbox rows (EMAIL/SMS/WHATSAPP/PUSH) with identical text; the feed returns
+one item via `DISTINCT ON (event_type, COALESCE(subject_id, id::text))`. Verified:
+4 rows in, 1 item out. The `COALESCE` is load-bearing — NULLs are distinct from
+each other in `DISTINCT ON`, so without it every pre-migration row survives.
+
+**`read_at` is not `status`.** Status is delivery ("did the SMS leave"), `read_at`
+is attention ("did the person look"). A push sits SENT for days while unread, and
+marking it read must never make the retry machinery think it was acknowledged.
+
+Marking one item read updates **every channel row behind it** (`updated: 4`), or
+the badge would still count the SMS copy of a push the user just opened.
+
+**Pagination is a keyset cursor (`before`), not an offset** — notifications
+arrive while the user scrolls and an OFFSET page repeats rows. `nextBefore` is
+returned only on a full page. The handler repairs a cursor whose `+05:30` arrived
+as ` 05:30`, since `+` decodes to space in a query string and the cursor is our
+own value handed back.
+
+### Date-driven notifications
+
+`SweepReminders` (hourly, `REMINDER_TICK`) enqueues what no event can trigger:
+`booking.upcoming` at T-3 and T-1 days, and `review.request` after checkout.
+
+- **Idempotency is the outbox unique index, not a "reminded" column.** Six sweep
+  runs produced 4 rows, not 24.
+- **`subject_id` for a reminder is `{bookingId}:{days}`.** Keyed on the booking
+  alone, the 1-day reminder collides with the 3-day one and never sends — the
+  same collision the geo announcements hit.
+- **The review request excludes anyone who already reviewed that facility**,
+  mirroring the `(user, facility)` uniqueness `POST /reviews` enforces. Without
+  it the app nags for a review whose link would 403.
+- `payment.received` keys on `paymentId`, so a redelivered webhook collapses but
+  a genuine second payment (advance, then balance) shows as its own item.
+
+`make_interval(days => $1)` — not `($1 || ' days')::interval`, which makes pgx
+infer text and fails with "cannot find encode plan" at runtime, not at build.
+
+### Postman generator
+
+A new route appears in the collection automatically, but three things do not,
+and each fails *silently* — the run stays green while testing nothing:
+
+- **`path_var()` must map `{id}`** or it falls through to `facilityId`, and the
+  request addresses a facility UUID as a notification id. The handler returns
+  `200 updated: 0` by design, so no assertion catches it.
+- **`REQUEST_ORDER` must list the route** or it sorts alphabetically after every
+  curated one. `read-all` sorted before `{id}/read`, so everything was already
+  read by the time the single-item request ran.
+- **A captured variable needs a fallback.** An unset one collapses the URL to
+  `/notifications//read`, which 307s to a route that does not exist. The feed
+  capture seeds the nil UUID when the list is empty.
+
 ## Geo-targeted announcements
 
 Facility approved, amenities added and coupon created push to customers within
@@ -253,5 +313,6 @@ counts digits instead and keeps the admin's formatting.
 ## Docs in this repo
 
 - `ADMIN_API.md` — admin endpoints for editing a venue
+- `RUN_WITH_DOCKER.md`, `RUN_WITH_MAKE.md` — new-developer setup, two ways
 - `RUNNING.md`, `DEPLOY.md` — local and server operation
 - `POSTMAN.md` + `postman_collection.json` — regenerate with `make postman`

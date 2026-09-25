@@ -1,9 +1,13 @@
 # Marriage Hall & Hotel Booking — Go
 
-Go rewrite of the Java/Spring monolith. No Docker: PostgreSQL, Valkey and Kafka
-run as ordinary local services.
+Go rewrite of the Java/Spring monolith.
 
 ## Running
+
+Two ways, pick one:
+
+- **[RUN_WITH_DOCKER.md](RUN_WITH_DOCKER.md)**: `docker compose up`, nothing else to install. Start here.
+- **[RUN_WITH_MAKE.md](RUN_WITH_MAKE.md)**: PostgreSQL, Valkey and Kafka as local services, with the Makefile running the processes.
 
 ```bash
 make build     # api + worker

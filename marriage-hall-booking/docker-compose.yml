@@ -1,0 +1,108 @@
+# Local development stack: postgres, valkey, kafka, api, worker.
+#
+#   cp .env.example .env            # then set JWT_SECRET (openssl rand -base64 48)
+#                                   # and OTP_FIXED_CODE=000000 + APP_ENV=dev if you want a fixed OTP
+#   docker compose up -d --build    # everything; API on http://localhost:8080
+#   docker compose logs -f api worker
+#   docker compose down             # add -v to wipe the database too
+#
+# Prefer running Go on the host? Start only the infrastructure, then `make run`
+# and `make worker` as usual - the ports below are the ones .env.example uses:
+#
+#   docker compose up -d postgres valkey kafka
+#
+# A port already taken on your machine (a local postgres, say)? Override it:
+#   PG_PORT=5433 docker compose up -d      (and DB_PORT=5433 in .env for host runs)
+#
+# Migrations run on API start-up. The database starts with only the seeded admin
+# (admin@example.com / Admin@123); to load the 1,134 scraped venues see dumps/README.md:
+#   gunzip -c dumps/venue_halls_dataonly.sql.gz | docker compose exec -T postgres psql -U postgres -d venue
+
+x-app: &app
+  build: .
+  image: marriage-hall-booking
+  env_file: .env
+  # Wins over env_file: .env is written for host runs and says localhost.
+  environment:
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    DB_NAME: venue
+    DB_USERNAME: postgres
+    DB_PASSWORD: postgres
+    REDIS_ADDR: valkey:6379
+    KAFKA_BROKERS: kafka:29092
+  volumes:
+    # Shared: the API spools uploads to uploads/spool and the worker ships them.
+    - uploads:/app/uploads
+  restart: unless-stopped
+
+services:
+  postgres:
+    # Official image ships the cube, earthdistance and pg_trgm extensions the migrations create.
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: venue
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["${PG_PORT:-5432}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "venue"]
+      interval: 2s
+      retries: 30
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports: ["${VALKEY_PORT:-6379}:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:4.3.1
+    # Two listeners: containers reach kafka:29092, host processes localhost:9092.
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:${KAFKA_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    ports: ["${KAFKA_PORT:-9092}:9092"]
+    volumes: [kafkadata:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1"]
+      interval: 5s
+      retries: 30
+
+  api:
+    <<: *app
+    ports: ["${API_PORT:-8080}:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 3s
+      retries: 40
+
+  worker:
+    <<: *app
+    command: ["/app/worker"]
+    # After the API is healthy, so its migrations have created the tables the worker reads.
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  kafkadata:
+  uploads:

@@ -65,6 +65,29 @@ func main() {
 	}
 	logChannels(notify.FromEnv(nil), notifier.RetryEvery)
 
+	// Reminder sweep: the date-driven notifications nothing else can trigger.
+	// Hourly rather than per-minute - these are day-granularity reminders, and
+	// the outbox unique index absorbs the repeated runs within a day.
+	go func() {
+		ticker := time.NewTicker(envDuration("REMINDER_TICK", time.Hour))
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n, err := notifier.SweepReminders(ctx)
+				if err != nil {
+					logger.Error("notify: reminder sweep", logger.Err(err))
+					continue
+				}
+				if n > 0 {
+					logger.Info("notify: reminders queued", "count", n)
+				}
+			}
+		}
+	}()
+
 	// Sweeper: release slots held by bookings that were never paid for. This is
 	// what stops an abandoned checkout from blocking a date forever.
 	go func() {
@@ -125,6 +148,11 @@ func consume(ctx context.Context, brokers []string, topic string) {
 		// Start from the beginning so events published while the worker was
 		// down are still handled.
 		StartOffset: kafka.FirstOffset,
+		// On a fresh broker the topic does not exist until the API's first
+		// publish auto-creates it. A group that joined before then is assigned
+		// zero partitions and, without this, never rebalances - the worker runs
+		// and consumes nothing (observed on a clean docker compose up).
+		WatchPartitionChanges: true,
 		// No Logger/ErrorLogger: kafka-go would otherwise print a running
 		// commentary of group coordination and offset commits. Read errors are
 		// logged by this loop, at WARN.
@@ -192,8 +220,15 @@ func handle(ctx context.Context, e events.Envelope) {
 			}
 		}
 	case events.TopicPaymentCompleted:
-		logger.Info("notify: payment receipt",
-			"bookingId", e.Payload["bookingId"], "paymentId", e.Payload["paymentId"])
+		bookingID, _ := e.Payload["bookingId"].(string)
+		paymentID, _ := e.Payload["paymentId"].(string)
+		amount, _ := e.Payload["amount"].(float64)
+		logger.Info("notify: payment receipt", "bookingId", bookingID, "paymentId", paymentID)
+		if bookingID != "" && notifier != nil {
+			if err := notifier.NotifyPaymentReceived(ctx, bookingID, paymentID, amount); err != nil {
+				logger.Error("notify: payment receipt", "bookingId", bookingID, logger.Err(err))
+			}
+		}
 	case events.TopicPaymentFailed:
 		logger.Warn("notify: payment failed",
 			"bookingId", e.Payload["bookingId"], "reason", e.Payload["reason"])

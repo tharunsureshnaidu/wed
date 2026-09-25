@@ -28,6 +28,8 @@ func consumeMediaUploads(ctx context.Context, brokers []string, db *pgxpool.Pool
 		// A venue photo is a few hundred KB and every message is one upload,
 		// so there is nothing to gain from batching reads.
 		MaxWait: time.Second,
+		// Topic may not exist yet on a fresh broker; see the note in consume().
+		WatchPartitionChanges: true,
 	})
 	defer r.Close()
 

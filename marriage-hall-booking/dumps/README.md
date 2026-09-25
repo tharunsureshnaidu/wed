@@ -6,8 +6,12 @@ Azamgarh, Mau, Balrampur), with 2,444 reviews.
 
 | file | |
 |---|---|
-| `venue_halls_full.sql.gz` | full `pg_dump` - schema and data, 840KB |
-| `venue_halls_full.sql` | the same dump uncompressed, 2.6MB |
+| `venue_halls_dataonly.sql.gz` | INSERTs only, for a database that already has data (880KB) |
+| `venue_halls_full.sql.gz` | full `pg_dump` - schema and data, for an empty database (840KB) |
+
+Both are also present uncompressed. They were produced with pg_dump 14 and
+restore into PostgreSQL 16; the psql 17 `\restrict` meta-commands pg_dump
+emitted have been stripped, since psql 16 rejects them.
 
 ## What is in it
 
@@ -23,30 +27,52 @@ Every hall has coordinates; 638 carry a phone number and 1,090 a rating.
 Ratings are pinned with `rating_is_manual`, so `recalcRating` will not reset
 them to zero - a scraped venue has no rows in `reviews` to recompute from.
 
-## Restoring
+## Which file to use
 
-This is a **full dump including schema**, so it restores into an empty database.
-Restoring it over a database that already holds data will fail on the existing
-tables.
+| your server's `venue` database | file |
+|---|---|
+| already has real users, vendors or bookings | `venue_halls_dataonly.sql.gz` |
+| empty / brand new | `venue_halls_full.sql.gz` |
+
+If in doubt, check first - anything above 1 means use the data-only file:
 
 ```bash
-scp venue_halls_full.sql.gz user@server:/tmp/
-
-# On the server:
-createdb -U postgres venue           # empty target
-gunzip -c /tmp/venue_halls_full.sql.gz | psql -U postgres -d venue
+psql -U postgres -d venue -tAc "SELECT count(*) FROM users;"
 ```
 
-It restores without errors and is safe to re-run into a fresh database. Verify:
+Both were restored and verified before shipping, and both are safe to run twice.
+
+## Restoring into an existing database (data-only)
+
+The API applies migration `044_scraped_import.sql` on start-up, so deploy and
+restart the API first - the tables this loads into will not exist otherwise.
+
+```bash
+cd ~/wed/marriage-hall-booking
+sudo systemctl restart venue-api        # applies migration 044
+gunzip -c dumps/venue_halls_dataonly.sql.gz | psql -U postgres -d venue
+```
+
+Every statement is `INSERT ... ON CONFLICT DO NOTHING`, so it adds the venues
+without touching anything already in those tables, and re-running changes
+nothing.
+
+## Restoring into an empty database (full)
+
+```bash
+createdb -U postgres venue
+gunzip -c dumps/venue_halls_full.sql.gz | psql -U postgres -d venue
+```
+
+This carries the schema as well, so it must go into a database with no tables.
+
+## Verifying
 
 ```sql
 SELECT count(*) FROM facilities;        -- 1134
 SELECT count(*) FROM scraped_reviews;   -- 2444
+SELECT city, count(*) FROM facilities GROUP BY city ORDER BY 2 DESC LIMIT 5;
 ```
-
-**If the server database already has real data**, do not restore this over it.
-Take a dump of the two tables' rows instead and load them with `ON CONFLICT DO
-NOTHING`, or re-run `scripts/import_venues.sh` from the source CSVs.
 
 ## Imported accounts
 

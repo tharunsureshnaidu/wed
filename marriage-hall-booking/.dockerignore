@@ -1,0 +1,11 @@
+# .env must never reach the image: config.Load lets it OVERRIDE the container
+# environment, so its DB_HOST=localhost would beat compose's DB_HOST=postgres.
+.env
+bin/
+logs/
+uploads/
+dumps/
+tests/
+*.md
+postman_collection.json
+.git

@@ -2,7 +2,6 @@
 -- PostgreSQL database dump
 --
 
-\restrict EGX0pjQtRdac0KOjznNFMIw6bGRKfPtsQvU5VZ1jDMQ9fwOfImOgNoiBMihGxC8
 
 -- Dumped from database version 14.24 (Ubuntu 14.24-1.pgdg24.04+2)
 -- Dumped by pg_dump version 14.24 (Ubuntu 14.24-1.pgdg24.04+2)
@@ -10404,5 +10403,4 @@ ALTER TABLE ONLY public.vendors
 -- PostgreSQL database dump complete
 --
 
-\unrestrict EGX0pjQtRdac0KOjznNFMIw6bGRKfPtsQvU5VZ1jDMQ9fwOfImOgNoiBMihGxC8
 
