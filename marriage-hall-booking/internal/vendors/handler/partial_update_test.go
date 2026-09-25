@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/database"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
 )
 
 var pool *pgxpool.Pool

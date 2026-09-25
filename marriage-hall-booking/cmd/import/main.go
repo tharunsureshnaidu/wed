@@ -33,10 +33,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/config"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/database"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/config"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 )
 
 func main() {

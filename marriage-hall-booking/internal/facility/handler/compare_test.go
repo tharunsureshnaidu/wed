@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/facility/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 )
 
 func ptr[T any](v T) *T { return &v }

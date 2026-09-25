@@ -17,10 +17,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/jwt"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
 type Handler struct {

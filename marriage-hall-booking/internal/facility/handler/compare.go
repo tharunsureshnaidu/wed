@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/facility/repository"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
 // maxCompare matches the "SELECT VENUES TO COMPARE (MAX 3)" cap on the screen.

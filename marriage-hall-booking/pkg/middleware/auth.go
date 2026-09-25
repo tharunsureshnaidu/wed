@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/jwt"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
 type ctxKey int

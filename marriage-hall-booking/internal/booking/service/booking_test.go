@@ -10,9 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/booking/repository"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/apperr"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/database"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
 )
 
 var pool *pgxpool.Pool

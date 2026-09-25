@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/segmentio/kafka-go"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/events"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/events"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 )
 
 // consumeMediaUploads uploads spooled files to object storage and fills in the

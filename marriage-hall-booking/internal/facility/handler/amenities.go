@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 )
 
 // Attaching amenities while creating the facility.

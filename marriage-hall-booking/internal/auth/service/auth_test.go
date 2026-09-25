@@ -11,11 +11,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/repository"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/apperr"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/database"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/jwt"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 )
 
 const testSecret = "K3p9vL7xT2sQf6bR8mZ0nY5cJ1hW4eD2xPqRsNmLkJhGfEdCbA9Z8Y7W6V5U4T3"

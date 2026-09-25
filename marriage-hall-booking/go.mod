@@ -1,4 +1,4 @@
-module github.com/tripfcatory/marriage-hall-booking
+module github.com/tharunsureshnaidu/wed/marriage-hall-booking
 
 go 1.26.0
 

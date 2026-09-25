@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
 type Handler struct{ db *pgxpool.Pool }

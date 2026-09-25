@@ -8,14 +8,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/events"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/events"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
 )
 
 // RegisterMedia mounts the image/video routes.

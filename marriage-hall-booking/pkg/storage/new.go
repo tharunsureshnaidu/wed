@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 )
 
 // New picks the backend: S3 when AWS_S3_BUCKET is set, local disk otherwise.

@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
 // myReview is one card on the My Reviews screen. It carries the venue's name

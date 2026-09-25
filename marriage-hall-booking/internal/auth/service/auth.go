@@ -4,16 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 	"net/url"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/repository"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
 )
 
 const (

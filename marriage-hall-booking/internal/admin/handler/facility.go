@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
 )
 
 // Admin facility editing.

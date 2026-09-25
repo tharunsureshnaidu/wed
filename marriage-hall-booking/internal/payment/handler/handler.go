@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
-	"github.com/tripfcatory/marriage-hall-booking/internal/payment/service"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/jwt"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/payment/service"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
 type Handler struct {

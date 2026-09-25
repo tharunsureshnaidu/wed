@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/jwt"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 )
 
 const secret = "K3p9vL7xT2sQf6bR8mZ0nY5cJ1hW4eD2xPqRsNmLkJhGfEdCbA9Z8Y7W6V5U4T3"

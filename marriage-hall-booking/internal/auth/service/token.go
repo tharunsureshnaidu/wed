@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/repository"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/apperr"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/jwt"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 )
 
 type TokenService struct {

@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"net/http"
 	"os"
 	"strconv"
@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
 type bucket struct {

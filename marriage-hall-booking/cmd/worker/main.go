@@ -15,15 +15,15 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
-	bookingrepo "github.com/tripfcatory/marriage-hall-booking/internal/booking/repository"
-	notifyrepo "github.com/tripfcatory/marriage-hall-booking/internal/notification/repository"
-	notifysvc "github.com/tripfcatory/marriage-hall-booking/internal/notification/service"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/config"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/database"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/events"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/notify"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
+	bookingrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
+	notifyrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/repository"
+	notifysvc "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/service"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/config"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/events"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/notify"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 )
 
 // notifier is package-level because handle() is called from every consumer

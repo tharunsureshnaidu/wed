@@ -14,8 +14,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/storage"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 )
 
 // Multipart facility creation: the venue's details and its photos in one

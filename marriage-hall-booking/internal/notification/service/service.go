@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tripfcatory/marriage-hall-booking/internal/notification/repository"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/notify"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/notify"
 )
 
 type Service struct {

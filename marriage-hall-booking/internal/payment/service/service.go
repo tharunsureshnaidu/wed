@@ -14,8 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	bookingrepo "github.com/tripfcatory/marriage-hall-booking/internal/booking/repository"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/apperr"
+	bookingrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
 )
 
 type Service struct {

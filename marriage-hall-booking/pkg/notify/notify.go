@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 )
 
 type Channel string

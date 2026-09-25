@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tripfcatory/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
 )
 
 // --- OTP ---

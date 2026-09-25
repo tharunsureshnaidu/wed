@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/tripfcatory/marriage-hall-booking/pkg/apperr"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
-	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
 func Decode(w http.ResponseWriter, r *http.Request, dst any) bool {
