@@ -86,7 +86,10 @@ func (s *TokenService) Rotate(ctx context.Context, raw string) (int64, error) {
 		return 0, err
 	}
 	if !claimed {
-		if err := s.repo.RevokeAllUserTokens(ctx, t.UserID); err != nil {
+		// RevokeAll, not just the refresh rows: whoever replayed the token may
+		// already hold an access token from it, and that must die now rather
+		// than at expiry.
+		if err := s.RevokeAll(ctx, t.UserID); err != nil {
 			return 0, err
 		}
 		return 0, apperr.Unauthorized("TOKEN_REUSE_DETECTED",

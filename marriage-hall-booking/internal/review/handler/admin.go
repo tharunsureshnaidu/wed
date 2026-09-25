@@ -69,13 +69,18 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
-	// One review per (facility, user) is a unique constraint, and an admin
-	// correcting a rating should not have to delete the old row first.
+	// One live review per (facility, user), and an admin correcting a rating
+	// should not have to delete the old row first.
+	//
+	// The WHERE on the conflict target is required, not decorative: the index
+	// is partial (migration 047, so a deleted review stops blocking a new one),
+	// and an inference clause without the same predicate matches no index and
+	// fails the whole statement.
 	var id string
 	err = tx.QueryRow(r.Context(),
 		`INSERT INTO reviews (facility_id, user_id, rating, title, comment)
 		 VALUES ($1,$2,$3,$4,$5)
-		 ON CONFLICT (user_id, facility_id) DO UPDATE
+		 ON CONFLICT (user_id, facility_id) WHERE is_deleted = FALSE DO UPDATE
 		    SET rating = excluded.rating, title = excluded.title,
 		        comment = excluded.comment, updated_at = CURRENT_TIMESTAMP
 		 RETURNING id`,

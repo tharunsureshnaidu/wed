@@ -279,6 +279,49 @@ and each fails *silently* — the run stays green while testing nothing:
   `/notifications//read`, which 307s to a route that does not exist. The feed
   capture seeds the nil UUID when the list is empty.
 
+## My reviews and app feedback
+
+Two different things on two tables, deliberately:
+
+- `reviews` rates a **venue** and feeds that facility's `avg_rating`.
+- `app_feedback` rates **our service** and must never touch a facility score.
+
+Folding them together would need a nullable `facility_id` on `reviews` — a guard
+every rating query would eventually forget — or app complaints dragging down a
+hall's rating.
+
+`GET /api/v1/reviews/my-reviews` returns the user's own reviews with venue name,
+city and cover image, plus `totalReviews` and `avgRatingGiven` computed over the
+**whole set, not the page** — "2 Total Reviews" must not become "20" on scroll.
+`avgRatingGiven` is null with no reviews, never 0, which would draw as a
+zero-star average.
+
+`POST /api/v1/feedback` accepts **JSON or multipart** — the screenshot is
+optional and a text-only report should not force a multipart body. The
+attachment's type is sniffed with `http.DetectContentType`, never taken from the
+filename: a shell script renamed `.png` is rejected (verified).
+
+`GET/PUT /api/v1/admin/feedback` is the ops inbox. `admin_note` is internal and
+is never returned by the reporter's own `my-feedback` read. `resolved_at` is
+stamped on the way into RESOLVED/CLOSED and cleared on the way back out.
+
+**`app_feedback.user_id` is `ON DELETE SET NULL`, not CASCADE.** Deleting a user
+must not erase the bug report they filed.
+
+### The unique index on reviews is partial
+
+`uq_review_user_facility` ignored `is_deleted`, so a soft-deleted review kept
+occupying the slot forever: a user who deleted their review was told *"You have
+already reviewed this venue"* and could never write another. Harmless until the
+My Reviews screen shipped a delete button. Migration 047 replaces it with a
+partial unique index `WHERE is_deleted = FALSE`.
+
+**A partial index needs the same predicate on every `ON CONFLICT`.**
+`ON CONFLICT (user_id, facility_id)` alone matches no index and fails the whole
+statement with a 500 — which is exactly what happened to `POST /admin/reviews`
+and was caught by newman, not by the build. The admin upsert now reads
+`ON CONFLICT (user_id, facility_id) WHERE is_deleted = FALSE`.
+
 ## Geo-targeted announcements
 
 Facility approved, amenities added and coupon created push to customers within

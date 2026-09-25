@@ -52,8 +52,8 @@ func Load() Config {
 		KafkaBrokers: kafkaBrokers(),
 
 		JWTSecret:        env("JWT_SECRET", ""),
-		JWTExpiry:        ms(env("JWT_EXPIRATION_MS", "900000")),            // 15 min
-		JWTRefreshExpiry: ms(env("JWT_REFRESH_EXPIRATION_MS", "604800000")), // 7 days
+		JWTExpiry:        ms(env("JWT_EXPIRATION_MS", "3600000")),            // 1 hour
+		JWTRefreshExpiry: ms(env("JWT_REFRESH_EXPIRATION_MS", "2592000000")), // 30 days, sliding
 		ResetPasswordURL: env("FRONTEND_RESET_PASSWORD_URL", "http://localhost:3000/reset-password"),
 		LogOtpCodes:      env("LOG_OTP_CODES", "true") == "true",
 		WebhookSecret:    env("PAYMENT_WEBHOOK_SECRET", ""),

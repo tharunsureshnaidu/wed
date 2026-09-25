@@ -263,6 +263,15 @@ BODIES = {
         "facilityId": "{{hallId}}", "bookingId": "{{bookingId}}",
         "rating": 5, "comment": "Beautiful venue and excellent service.",
     },
+    # JSON, not multipart: the attachment is optional and a text-only report is
+    # the common case. Postman can still send multipart by hand.
+    "POST /api/v1/feedback": {
+        "rating": 4, "message": "Booking flow was smooth. UPI autopay would help.",
+        "appVersion": "1.4.2", "platform": "ANDROID",
+    },
+    "PUT /api/v1/admin/feedback/{id}": {
+        "status": "REVIEWING", "adminNote": "Triaged - reproduced on staging.",
+    },
     "POST /api/v1/admin/users": {
         "fullName": "Staff Member", "email": "staff@example.com",
         "password": "StaffPass@123", "role": "ROLE_STAFF",
@@ -354,6 +363,9 @@ FOLDER_TOKEN = {
     "Coupons": "ownerToken",
     # GET /api/v1/support is public; the admin PUT lives in the Admin folder.
     "Support": None,
+    # Submitting feedback and reading your own is a customer action; the ops
+    # inbox lives in the Admin folder.
+    "Feedback": "accessToken",
     "Search": "accessToken",
     "Admin": "adminToken",
     "Cleanup (destructive)": "ownerToken",
@@ -385,7 +397,7 @@ MODULE_FOLDER = {
     "vendors": "Vendors", "booking": "Bookings", "payment": "Payments",
     "quote": "Quotes & Negotiation", "review": "Reviews", "search": "Search",
     "admin": "Admin", "notification": "Notifications", "support": "Support",
-    "coupon": "Coupons",
+    "coupon": "Coupons", "feedback": "Feedback",
 }
 
 FOLDER_ORDER = ["Health", "Auth", "User Profile", "Vendors",
@@ -395,7 +407,7 @@ FOLDER_ORDER = ["Health", "Auth", "User Profile", "Vendors",
                 "Facility Pricing Rules", "Facility Media",
                 "Favourites", "Bookings", "Payments", "Refunds",
                 "Quotes & Negotiation", "Reviews", "Notifications",
-                "Coupons", "Support", "Search", "Admin",
+                "Coupons", "Support", "Feedback", "Search", "Admin",
                 "Cleanup (destructive)"]
 
 # One folder per resource, as in the Java collection. A single "Facility
@@ -416,6 +428,7 @@ PATH_FOLDER = [
     ("/cancellation-policies", "Facility Policies"),
     ("/api/v1/admin/reviews", "Admin"),
     ("/api/v1/admin/support", "Admin"),
+    ("/api/v1/admin/feedback", "Admin"),
     ("/api/v1/bookings/quote", "Bookings"),
     # Acknowledge/decline act on a booking, so they must run after one exists -
     # the folder decides run order, and Notifications comes after Bookings.
@@ -604,6 +617,13 @@ REQUEST_ORDER = [
     # "read-all" precedes "{id}/read", so the unlisted default would mark
     # everything read before the single-item request ran - it would then assert
     # against updated: 0 and pass without testing anything.
+    "GET /api/v1/reviews/my-reviews",
+
+    "POST /api/v1/feedback",
+    "GET /api/v1/feedback/my-feedback",
+    "GET /api/v1/admin/feedback",
+    "PUT /api/v1/admin/feedback/{id}",
+
     "GET /api/v1/notifications",
     "GET /api/v1/notifications/unread-count",
     "PUT /api/v1/notifications/{id}/read",
@@ -850,6 +870,8 @@ def path_var(path, name):
             return "facilityId"
         if path.startswith("/api/v1/search"):
             return "hallId"
+        if path.startswith("/api/v1/admin/feedback"):
+            return "feedbackId"
         if path.startswith("/api/v1/notifications"):
             # The feed id is captured by GET /notifications, which runs first
             # in the folder. Without this the fallback binds facilityId and the
@@ -912,7 +934,7 @@ DESCRIPTIONS = {
         "phone, status, roles. For the fuller profile (addresses, KYC, avatar) use "
         "GET /api/v1/users/me instead.",
     "POST /api/v1/auth/refresh": "Exchanges a refresh token for a new access token, since "
-        "access tokens last 15 minutes.\n\n"
+        "access tokens last 1 hour.\n\n"
         "The refresh token ROTATES: the response carries a new one and the old is dead on "
         "arrival. Store both. Replaying a spent refresh token is treated as theft and "
         "revokes every session for that user.",
@@ -1216,6 +1238,8 @@ if (d && d.items && d.items.length) {
   pm.collectionVariables.set("notificationId",
     "00000000-0000-0000-0000-000000000000");
 }""",
+    "POST /api/v1/feedback": """const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);""",
     "POST /api/v1/admin/reviews": """const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("adminReviewId", d.id);""",
     "POST /api/v1/facilities/{id}/cancellation-policies": """const d = pm.response.json().data;
@@ -1465,7 +1489,7 @@ def main():
                 "   This stores accessToken / ownerToken automatically.\n"
                 "5. Facilities > Create Facilities  (stores hallId)\n\n"
                 "Tokens and ids are captured by test scripts, so most requests work "
-                "without copying anything by hand. Access tokens last 15 minutes; "
+                "without copying anything by hand. Access tokens last 1 hour; "
                 "run Auth > Create Auth Refresh when you get a 401.\n\n"
                 "The payment webhook needs an HMAC signature over the raw body, keyed "
                 "with PAYMENT_WEBHOOK_SECRET from .env - see README."
@@ -1533,6 +1557,8 @@ def main():
             {"key": "videoId", "value": ""},
             {"key": "videoId2", "value": ""},
             {"key": "bookingId", "value": ""},
+            {"key": "feedbackId", "value": "",
+             "description": "Captured from POST /feedback."},
             {"key": "notificationId", "value": "",
              "description": "Captured from GET /notifications. Empty until a "
                             "notification exists - the feed is populated by the "

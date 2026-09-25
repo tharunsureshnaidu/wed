@@ -35,7 +35,7 @@ Folders are ordered so you can work top to bottom.
 From there most requests work without copying anything: test scripts capture
 ids (`hallId`, `bookingId`, `quoteId`, `paymentId`, …) as they are created.
 
-Access tokens last 15 minutes. On a 401, run **Auth → Refresh token**.
+Access tokens last 1 hour. On a 401, run **Auth → Refresh token**.
 
 ## Folder order matters
 

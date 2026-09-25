@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking (Go)",
-    "description": "160 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 15 minutes; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
+    "description": "165 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 1 hour; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -556,7 +556,7 @@
                 "refresh"
               ]
             },
-            "description": "Exchanges a refresh token for a new access token, since access tokens last 15 minutes.\n\nThe refresh token ROTATES: the response carries a new one and the old is dead on arrival. Store both. Replaying a spent refresh token is treated as theft and revokes every session for that user.",
+            "description": "Exchanges a refresh token for a new access token, since access tokens last 1 hour.\n\nThe refresh token ROTATES: the response carries a new one and the old is dead on arrival. Store both. Replaying a spent refresh token is treated as theft and revokes every session for that user.",
             "auth": {
               "type": "noauth"
             },
@@ -6166,7 +6166,7 @@
       "description": "The full negotiation: request, reply, counter, accept, and convert to a booking. Every offer is kept as a version."
     },
     {
-      "name": "Reviews (3)",
+      "name": "Reviews (4)",
       "item": [
         {
           "name": "Write a review",
@@ -6335,6 +6335,60 @@
               ]
             },
             "description": "Fetches review data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Reviews My Reviews",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reviews/my-reviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reviews",
+                "my-reviews"
+              ]
+            },
+            "description": "Lists review data. See the response fields for the full shape.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -7446,6 +7500,135 @@
       ]
     },
     {
+      "name": "Feedback (2)",
+      "item": [
+        {
+          "name": "POST Feedback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/feedback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "feedback"
+              ]
+            },
+            "description": "Creates or acts on a feedback record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 4,\n  \"message\": \"Booking flow was smooth. UPI autopay would help.\",\n  \"appVersion\": \"1.4.2\",\n  \"platform\": \"ANDROID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (d && d.id) pm.collectionVariables.set(\"feedbackId\", d.id);",
+                  "",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Feedback My Feedback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/feedback/my-feedback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "feedback",
+                "my-feedback"
+              ]
+            },
+            "description": "Lists feedback data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Search (10)",
       "item": [
         {
@@ -8083,7 +8266,7 @@
       "description": "Venue search plus the trending and recent-search endpoints backed by Redis."
     },
     {
-      "name": "Admin (24)",
+      "name": "Admin (26)",
       "item": [
         {
           "name": "Dashboard",
@@ -9074,6 +9257,135 @@
                   "type": "string"
                 }
               ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Feedback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/feedback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "feedback"
+              ]
+            },
+            "description": "Lists admin data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Feedback",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/feedback/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "feedback",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{feedbackId}}"
+                }
+              ]
+            },
+            "description": "Updates the admin record. Send the full object, not a partial one.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"REVIEWING\",\n  \"adminNote\": \"Triaged - reproduced on staging.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -10813,6 +11125,11 @@
     {
       "key": "bookingId",
       "value": ""
+    },
+    {
+      "key": "feedbackId",
+      "value": "",
+      "description": "Captured from POST /feedback."
     },
     {
       "key": "notificationId",

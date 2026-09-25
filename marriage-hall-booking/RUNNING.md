@@ -197,7 +197,7 @@ curl -X POST localhost:8080/api/v1/auth/register/verify-email \
 ```
 
 That returns an `accessToken` — send it as `Authorization: Bearer <token>` on
-anything that needs a login. Access tokens last 15 minutes; use
+anything that needs a login. Access tokens last 1 hour; use
 `POST /api/v1/auth/refresh` with the refresh token after that.
 
 Use `/api/v1/auth/register/vendor` instead of `/register` to create a venue

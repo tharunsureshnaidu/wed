@@ -1,12 +1,12 @@
 package handler
 
 import (
-	"github.com/google/uuid"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tripfcatory/marriage-hall-booking/pkg/httpx"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/logger"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/middleware"
 	"github.com/tripfcatory/marriage-hall-booking/pkg/response"
@@ -113,7 +113,7 @@ func (h *Handler) markRead(w http.ResponseWriter, r *http.Request) {
 	// non-UUID string fails the cast inside Postgres and surfaces as a 500.
 	// Bad input from a client is a 400.
 	id := r.PathValue("id")
-	if uuid.Validate(id) != nil {
+	if !httpx.ValidUUID(id) {
 		response.Error(w, http.StatusBadRequest, "Invalid notification id", "VALIDATION_ERROR")
 		return
 	}

@@ -35,6 +35,7 @@ import (
 	quotehandler "github.com/tripfcatory/marriage-hall-booking/internal/quote/handler"
 	reviewhandler "github.com/tripfcatory/marriage-hall-booking/internal/review/handler"
 	searchhandler "github.com/tripfcatory/marriage-hall-booking/internal/search/handler"
+	feedbackhandler "github.com/tripfcatory/marriage-hall-booking/internal/feedback/handler"
 	supporthandler "github.com/tripfcatory/marriage-hall-booking/internal/support/handler"
 	userhandler "github.com/tripfcatory/marriage-hall-booking/internal/user/handler"
 	userrepo "github.com/tripfcatory/marriage-hall-booking/internal/user/repository"
@@ -184,6 +185,23 @@ func main() {
 	reviews.RegisterAdmin(mux)
 	searchhandler.New(db, rdb, signer).Register(mux)
 	supporthandler.New(db, signer).Register(mux)
+
+	// App feedback. The ops notification is a hook so this package never
+	// imports notification, and it fires after the insert commits.
+	feedback := feedbackhandler.New(db, signer, media)
+	feedback.OnSubmitted = func(ctx context.Context, id, message string, rating *int) {
+		subject := "[ops] New app feedback"
+		if rating != nil {
+			subject = fmt.Sprintf("[ops] New app feedback (%d/5)", *rating)
+		}
+		if err := notifier.NotifyAdmins(ctx, notifysvc.Event{
+			Type: "feedback.submitted", SubjectID: id,
+			Subject: subject, Body: message,
+		}); err != nil {
+			logger.Error("feedback: notify ops", "id", id, logger.Err(err))
+		}
+	}
+	feedback.Register(mux)
 
 	admins := adminhandler.New(db, signer)
 	admins.OnStatusChange = func(ctx context.Context, ev adminhandler.StatusChange) {
