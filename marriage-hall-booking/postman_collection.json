@@ -1526,7 +1526,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Kumar Grand Palace\",\n  \"type\": \"MARRIAGE_HALL\",\n  \"description\": \"Premium wedding venue with lawn and banquet hall\",\n  \"city\": \"Bengaluru\",\n  \"fullAddress\": \"42 MG Road\",\n  \"state\": \"Karnataka\",\n  \"zipcode\": \"560001\",\n  \"country\": \"India\",\n  \"lat\": 12.9716,\n  \"lng\": 77.5946,\n  \"amenityIds\": [\n    \"PARKING\",\n    \"AIR_CONDITIONING\",\n    \"CATERING\"\n  ],\n  \"capacityPax\": 800,\n  \"areaSqft\": 12000,\n  \"basePricePerDay\": 150000,\n  \"seatingCapacity\": 600,\n  \"floatingCapacity\": 800,\n  \"minBookingSize\": 100\n}",
+              "raw": "{\n  \"name\": \"Kumar Grand Palace\",\n  \"type\": \"HALL\",\n  \"description\": \"Premium wedding venue with lawn and banquet hall\",\n  \"city\": \"Bengaluru\",\n  \"fullAddress\": \"42 MG Road\",\n  \"state\": \"Karnataka\",\n  \"zipcode\": \"560001\",\n  \"country\": \"India\",\n  \"lat\": 12.9716,\n  \"lng\": 77.5946,\n  \"amenityIds\": [\n    \"PARKING\",\n    \"AIR_CONDITIONING\",\n    \"CATERING\"\n  ],\n  \"capacityPax\": 800,\n  \"areaSqft\": 12000,\n  \"basePricePerDay\": 150000,\n  \"seatingCapacity\": 600,\n  \"floatingCapacity\": 800,\n  \"minBookingSize\": 100\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1544,7 +1544,7 @@
                   "const d = pm.response.json().data;",
                   "if (d) {",
                   "  pm.collectionVariables.set(\"facilityId\", d.id);",
-                  "  if (d.type === \"MARRIAGE_HALL\") pm.collectionVariables.set(\"hallId\", d.id);",
+                  "  if (d.type === \"HALL\" || d.type === \"MARRIAGE_HALL\") pm.collectionVariables.set(\"hallId\", d.id);",
                   "  else pm.collectionVariables.set(\"hotelId\", d.id);",
                   "}",
                   "",
@@ -1626,7 +1626,7 @@
                   "const d = pm.response.json().data;",
                   "if (d) {",
                   "  pm.collectionVariables.set(\"facilityId\", d.id);",
-                  "  if (d.type === \"MARRIAGE_HALL\") pm.collectionVariables.set(\"hallId\", d.id);",
+                  "  if (d.type === \"HALL\" || d.type === \"MARRIAGE_HALL\") pm.collectionVariables.set(\"hallId\", d.id);",
                   "  else pm.collectionVariables.set(\"hotelId\", d.id);",
                   "}",
                   "",
@@ -1662,7 +1662,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/facilities?type=MARRIAGE_HALL&search=&city=&page=0&size=20",
+              "raw": "{{baseUrl}}/api/v1/facilities?type=HALL&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -1674,7 +1674,7 @@
               "query": [
                 {
                   "key": "type",
-                  "value": "MARRIAGE_HALL"
+                  "value": "HALL"
                 },
                 {
                   "key": "search",
@@ -1691,6 +1691,14 @@
                 {
                   "key": "size",
                   "value": "20"
+                },
+                {
+                  "key": "lat",
+                  "value": "12.9716"
+                },
+                {
+                  "key": "lng",
+                  "value": "77.5946"
                 }
               ]
             },
@@ -2201,7 +2209,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/facilities/compare?ids={{hallId}},{{hotelId}}",
+              "raw": "{{baseUrl}}/api/v1/facilities/compare?ids={{hallId}},{{hotelId}}&lat=12.9716&lng=77.5946",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2215,10 +2223,18 @@
                 {
                   "key": "ids",
                   "value": "{{hallId}},{{hotelId}}"
+                },
+                {
+                  "key": "lat",
+                  "value": "12.9716"
+                },
+                {
+                  "key": "lng",
+                  "value": "77.5946"
                 }
               ]
             },
-            "description": "Side-by-side comparison of 2-3 venues, for the Compare Venues screen. Public.\n\n`ids` is a comma-separated list. Duplicates and more than 3 are rejected; a well-formed id that does not exist gives 404 rather than silently comparing fewer venues than asked for.\n\nPRICES ARE NOT NORMALISED. A hotel quotes per night and a hall per event day, so each venue carries `price.unit` and the response carries `comparablePrice: false` when they differ. Dividing one into the other would make a 4,500 hotel look ten times cheaper than a 50,000 hall.\n\n`missing` lists what a venue does not publish - half the hotels have no price and 16 of 43 halls no capacity - so the client renders a dash, never a zero. `amenities` is the union of all venues' amenities with a per-venue flag, and `distanceKm` is nil for any pair where either venue has no coordinates.",
+            "description": "Side-by-side comparison of 2-3 venues, for the Compare Venues screen. Public.\n\n`ids` is a comma-separated list. Duplicates and more than 3 are rejected; a well-formed id that does not exist gives 404 rather than silently comparing fewer venues than asked for.\n\nPass the user's live location as `lat`/`lng` and each venue carries `distanceKm` from the caller, with `userLocation: true` on the response. Both are optional; without them the venue-to-venue `distanceKm` matrix is returned exactly as before. A venue with no coordinates has no distance - the key is null, never 0.\n\nPRICES ARE NOT NORMALISED. A hotel quotes per night and a hall per event day, so each venue carries `price.unit` and the response carries `comparablePrice: false` when they differ. Dividing one into the other would make a 4,500 hotel look ten times cheaper than a 50,000 hall.\n\n`missing` lists what a venue does not publish - half the hotels have no price and 16 of 43 halls no capacity - so the client renders a dash, never a zero. `amenities` is the union of all venues' amenities with a per-venue flag, and `distanceKm` is nil for any pair where either venue has no coordinates.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -2349,7 +2365,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/halls?search=&page=0&size=20",
+              "raw": "{{baseUrl}}/api/v1/halls?search=&page=0&size=20&lat=12.9716&lng=77.5946",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2370,10 +2386,18 @@
                 {
                   "key": "size",
                   "value": "20"
+                },
+                {
+                  "key": "lat",
+                  "value": "12.9716"
+                },
+                {
+                  "key": "lng",
+                  "value": "77.5946"
                 }
               ]
             },
-            "description": "Halls only - the same listing as /facilities?type=MARRIAGE_HALL.",
+            "description": "Halls only - the same listing as /facilities?type=HALL.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -2527,7 +2551,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Kumar Grand Palace (Renovated)\",\n  \"type\": \"MARRIAGE_HALL\",\n  \"city\": \"Bengaluru\",\n  \"capacityPax\": 900,\n  \"basePricePerDay\": 175000\n}",
+              "raw": "{\n  \"name\": \"Kumar Grand Palace (Renovated)\",\n  \"type\": \"HALL\",\n  \"city\": \"Bengaluru\",\n  \"capacityPax\": 900,\n  \"basePricePerDay\": 175000\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -9161,7 +9185,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/search/venues?city=Bengaluru&venueType=MARRIAGE_HALL&minCapacity=100&maxCapacity=1000&minBudget=100000&maxBudget=500000&amenities=Parking&sort=PRICE_LOW_TO_HIGH&page=0&size=20",
+              "raw": "{{baseUrl}}/api/v1/search/venues?city=Bengaluru&venueType=HALL&minCapacity=100&maxCapacity=1000&minBudget=100000&maxBudget=500000&amenities=Parking&sort=PRICE_LOW_TO_HIGH&page=0&size=20",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -9178,7 +9202,7 @@
                 },
                 {
                   "key": "venueType",
-                  "value": "MARRIAGE_HALL"
+                  "value": "HALL"
                 },
                 {
                   "key": "minCapacity",
@@ -10191,7 +10215,7 @@
                 "block"
               ]
             },
-            "description": "Blocks or unblocks, as Java's /block does - the same call again reverses it. `type` is \"user\", \"HOTEL\" or \"MARRIAGE_HALL\"; `id` is the user id or the facility id.\n\nBlocking a user also revokes their access tokens, so they are cut off immediately rather than when the current token expires.",
+            "description": "Blocks or unblocks, as Java's /block does - the same call again reverses it. `type` is \"user\", \"HOTEL\" or \"HALL\"; `id` is the user id or the facility id.\n\nBlocking a user also revokes their access tokens, so they are cut off immediately rather than when the current token expires.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -10343,7 +10367,7 @@
                 "block"
               ]
             },
-            "description": "type=MARRIAGE_HALL blocks the listing instead of a user, which hides it from public search. Sending it again restores the listing.",
+            "description": "type=HALL blocks the listing instead of a user, which hides it from public search. Sending it again restores the listing.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -10356,7 +10380,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"id\": \"{{hallId}}\",\n  \"type\": \"MARRIAGE_HALL\",\n  \"reason\": \"Listing under review\"\n}",
+              "raw": "{\n  \"id\": \"{{hallId}}\",\n  \"type\": \"HALL\",\n  \"reason\": \"Listing under review\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

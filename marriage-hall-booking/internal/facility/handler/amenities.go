@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 // Attaching amenities while creating the facility.
@@ -34,6 +35,9 @@ func (h *Handler) resolveAmenities(ctx context.Context, refs []string, facilityT
 	if len(refs) == 0 {
 		return nil, nil
 	}
+	// amenities.applicable_type stores MARRIAGE_HALL, so a caller sending the
+	// API word HALL must be translated or every hall amenity looks unsupported.
+	facilityType = venuetype.Stored(facilityType)
 	// Deduplicate: a form can repeat the same checkbox, and inserting the same
 	// amenity twice would violate the primary key.
 	seen := map[string]bool{}

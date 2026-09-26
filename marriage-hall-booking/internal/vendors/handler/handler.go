@@ -17,6 +17,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 type Handler struct {
@@ -412,6 +413,7 @@ func (h *Handler) properties(w http.ResponseWriter, r *http.Request) {
 			httpx.Fail(w, err)
 			return
 		}
+		f.Type = venuetype.API(f.Type)
 		out = append(out, f)
 	}
 	response.OK(w, "Properties retrieved successfully", httpx.NewPaged(out, page, size, int64(len(out))))

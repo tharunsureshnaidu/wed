@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 var (
@@ -553,6 +554,10 @@ func (r *Repo) Enrich(ctx context.Context, userID int64, bookings []*Booking) er
 			&x.reviewID, &x.rating); err != nil {
 			return err
 		}
+		// The column says MARRIAGE_HALL, the booking's own targetType says
+		// HALL. Translate here so one response never shows both words for the
+		// same venue.
+		x.f.Type = venuetype.API(x.f.Type)
 		byID[x.f.ID] = x
 	}
 	if err := rows.Err(); err != nil {

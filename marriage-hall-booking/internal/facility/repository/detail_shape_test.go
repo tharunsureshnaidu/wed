@@ -100,3 +100,55 @@ func TestFacilityNullsRatherThanZeros(t *testing.T) {
 		t.Errorf("hall period = %v, want DAY", p["period"])
 	}
 }
+
+// The detail read must always carry faqs, even when a venue has none: a client
+// doing faqs.length breaks on exactly the venues without any. The list must
+// omit the key entirely, since loading FAQs per card would be an N+1.
+//
+// Both behaviours come from one struct, so an omitempty tidy-up on Faqs would
+// silently break whichever half it was not aimed at.
+func TestFaqsPresentOnDetailAbsentOnList(t *testing.T) {
+	// Detail: Get always assigns a (possibly empty) slice for both.
+	detail, err := json.Marshal(Facility{Faqs: []FAQ{}, Reviews: []Review{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal(detail, &d); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"faqs", "reviews"} {
+		v, ok := d[key]
+		if !ok {
+			t.Errorf("detail response dropped %s; a client indexing the array breaks", key)
+			continue
+		}
+		if got, isSlice := v.([]any); !isSlice || len(got) != 0 {
+			t.Errorf("%s = %v, want []", key, v)
+		}
+	}
+
+	// The rating summary rides on every response, detail and list alike - it is
+	// what the card shows, and it must never depend on the reviews array.
+	if _, ok := d["rating"]; !ok {
+		t.Error("detail response dropped the rating summary")
+	}
+
+	// List: scanFacility leaves both nil and neither key must appear.
+	list, err := json.Marshal(Facility{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var l map[string]any
+	if err := json.Unmarshal(list, &l); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"faqs", "reviews"} {
+		if _, ok := l[key]; ok {
+			t.Errorf("list response carries %s; loading them per card is an N+1", key)
+		}
+	}
+	if _, ok := l["rating"]; !ok {
+		t.Error("list card lost the rating summary")
+	}
+}

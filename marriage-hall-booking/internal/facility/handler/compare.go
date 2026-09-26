@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -9,6 +8,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 // maxCompare matches the "SELECT VENUES TO COMPARE (MAX 3)" cap on the screen.
@@ -61,6 +61,11 @@ type compareVenue struct {
 	Lat *float64 `json:"lat"`
 	Lng *float64 `json:"lng"`
 
+	// DistanceKm is how far this venue is from the caller, when the app sent
+	// its live location as ?lat=&lng=. nil when it did not, or when the venue
+	// has no coordinates - never 0, which would read as "you are here".
+	DistanceKm *float64 `json:"distanceKm"`
+
 	// AmenityCodes is what the matrix is built from; the full objects stay out
 	// of the per-venue block so the same amenity is not repeated three times.
 	AmenityCodes []string `json:"amenityCodes"`
@@ -108,9 +113,12 @@ func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	here := parseUserLocation(r)
 	venues := make([]compareVenue, 0, len(found))
 	for _, f := range found {
-		venues = append(venues, toCompareVenue(f))
+		v := toCompareVenue(f)
+		v.DistanceKm = here.distanceFrom(f.Lat, f.Lng)
+		venues = append(venues, v)
 	}
 
 	response.OK(w, "Venues compared successfully", map[string]any{
@@ -118,9 +126,14 @@ func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
 		"amenities": amenityMatrix(found),
 		// mixedTypes tells the client to show the "Hotel vs Marriage Hall Mode"
 		// banner and to stop treating the two prices as one column.
-		"mixedTypes":      mixedTypes(found),
+		"mixedTypes": mixedTypes(found),
+		// distanceKm stays the venue-to-venue matrix it has always been. The
+		// caller's own distance is per venue, above.
 		"distanceKm":      distanceMatrix(found),
 		"comparablePrice": comparablePrice(found),
+		// Tells the client whether a nil distanceKm means "no location sent"
+		// or "this venue has no coordinates".
+		"userLocation": here.OK,
 	})
 }
 
@@ -157,7 +170,7 @@ func parseCompareIDs(raw string) ([]string, string) {
 
 func toCompareVenue(f repository.Facility) compareVenue {
 	v := compareVenue{
-		ID: f.ID, Name: f.Name, Type: f.Type, City: f.City, Address: f.FullAddress,
+		ID: f.ID, Name: f.Name, Type: venuetype.API(f.Type), City: f.City, Address: f.FullAddress,
 		AvgRating: f.AvgRating, ReviewCount: f.ReviewCount, StarRating: f.StarRating,
 		CapacityPax: f.CapacityPax, SeatingCapacity: f.SeatingCapacity,
 		FloatingCapacity: f.FloatingCapacity, AreaSqft: f.AreaSqft,
@@ -316,14 +329,3 @@ func distanceMatrix(fs []repository.Facility) [][]*float64 {
 // haversineKm is great-circle distance. Computed in Go rather than by the
 // earthdistance extension because the coordinates are already loaded - a round
 // trip to Postgres to subtract two numbers would be the slower option.
-func haversineKm(lat1, lng1, lat2, lng2 float64) float64 {
-	const earthRadiusKm = 6371.0
-	rad := func(d float64) float64 { return d * math.Pi / 180 }
-	dLat, dLng := rad(lat2-lat1), rad(lng2-lng1)
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Cos(rad(lat1))*math.Cos(rad(lat2))*math.Sin(dLng/2)*math.Sin(dLng/2)
-	km := earthRadiusKm * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-	// Two decimals: metre precision on a straight-line estimate between two
-	// venue pins is false confidence.
-	return math.Round(km*100) / 100
-}

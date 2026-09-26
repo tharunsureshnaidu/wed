@@ -16,6 +16,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 const (
@@ -148,7 +149,8 @@ type facilityReq struct {
 
 func (req facilityReq) toInput(ownerID int64) repository.CreateInput {
 	return repository.CreateInput{
-		OwnerID: ownerID, Name: req.Name, Description: req.Description, Type: req.Type,
+		OwnerID: ownerID, Name: req.Name, Description: req.Description,
+		Type: venuetype.Stored(req.Type),
 		City: req.City, FullAddress: req.FullAddress, State: req.State, Zipcode: req.Zipcode,
 		Country: req.Country, Lat: req.Lat, Lng: req.Lng,
 		StarRating: req.StarRating, CheckInTime: req.CheckInTime,
@@ -174,8 +176,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	var e validate.Errors
 	e.Required("Name", req.Name)
-	if req.Type != TypeHotel && req.Type != TypeHall {
-		e = append(e, "Type must be HOTEL or MARRIAGE_HALL")
+	// HALL is the word the API speaks; MARRIAGE_HALL is still accepted so
+	// saved requests and import scripts keep working.
+	if !venuetype.Valid(req.Type) {
+		e = append(e, "Type must be HOTEL or HALL")
 	}
 	if req.StarRating != nil && (*req.StarRating < 1 || *req.StarRating > 5) {
 		e = append(e, "Star rating must be between 1 and 5")
@@ -301,6 +305,10 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	// Same field as the list card, so the app reads one key on both screens.
+	if here := parseUserLocation(r); here.OK {
+		f.DistanceKm = here.distanceFrom(f.Lat, f.Lng)
+	}
 	response.OK(w, "Facility retrieved successfully", f)
 }
 
@@ -350,7 +358,7 @@ func (h *Handler) listWithType(w http.ResponseWriter, r *http.Request, forced st
 	page, size := httpx.Page(r)
 	t := forced
 	if t == "" {
-		t = r.URL.Query().Get("type")
+		t = venuetype.Stored(r.URL.Query().Get("type"))
 	}
 	items, total, err := h.repo.List(r.Context(), repository.ListFilter{
 		Type: t, Search: r.URL.Query().Get("search"), City: r.URL.Query().Get("city"),
@@ -359,6 +367,13 @@ func (h *Handler) listWithType(w http.ResponseWriter, r *http.Request, forced st
 	if err != nil {
 		httpx.Fail(w, err)
 		return
+	}
+	// Distance is per caller, not per venue, so it is filled in here rather
+	// than scanned. No location on the request leaves every key absent.
+	if here := parseUserLocation(r); here.OK {
+		for i := range items {
+			items[i].DistanceKm = here.distanceFrom(items[i].Lat, items[i].Lng)
+		}
 	}
 	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(items, page, size, total))
 }

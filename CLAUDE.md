@@ -100,6 +100,32 @@ Two different vocabularies on two tables — a frequent source of empty queries:
 
 So a marriage hall is `MARRIAGE_HALL` in `facilities` and `HALL` in `bookings`.
 
+**The API speaks `HALL` only; the column still stores `MARRIAGE_HALL`.**
+`GET /bookings` used to return `"targetType": "HALL"` beside a nested
+`"type": "MARRIAGE_HALL"` for the same venue — two words for one thing in a
+single response. `pkg/venuetype` translates at the edge:
+
+- `venuetype.API(stored)` on the way **out** — call it at every scan that puts
+  a facility type on the wire. `Facility.Type` is `json:"-"` and emitted by
+  `MarshalJSON`, so list, detail and compare are covered in one place; the
+  other seven scan sites translate individually.
+- `venuetype.Stored(api)` on the way **in** — accepts `HALL` *and*
+  `MARRIAGE_HALL`, so saved requests, `cmd/import` and deployed clients keep
+  working. Anything else passes through, so adding a third facility type needs
+  no change here.
+
+Renaming the stored value was rejected: 153 rows, a CHECK constraint and 16
+Go references, for a difference no user can see.
+
+Two traps this hit, both silent:
+
+- **`amenities.applicable_type` stores the DB word.** Comparing it against a
+  request's `HALL` rejects every valid hall amenity with "does not apply to".
+  `resolveAmenities` converts first.
+- **A Postman capture compared `d.type === "MARRIAGE_HALL"`** to set `hallId`.
+  Once responses said `HALL` it silently stopped capturing, and every later
+  request in the chain would have addressed an empty id. It now accepts both.
+
 ## Running and testing
 
 ```bash
@@ -395,6 +421,20 @@ fetched the venue needs no second call. Deliberately **not** in the list
 response — the card shows no accordion, and loading them per row would be an
 N+1 on the most-hit screen.
 
+**The detail always sends `faqs` and `reviews`, as `[]` when there are none.**
+One struct serialises both list and detail, so a plain `omitempty` did double
+duty: it kept these keys off the card (wanted) *and* dropped them from the
+detail for any venue with none yet (a client doing `reviews.length` breaks on
+exactly those venues — and today that is most of them). Both are marshalled
+through `detailOnly` — nil on the list, an empty slice on the detail. A test
+pins both halves and fails if either regresses.
+
+`rating` is separate and rides on **every** response, list included: it is the
+summary (`value`, `reviewCount`) the card draws, computed from columns on the
+facility row, so it never costs a per-row query. Do not confuse "the list has
+no `reviews`" with "the list has no rating" — the card has always had the
+stars.
+
 `PUT` is partial: an omitted field is left alone, so fixing a typo in an answer
 cannot blank the question. Writes are scoped to the facility *and* the id, so an
 id from another venue matches nothing rather than editing someone else's FAQ.
@@ -438,6 +478,28 @@ Two smaller rules that each hid a bug:
 
 `distanceKm` is nil for any pair where either venue lacks coordinates — 35 of 52
 facilities still have none, and a guessed 0 reads as "same location".
+
+### Distance from the caller
+
+`?lat=&lng=` carries the app's live location. Accepted by `/facilities/compare`,
+`/facilities`, `/halls` and the venue detail; each venue then carries its own
+`distanceKm` from the caller, and compare adds `userLocation: true`.
+
+**Optional everywhere, and malformed input degrades to "no location" rather than
+400.** A denied GPS permission or a slow fix must not take the venue list down.
+Half a location (`lat` with no `lng`), an unparseable value and an out-of-range
+one are all treated as absent. So is `0,0` — Null Island is what an
+uninitialised location object serialises to far more often than it is a real
+position, and accepting it would put every Indian venue ~6000 km away.
+
+**The venue-to-venue matrix under `distanceKm` on compare is unchanged.** The
+caller's distance is a per-venue field; the matrix is a separate thing and
+clients already read it.
+
+One helper, `parseUserLocation` + `distanceFrom` in
+`internal/facility/handler/userlocation.go`, so list, detail and compare cannot
+drift. `haversineKm` moved there from `compare.go`. Straight-line, not driving
+distance — there is no routing service here.
 
 Duplicate ids are rejected rather than collapsed (comparing a venue with itself
 is a client bug), and a well-formed id that does not exist gives 404 rather than

@@ -20,6 +20,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 type Handler struct {
@@ -413,7 +414,7 @@ func (h *Handler) blockUser(w http.ResponseWriter, r *http.Request) {
 	// A facility target: block and unblock the listing, as Java's toggleBlock
 	// does. Without this branch an admin could only ever block, never reverse
 	// it - the endpoint had no way back.
-	if t := strings.ToUpper(req.Type); t == "HOTEL" || t == "MARRIAGE_HALL" {
+	if t := venuetype.Stored(strings.ToUpper(req.Type)); t == venuetype.Hotel || t == venuetype.StoredHall {
 		if !httpx.ValidUUID(req.ID) {
 			response.Error(w, http.StatusBadRequest,
 				"id must be a facility id for this type", "VALIDATION_ERROR")
@@ -438,7 +439,7 @@ func (h *Handler) blockUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Type != "" && !strings.EqualFold(req.Type, "user") {
 		response.Error(w, http.StatusBadRequest,
-			"type must be one of: user, HOTEL, MARRIAGE_HALL", "INVALID_TYPE")
+			"type must be one of: user, HOTEL, HALL", "INVALID_TYPE")
 		return
 	}
 
@@ -644,6 +645,7 @@ func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
 			httpx.Fail(w, err)
 			return
 		}
+		f.Type = venuetype.API(f.Type)
 		out = append(out, f)
 	}
 	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(out, page, size, int64(len(out))))

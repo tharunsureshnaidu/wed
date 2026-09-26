@@ -17,6 +17,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 // Admin facility editing.
@@ -433,6 +434,8 @@ func (h *Handler) facilityDetail(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+
+	f.Type = venuetype.API(f.Type)
 
 	out := map[string]any{"facility": f}
 	// Each child list is best-effort: a malformed pricing row must not stop an

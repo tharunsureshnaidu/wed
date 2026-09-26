@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 	"math"
 	"strings"
 	"time"
@@ -25,8 +26,10 @@ func New(db *pgxpool.Pool) *Repo { return &Repo{db: db} }
 func (r *Repo) Pool() *pgxpool.Pool { return r.db }
 
 type Facility struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID string `json:"id"`
+	// Type holds the stored value (MARRIAGE_HALL); MarshalJSON emits the API
+	// word (HALL). Read it with venuetype.API, never straight onto the wire.
+	Type string `json:"-"`
 
 	// Java's FacilityDTO exposes the owner's phone and the vendor profile id
 	// alongside the owner id; clients show them on the listing page.
@@ -87,17 +90,33 @@ type Facility struct {
 	// need a data migration here.
 	EventCodes []string `json:"eventCodes"`
 
+	// DistanceKm is how far the venue is from the caller, set by the handler
+	// when the request carried a live location. It is not a column: it depends
+	// on who is asking, so it is filled in per request rather than scanned.
+	//
+	// nil is "unknown" and omits the key - never 0, which reads as "you are
+	// standing here". 35 of 52 facilities still have no coordinates.
+	DistanceKm *float64 `json:"distanceKm,omitempty"`
+
 	// Faqs are returned with the detail read only. The list screen shows a
 	// card, not an accordion, and loading them per row would be an N+1 on the
 	// most-hit endpoint.
-	Faqs []FAQ `json:"faqs,omitempty"`
+	//
+	// Marshalled by hand below rather than with omitempty: a venue with no
+	// FAQs must still send "faqs": [], or a client indexing the array breaks
+	// on exactly the venues that have none. The list leaves this nil and the
+	// key is dropped there instead.
+	Faqs []FAQ `json:"-"`
 
 	Amenities []Amenity `json:"amenities"`
 	Images    []Image   `json:"images"`
 	// Reviews are returned with the detail read only (never the list, which
 	// would be one query per row): the detail page shows them, and avgRating /
 	// reviewCount above are the summary the list needs.
-	Reviews []Review `json:"reviews,omitempty"`
+	//
+	// Marshalled through a pointer for the same reason as Faqs: a venue with
+	// no reviews yet must still send "reviews": [] on the detail.
+	Reviews []Review `json:"-"`
 }
 
 // MarshalJSON adds the grouped blocks the venue detail screen reads -
@@ -106,6 +125,17 @@ type Facility struct {
 //
 // ponytail: a marshaller, not a second DTO and no extra queries; every value
 // below is already loaded.
+// detailOnly keeps a detail-only collection off the list response without
+// letting the detail send null for a venue that simply has none yet. The list
+// leaves the field nil (key omitted); the detail read always assigns a slice,
+// so an empty one still marshals as [].
+func detailOnly[T any](v []T) *[]T {
+	if v == nil {
+		return nil
+	}
+	return &v
+}
+
 func (f Facility) MarshalJSON() ([]byte, error) {
 	type raw Facility // avoids recursing into this method
 	return json.Marshal(struct {
@@ -118,6 +148,12 @@ func (f Facility) MarshalJSON() ([]byte, error) {
 		// without shipping its own copy of the catalogue. eventCodes stays for
 		// the clients already reading it.
 		Events []eventtypes.EventType `json:"events"`
+		// The API says HALL; the column says MARRIAGE_HALL.
+		Type string `json:"type"`
+		// Pointer so the list (nil) omits the key while the detail sends an
+		// empty array rather than null.
+		Faqs    *[]FAQ    `json:"faqs,omitempty"`
+		Reviews *[]Review `json:"reviews,omitempty"`
 	}{
 		raw:         raw(f),
 		Location:    location{f.City, f.State, f.Country, f.FullAddress, f.Lat, f.Lng},
@@ -125,6 +161,9 @@ func (f Facility) MarshalJSON() ([]byte, error) {
 		Price:       f.price(),
 		Coordinates: f.coordinates(),
 		Events:      eventtypes.Views(f.EventCodes),
+		Type:        venuetype.API(f.Type),
+		Faqs:        detailOnly(f.Faqs),
+		Reviews:     detailOnly(f.Reviews),
 	})
 }
 

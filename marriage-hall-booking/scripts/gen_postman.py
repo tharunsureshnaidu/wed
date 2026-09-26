@@ -74,7 +74,7 @@ BODIES = {
         "starRating": 4, "checkInTime": "14:00", "checkOutTime": "11:00",
     },
     "POST /api/v1/facilities": {
-        "name": "Kumar Grand Palace", "type": "MARRIAGE_HALL",
+        "name": "Kumar Grand Palace", "type": "HALL",
         "description": "Premium wedding venue with lawn and banquet hall",
         "city": "Bengaluru", "fullAddress": "42 MG Road", "state": "Karnataka",
         "zipcode": "560001", "country": "India", "lat": 12.9716, "lng": 77.5946,
@@ -83,7 +83,7 @@ BODIES = {
         "seatingCapacity": 600, "floatingCapacity": 800, "minBookingSize": 100,
     },
     "PUT /api/v1/halls/{id}": {
-        "name": "Kumar Grand Palace (Renovated)", "type": "MARRIAGE_HALL",
+        "name": "Kumar Grand Palace (Renovated)", "type": "HALL",
         "city": "Bengaluru", "capacityPax": 900, "basePricePerDay": 175000,
     },
     "PUT /api/v1/hotels/{id}": {
@@ -298,14 +298,16 @@ BODIES = {
         "id": "{{userId}}", "type": "user", "reason": "Appeal upheld",
     },
     "POST /api/v1/admin/block#facility": {
-        "id": "{{hallId}}", "type": "MARRIAGE_HALL", "reason": "Listing under review",
+        "id": "{{hallId}}", "type": "HALL", "reason": "Listing under review",
     },
 }
 
 # Query strings worth pre-filling, so a request is useful the moment it opens.
 QUERIES = {
-    "GET /api/v1/facilities": "type=MARRIAGE_HALL&search=&city=&page=0&size=20",
-    "GET /api/v1/halls": "search=&page=0&size=20",
+    # lat/lng are the caller's live location; omitting them is valid and simply
+    # returns no distances.
+    "GET /api/v1/facilities": "type=HALL&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
+    "GET /api/v1/halls": "search=&page=0&size=20&lat=12.9716&lng=77.5946",
     "GET /api/v1/halls/my-halls": "page=0&size=20",
     "GET /api/v1/hotels/my-hotels": "page=0&size=20",
     "GET /api/v1/amenities": "",
@@ -316,7 +318,7 @@ QUERIES = {
     # Two venues the run has already created. hallId and hotelId are different
     # types on purpose - it exercises the cross-type path, which is the one with
     # the price-unit rule in it.
-    "GET /api/v1/facilities/compare": "ids={{hallId}},{{hotelId}}",
+    "GET /api/v1/facilities/compare": "ids={{hallId}},{{hotelId}}&lat=12.9716&lng=77.5946",
     "GET /api/v1/users/me/favourites": "",
     "GET /api/v1/vendors/me/properties": "page=0&size=20",
     "GET /api/v1/quotes/my-requests": "status=&page=0&size=20",
@@ -326,7 +328,7 @@ QUERIES = {
     "GET /api/v1/admin/vendors": "status=PENDING&page=0&size=20",
     "GET /api/v1/admin/facilities": "type=&search=&page=0&size=20",
     "GET /api/v1/admin/dashboard": "",
-    "GET /api/v1/search/venues": ("city=Bengaluru&venueType=MARRIAGE_HALL"
+    "GET /api/v1/search/venues": ("city=Bengaluru&venueType=HALL"
         "&minCapacity=100&maxCapacity=1000&minBudget=100000&maxBudget=500000"
         "&amenities=Parking&sort=PRICE_LOW_TO_HIGH&page=0&size=20"),
     "GET /api/v1/search/autocomplete": "q=Kum",
@@ -942,6 +944,11 @@ DESCRIPTIONS = {
         "`ids` is a comma-separated list. Duplicates and more than 3 are rejected; a "
         "well-formed id that does not exist gives 404 rather than silently comparing "
         "fewer venues than asked for.\n\n"
+        "Pass the user's live location as `lat`/`lng` and each venue carries "
+        "`distanceKm` from the caller, with `userLocation: true` on the response. "
+        "Both are optional; without them the venue-to-venue `distanceKm` matrix is "
+        "returned exactly as before. A venue with no coordinates has no distance - "
+        "the key is null, never 0.\n\n"
         "PRICES ARE NOT NORMALISED. A hotel quotes per night and a hall per event day, "
         "so each venue carries `price.unit` and the response carries `comparablePrice: "
         "false` when they differ. Dividing one into the other would make a 4,500 hotel "
@@ -1051,7 +1058,7 @@ DESCRIPTIONS = {
         "as the hall detail - `location`, `rating`, `price`, `coordinates` - alongside the "
         "unchanged flat fields. `price.period` is NIGHT here, and `price` stays null until "
         "a room type gives the hotel a price.",
-    "GET /api/v1/halls": "Halls only - the same listing as /facilities?type=MARRIAGE_HALL.",
+    "GET /api/v1/halls": "Halls only - the same listing as /facilities?type=HALL.",
     "GET /api/v1/hotels": "Hotels only.",
     "GET /api/v1/halls/my-halls": "Halls owned by the caller, including ones still PENDING.",
     "GET /api/v1/hotels/my-hotels": "Hotels owned by the caller.",
@@ -1146,7 +1153,7 @@ DESCRIPTIONS = {
         "plus pending KYC and open fraud reports.",
     "GET /api/v1/admin/users": "Every user, paged and searchable by name, email or phone.",
     "POST /api/v1/admin/block": "Blocks or unblocks, as Java's /block does - the same call "
-        "again reverses it. `type` is \"user\", \"HOTEL\" or \"MARRIAGE_HALL\"; `id` is the user "
+        "again reverses it. `type` is \"user\", \"HOTEL\" or \"HALL\"; `id` is the user "
         "id or the facility id.\n\nBlocking a user also revokes their access tokens, so they are "
         "cut off immediately rather than when the current token expires.",
     "POST /api/v1/admin/facilities/{id}/approve": "Approves a listing. A facility is created "
@@ -1343,7 +1350,7 @@ if (d) {
     "POST /api/v1/facilities": """const d = pm.response.json().data;
 if (d) {
   pm.collectionVariables.set("facilityId", d.id);
-  if (d.type === "MARRIAGE_HALL") pm.collectionVariables.set("hallId", d.id);
+  if (d.type === "HALL" || d.type === "MARRIAGE_HALL") pm.collectionVariables.set("hallId", d.id);
   else pm.collectionVariables.set("hotelId", d.id);
 }""",
     "POST /api/v1/halls/{id}/packages": """const d = pm.response.json().data;
@@ -1455,7 +1462,7 @@ def main():
                                       "exec": script.split("\n")}})
             item["event"] = events
             sub.append(item)
-        # The sample create body makes a MARRIAGE_HALL; add a second request
+        # The sample create body makes a HALL; add a second request
         # that makes a HOTEL, otherwise hotelId is never set and every
         # /hotels/{id} request in the run 404s on an empty path segment.
         if folder == "Facilities (unified)":
@@ -1536,7 +1543,7 @@ def main():
                  "The same endpoint with the same id: it toggles, so this reverses the "
                  "block above and restores the account's login."),
                 ("#facility", "Block facility listing",
-                 "type=MARRIAGE_HALL blocks the listing instead of a user, which hides it "
+                 "type=HALL blocks the listing instead of a user, which hides it "
                  "from public search. Sending it again restores the listing."),
             ), start=1):
                 v = {

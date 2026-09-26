@@ -22,6 +22,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 type Handler struct {
@@ -203,7 +204,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 	// of them the moment a filter is used would look like the search is broken.
 	// Silence is "not stated", not "no".
 	args := []any{
-		q.Get("q") + q.Get("search"), q.Get("city"), q.Get("venueType"),
+		q.Get("q") + q.Get("search"), q.Get("city"), venuetype.Stored(q.Get("venueType")),
 		minCap, maxCap, minBudget, maxBudget, amenities,
 		strings.ToUpper(strings.TrimSpace(q.Get("eventType"))),
 	}
@@ -235,6 +236,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 			httpx.Fail(w, err)
 			return
 		}
+		v.Type = venuetype.API(v.Type)
 		out = append(out, v)
 	}
 
@@ -349,6 +351,7 @@ func (h *Handler) similar(w http.ResponseWriter, r *http.Request) {
 			httpx.Fail(w, err)
 			return
 		}
+		v.Type = venuetype.API(v.Type)
 		out = append(out, v)
 	}
 	response.OK(w, "Similar venues fetched", searchResult{

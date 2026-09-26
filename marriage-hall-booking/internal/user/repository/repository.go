@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -189,6 +190,7 @@ func (r *Repo) ListFavourites(ctx context.Context, userID int64, typeFilter stri
 		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.City, &f.AvgRating); err != nil {
 			return nil, err
 		}
+		f.Type = venuetype.API(f.Type)
 		out = append(out, f)
 	}
 	return out, rows.Err()
