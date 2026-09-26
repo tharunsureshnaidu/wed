@@ -41,6 +41,14 @@ type AuthService struct {
 	// OnUserCreated creates the matching user_profiles row. A func rather than a
 	// package dependency so auth does not import the user module.
 	OnUserCreated func(ctx context.Context, userID int64, firstName string, lastName *string) error
+
+	// OnVendorCreated creates the vendors row behind a vendor signup. Without
+	// it /auth/register/vendor produced an account that could not act as a
+	// vendor: it granted ROLE_HALL_OWNER but left no vendors row, so the very
+	// next call - POST /facilities - returned 403 VENDOR_REQUIRED telling the
+	// user to "create your vendor business first", which is exactly what they
+	// believed registering had done.
+	OnVendorCreated func(ctx context.Context, userID int64, businessName string) error
 }
 
 func NewAuthService(repo *repository.Repo, otp *OtpService, tokens *TokenService, resetURL string) *AuthService {
@@ -117,6 +125,19 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 		first, last := splitName(in.FullName)
 		if err := s.OnUserCreated(ctx, id, first, last); err != nil {
 			logger.Error("create profile", "userId", id, logger.Err(err))
+		}
+	}
+
+	// A vendor signup gets its business straight away, seeded with the name
+	// they registered under. business_name is the only field the table
+	// requires, and PUT /api/v1/vendors/me remains how the real address, phone
+	// and KYC details are filled in.
+	//
+	// Best-effort like the profile above: a failed insert must not roll back a
+	// created account. The user can still call PUT /vendors/me themselves.
+	if role == domain.RoleHallOwner && s.OnVendorCreated != nil {
+		if err := s.OnVendorCreated(ctx, id, in.FullName); err != nil {
+			logger.Error("create vendor business", "userId", id, logger.Err(err))
 		}
 	}
 

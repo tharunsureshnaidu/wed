@@ -123,6 +123,18 @@ func main() {
 			map[string]any{"userId": userID, "firstName": first})
 		return nil
 	}
+	// A vendor signup creates the vendors row immediately. Wired here rather
+	// than imported so auth stays independent of the vendors module, matching
+	// OnUserCreated above.
+	//
+	// ON CONFLICT DO NOTHING because user_id is unique: a retried registration
+	// must not fail on a row that already exists.
+	authSvc.OnVendorCreated = func(ctx context.Context, userID int64, businessName string) error {
+		_, err := db.Exec(ctx,
+			`INSERT INTO vendors (user_id, business_name)
+			 VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`, userID, businessName)
+		return err
+	}
 
 	bookingSvc := bookingservice.New(bookings, db)
 	bookingSvc.OnBookingCreated = func(ctx context.Context, b *bookingrepo.Booking) {

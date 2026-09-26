@@ -365,3 +365,83 @@ func TestForgotPasswordDoesNotRevealExistence(t *testing.T) {
 		t.Fatalf("want silent success for an unknown identifier, got %v", err)
 	}
 }
+
+// RegisterVendor must produce an account that can actually act as a vendor.
+//
+// It previously differed from Register only in the role string, so a vendor
+// signup granted ROLE_HALL_OWNER and created no vendors row. The next call the
+// user makes - POST /facilities - then returned 403 VENDOR_REQUIRED telling
+// them to "create your vendor business first", which is what they believed
+// registering had just done.
+func TestRegisterVendorCreatesTheVendorBusiness(t *testing.T) {
+	svc, _, pool := setup(t)
+	email := uniqueEmail(t, pool)
+	ctx := context.Background()
+
+	var vendorFor int64
+	var vendorName string
+	svc.OnVendorCreated = func(_ context.Context, userID int64, businessName string) error {
+		vendorFor, vendorName = userID, businessName
+		return nil
+	}
+
+	if err := svc.RegisterVendor(ctx, RegisterInput{
+		FullName: "Tharun Venues", Email: str(email), Password: "Passw0rd!!",
+	}, "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if vendorFor == 0 {
+		t.Fatal("OnVendorCreated was never called - a vendor signup left no vendor business")
+	}
+	// Seeded from the registration name, so the row satisfies the table's only
+	// required field without asking the user for anything twice.
+	if vendorName != "Tharun Venues" {
+		t.Fatalf("business name = %q, want the registered name", vendorName)
+	}
+}
+
+// A plain customer signup must NOT create a vendor business.
+func TestRegisterCustomerCreatesNoVendorBusiness(t *testing.T) {
+	svc, _, pool := setup(t)
+	email := uniqueEmail(t, pool)
+
+	called := false
+	svc.OnVendorCreated = func(context.Context, int64, string) error {
+		called = true
+		return nil
+	}
+
+	if err := svc.Register(context.Background(), RegisterInput{
+		FullName: "A", Email: str(email), Password: "Passw0rd!!",
+	}, "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("a customer signup created a vendor business")
+	}
+}
+
+// A failing hook must not roll back the account: the user can still call
+// PUT /vendors/me themselves, and losing the registration would be worse.
+func TestRegisterVendorSurvivesAFailingHook(t *testing.T) {
+	svc, repo, pool := setup(t)
+	email := uniqueEmail(t, pool)
+	ctx := context.Background()
+
+	svc.OnVendorCreated = func(context.Context, int64, string) error {
+		return errors.New("vendors table unavailable")
+	}
+	if err := svc.RegisterVendor(ctx, RegisterInput{
+		FullName: "A", Email: str(email), Password: "Passw0rd!!",
+	}, "127.0.0.1"); err != nil {
+		t.Fatalf("registration failed because the vendor hook did: %v", err)
+	}
+	exists, err := repo.ExistsByEmail(ctx, email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("the account was rolled back because the vendor hook failed")
+	}
+}
