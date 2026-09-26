@@ -333,6 +333,83 @@ statement with a 500 — which is exactly what happened to `POST /admin/reviews`
 and was caught by newman, not by the build. The admin upsert now reads
 `ON CONFLICT (user_id, facility_id) WHERE is_deleted = FALSE`.
 
+## Event types
+
+What occasions a venue can host. Three endpoints:
+
+```
+GET /api/v1/events                     catalogue, public, ?category= filters
+GET /api/v1/facilities/{id}/events     what one venue hosts, public
+PUT /api/v1/facilities/{id}/events     owner sets the list
+```
+
+**The catalogue is hardcoded in `pkg/eventtypes`, not a table.** The list changes
+with a release, not at runtime, and a seeded table nobody edits is a migration
+pretending to be data. Its own package because two modules need it — `facility`
+declares what a venue hosts, `booking` validates what a customer books — and
+handler importing handler is the wrong direction.
+
+**Codes are permanent.** They are stored in `facility_events` and in
+`bookings.event_type`, so renaming one orphans every row that used it. A test
+pins the five that already exist in bookings.
+
+**There were two allowlists.** `internal/booking/handler` had its own 5-entry
+map, so a venue could advertise Sangeet through the facility API and then have
+the booking rejected. `eventtypes` is now the single source.
+
+`PUT` **replaces, never merges** — the screen is a checkbox list, and a merge
+would leave an unchecked box checked. Validation runs before the write, so a
+payload with one bad code leaves the venue untouched.
+
+### Silence means "not stated", never "no"
+
+A venue with **no** declared events matches every `eventType` filter and accepts
+every booking. 43 halls predate this feature; hiding them the moment a filter is
+used would look like the search is broken, and refusing their bookings would be
+a regression caused by a screen their owner has not seen.
+
+Migration 048 backfills `WEDDING` for every marriage hall, plus any event type
+a venue has already hosted according to `bookings` — 103 rows, recovering real
+data rather than asking owners to re-enter it.
+
+**Adding a search parameter shifts the paging placeholders.** `eventType` became
+`$9`, which silently stole `LIMIT $9`, and *every* search returned 500 with
+"argument of LIMIT must be type bigint". Caught only by running it. LIMIT/OFFSET
+are now `$10`/`$11`.
+
+## Venue FAQs
+
+Per-venue questions and answers on the detail page: parking, outside catering,
+decoration timings. Per-venue rather than a shared list, because "is outside
+catering allowed" has a different answer at every hall.
+
+```
+GET    /api/v1/facilities/{id}/faqs             public
+POST   /api/v1/facilities/{id}/faqs             owner
+PUT    /api/v1/facilities/{id}/faqs/{childId}   owner, partial
+DELETE /api/v1/facilities/{id}/faqs/{childId}   owner, soft
+```
+
+Also **embedded in the detail response** as `faqs`, so a client that already
+fetched the venue needs no second call. Deliberately **not** in the list
+response — the card shows no accordion, and loading them per row would be an
+N+1 on the most-hit screen.
+
+`PUT` is partial: an omitted field is left alone, so fixing a typo in an answer
+cannot blank the question. Writes are scoped to the facility *and* the id, so an
+id from another venue matches nothing rather than editing someone else's FAQ.
+
+### Events on the list response
+
+`eventCodes` and the resolved `events` array now ride on **both** list and
+detail. The list loads them with `EventsOfMany` in **one batched query for the
+whole page** — measured at 3 queries for a 20-venue page (count, page, events),
+not 22. Never call `EventsOf` per row here.
+
+`events` is resolved through `eventtypes.Views` in `Facility.MarshalJSON`, so it
+appears everywhere a facility is serialised without touching each endpoint.
+`eventCodes` stays for clients already reading it.
+
 ## Comparing venues
 
 `GET /api/v1/facilities/compare?ids=a,b,c` — public, 2 to 3 venues.

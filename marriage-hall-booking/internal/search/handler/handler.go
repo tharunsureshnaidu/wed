@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -190,11 +191,21 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 		        JOIN amenities a ON a.id = fa.amenity_id
 		        WHERE fa.facility_id = f.id
 		          AND (a.code = ANY($8::text[]) OR a.name = ANY($8::text[]))
-		      ) = cardinality($8::text[]))`
+		      ) = cardinality($8::text[]))
+		  AND ($9 = '' OR EXISTS (
+		        SELECT 1 FROM facility_events fe
+		         WHERE fe.facility_id = f.id AND fe.event_code = $9)
+		      OR NOT EXISTS (
+		        SELECT 1 FROM facility_events fe WHERE fe.facility_id = f.id))`
 
+	// eventType filters to venues that host it. A venue which has declared
+	// NOTHING still matches: 43 halls predate the feature, and hiding every one
+	// of them the moment a filter is used would look like the search is broken.
+	// Silence is "not stated", not "no".
 	args := []any{
 		q.Get("q") + q.Get("search"), q.Get("city"), q.Get("venueType"),
 		minCap, maxCap, minBudget, maxBudget, amenities,
+		strings.ToUpper(strings.TrimSpace(q.Get("eventType"))),
 	}
 
 	var total int64
@@ -209,7 +220,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 		`SELECT f.id, f.name, f.type, f.city, f.description, COALESCE(f.avg_rating,0),
 		        COALESCE(f.review_count,0), f.base_price_per_day, f.capacity_pax,
 		        COALESCE(f.is_featured,FALSE)
-		 FROM facilities f`+where+` ORDER BY `+order+` LIMIT $9 OFFSET $10`, args...)
+		 FROM facilities f`+where+` ORDER BY `+order+` LIMIT $10 OFFSET $11`, args...)
 	if err != nil {
 		httpx.Fail(w, err)
 		return

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,6 +21,11 @@ import (
 type Handler struct {
 	svc    *service.Service
 	signer *jwt.Signer
+
+	// HostsEvent reports whether a venue accepts an event type. A hook rather
+	// than an import so booking stays independent of the facility module,
+	// matching the callback style used elsewhere. Nil disables the check.
+	HostsEvent func(ctx context.Context, facilityID, eventCode string) (bool, error)
 }
 
 func New(svc *service.Service, signer *jwt.Signer) *Handler {
@@ -62,11 +69,10 @@ type hallReq struct {
 	IdempotentKey string `json:"idempotentKey"`
 }
 
-// eventTypes are the options on the booking screen.
-var eventTypes = map[string]bool{
-	"WEDDING": true, "RECEPTION": true, "ENGAGEMENT": true,
-	"BIRTHDAY": true, "OTHER": true,
-}
+// eventTypes was a second, narrower copy of the event list (5 entries against
+// the catalogue's 25). Two allowlists meant a venue could advertise Sangeet
+// through the facility API and then reject the booking for it. The catalogue in
+// internal/facility/handler is now the single source.
 
 // slotFor maps a time range onto the slot that availability is tracked by.
 // Anything touching both halves of the day takes the whole day; otherwise it is
@@ -169,8 +175,8 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 	if req.RoomCount != nil && (*req.RoomCount < 0 || *req.RoomCount > 1000) {
 		e = append(e, "roomCount must be between 0 and 1000")
 	}
-	if req.EventType != nil && !eventTypes[strings.ToUpper(*req.EventType)] {
-		e = append(e, "eventType must be WEDDING, RECEPTION, ENGAGEMENT, BIRTHDAY or OTHER")
+	if req.EventType != nil && !eventtypes.ValidEventCode(*req.EventType) {
+		e = append(e, "eventType is not a known event - see GET /api/v1/events")
 	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
@@ -181,6 +187,24 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 	if req.EventType != nil {
 		v := strings.ToUpper(*req.EventType)
 		eventType = &v
+
+		// A venue that has declared what it hosts should not take a booking for
+		// something else. Venues that have declared nothing accept anything -
+		// most predate the feature, and refusing their bookings would be a
+		// regression caused by a screen their owner has not seen.
+		if h.HostsEvent != nil {
+			ok, err := h.HostsEvent(r.Context(), req.HallID, v)
+			if err != nil {
+				httpx.Fail(w, err)
+				return
+			}
+			if !ok {
+				response.Error(w, http.StatusBadRequest,
+					"This venue does not host "+eventtypes.EventName(v)+" events",
+					"EVENT_NOT_HOSTED")
+				return
+			}
+		}
 	}
 
 	userID, _ := middleware.UserID(r.Context())

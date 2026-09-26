@@ -56,6 +56,20 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// venues is what a visitor does before signing up. The literal path beats
 	// /{id} in ServeMux's specificity rules, so "compare" is never read as an id.
 	mux.HandleFunc("GET /api/v1/facilities/compare", h.compare)
+
+	// The event catalogue and a venue's own selection. The catalogue is public
+	// (a visitor picks an occasion before signing up); setting the list is the
+	// owner's, via requireOwner inside the handler.
+	mux.HandleFunc("GET /api/v1/events", h.listEventTypes)
+	mux.HandleFunc("GET /api/v1/facilities/{id}/events", h.getFacilityEvents)
+	mux.Handle("PUT /api/v1/facilities/{id}/events", owner(h.setFacilityEvents))
+
+	// Per-venue FAQs. The read is public and also embedded in the detail
+	// response; writes are the owner's.
+	mux.HandleFunc("GET /api/v1/facilities/{id}/faqs", h.listFaqs)
+	mux.Handle("POST /api/v1/facilities/{id}/faqs", owner(h.addFaq))
+	mux.Handle("PUT /api/v1/facilities/{id}/faqs/{childId}", owner(h.updateFaq))
+	mux.Handle("DELETE /api/v1/facilities/{id}/faqs/{childId}", owner(h.deleteFaq))
 	mux.HandleFunc("GET /api/v1/amenities", h.listAmenities)
 	mux.HandleFunc("GET /api/v1/halls", h.listHalls)
 	mux.HandleFunc("GET /api/v1/hotels/{id}", h.get)

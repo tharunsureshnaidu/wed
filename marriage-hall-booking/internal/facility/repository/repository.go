@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
 	"math"
 	"strings"
 	"time"
@@ -81,6 +82,16 @@ type Facility struct {
 	FloatingCapacity *int     `json:"floatingCapacity"`
 	MinBookingSize   *int     `json:"minBookingSize"`
 
+	// EventCodes are the events this venue hosts. Codes only - the handler
+	// resolves display names from its catalogue, so a rename there does not
+	// need a data migration here.
+	EventCodes []string `json:"eventCodes"`
+
+	// Faqs are returned with the detail read only. The list screen shows a
+	// card, not an accordion, and loading them per row would be an N+1 on the
+	// most-hit endpoint.
+	Faqs []FAQ `json:"faqs,omitempty"`
+
 	Amenities []Amenity `json:"amenities"`
 	Images    []Image   `json:"images"`
 	// Reviews are returned with the detail read only (never the list, which
@@ -103,12 +114,17 @@ func (f Facility) MarshalJSON() ([]byte, error) {
 		Rating      rating      `json:"rating"`
 		Price       *price      `json:"price"`
 		Coordinates *coordinate `json:"coordinates"`
+		// Resolved alongside the raw codes so a client renders "Sangeet"
+		// without shipping its own copy of the catalogue. eventCodes stays for
+		// the clients already reading it.
+		Events []eventtypes.EventType `json:"events"`
 	}{
 		raw:         raw(f),
 		Location:    location{f.City, f.State, f.Country, f.FullAddress, f.Lat, f.Lng},
 		Rating:      rating{f.AvgRating, f.ReviewCount},
 		Price:       f.price(),
 		Coordinates: f.coordinates(),
+		Events:      eventtypes.Views(f.EventCodes),
 	})
 }
 
@@ -325,6 +341,12 @@ func (r *Repo) Get(ctx context.Context, id string) (*Facility, error) {
 	if f.Amenities, err = r.amenitiesOf(ctx, id); err != nil {
 		return nil, err
 	}
+	if f.EventCodes, err = r.EventsOf(ctx, id); err != nil {
+		return nil, err
+	}
+	if f.Faqs, err = r.FaqsOf(ctx, id); err != nil {
+		return nil, err
+	}
 	if f.Images, err = r.imagesOf(ctx, id); err != nil {
 		return nil, err
 	}
@@ -452,14 +474,29 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	defer rows.Close()
 
 	out := []Facility{}
+	ids := make([]string, 0, f.Size)
 	for rows.Next() {
-		f, err := scanFacility(rows)
+		fac, err := scanFacility(rows)
 		if err != nil {
 			return nil, 0, err
 		}
-		out = append(out, *f)
+		out = append(out, *fac)
+		ids = append(ids, fac.ID)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	// One query for the whole page, not one per row: the list is the most-hit
+	// screen and 20 venues would be 20 round trips.
+	events, err := r.EventsOfMany(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range out {
+		out[i].EventCodes = events[out[i].ID]
+	}
+	return out, total, nil
 }
 
 func (r *Repo) amenitiesOf(ctx context.Context, id string) ([]Amenity, error) {
@@ -624,4 +661,167 @@ func (r *Repo) ByIDs(ctx context.Context, ids []string) ([]Facility, error) {
 		}
 	}
 	return out, nil
+}
+
+// EventsOf returns the event codes a venue hosts.
+func (r *Repo) EventsOf(ctx context.Context, facilityID string) ([]string, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT event_code FROM facility_events
+		  WHERE facility_id = $1 ORDER BY event_code`, facilityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		out = append(out, code)
+	}
+	return out, rows.Err()
+}
+
+// SetEvents replaces a venue's event list.
+//
+// Delete-then-insert inside one transaction, rather than diffing: the payload
+// is the complete list from a checkbox screen, and computing a diff would be
+// more code for the same result. The transaction is what stops a failed insert
+// leaving the venue hosting nothing.
+func (r *Repo) SetEvents(ctx context.Context, facilityID string, codes []string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM facility_events WHERE facility_id = $1`, facilityID); err != nil {
+		return err
+	}
+	for _, code := range codes {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO facility_events (facility_id, event_code) VALUES ($1, $2)
+			 ON CONFLICT DO NOTHING`, facilityID, code); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// HostsEvent reports whether a venue has declared it hosts an event type.
+//
+// A venue with NO declared events returns true for anything: 43 halls predate
+// this feature, and refusing their bookings would be a regression caused by a
+// feature the owner has not seen yet. Silence means "not stated", never "no".
+func (r *Repo) HostsEvent(ctx context.Context, facilityID, code string) (bool, error) {
+	var declared, hosts bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM facility_events WHERE facility_id = $1),
+		       EXISTS (SELECT 1 FROM facility_events
+		                WHERE facility_id = $1 AND event_code = $2)`,
+		facilityID, code).Scan(&declared, &hosts)
+	if err != nil {
+		return false, err
+	}
+	return !declared || hosts, nil
+}
+
+// FAQ is one question and answer on a venue's detail page.
+type FAQ struct {
+	ID        string `json:"id"`
+	Question  string `json:"question"`
+	Answer    string `json:"answer"`
+	SortOrder int    `json:"sortOrder"`
+}
+
+// FaqsOf returns a venue's live FAQs in display order.
+func (r *Repo) FaqsOf(ctx context.Context, facilityID string) ([]FAQ, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, question, answer, sort_order
+		  FROM facility_faqs
+		 WHERE facility_id = $1 AND is_deleted = FALSE
+		 ORDER BY sort_order, created_at`, facilityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []FAQ{}
+	for rows.Next() {
+		var f FAQ
+		if err := rows.Scan(&f.ID, &f.Question, &f.Answer, &f.SortOrder); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) AddFaq(ctx context.Context, facilityID, question, answer string, sortOrder int) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO facility_faqs (facility_id, question, answer, sort_order)
+		VALUES ($1, $2, $3, $4) RETURNING id::text`,
+		facilityID, question, answer, sortOrder).Scan(&id)
+	return id, err
+}
+
+// UpdateFaq applies only the fields the caller sent; a nil stays untouched.
+// Scoped to the facility as well as the id, so an id from another venue
+// matches nothing rather than editing someone else's FAQ.
+func (r *Repo) UpdateFaq(ctx context.Context, facilityID, id string, question, answer *string, sortOrder *int) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE facility_faqs SET
+		    question   = COALESCE($3, question),
+		    answer     = COALESCE($4, answer),
+		    sort_order = COALESCE($5, sort_order),
+		    updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $2 AND facility_id = $1 AND is_deleted = FALSE`,
+		facilityID, id, question, answer, sortOrder)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// DeleteFaq soft-deletes, matching the rest of this schema.
+func (r *Repo) DeleteFaq(ctx context.Context, facilityID, id string) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE facility_faqs SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $2 AND facility_id = $1 AND is_deleted = FALSE`, facilityID, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// EventsOfMany loads event codes for a whole page of facilities in ONE query.
+//
+// The list endpoint returns 20 venues; calling EventsOf per row would be 20
+// round trips on the most-hit screen in the app.
+func (r *Repo) EventsOfMany(ctx context.Context, ids []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT facility_id::text, event_code
+		  FROM facility_events
+		 WHERE facility_id::text = ANY($1)
+		 ORDER BY facility_id, event_code`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fid, code string
+		if err := rows.Scan(&fid, &code); err != nil {
+			return nil, err
+		}
+		out[fid] = append(out[fid], code)
+	}
+	return out, rows.Err()
 }

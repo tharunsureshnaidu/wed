@@ -265,6 +265,17 @@ BODIES = {
     },
     # JSON, not multipart: the attachment is optional and a text-only report is
     # the common case. Postman can still send multipart by hand.
+    "POST /api/v1/facilities/{id}/faqs": {
+        "question": "Is outside catering allowed?",
+        "answer": "Yes, with a royalty fee of Rs 50 per plate.",
+        "sortOrder": 1,
+    },
+    "PUT /api/v1/facilities/{id}/faqs/{childId}": {
+        "answer": "Yes, with a royalty fee of Rs 75 per plate.",
+    },
+    "PUT /api/v1/facilities/{id}/events": {
+        "events": ["WEDDING", "RECEPTION", "BIRTHDAY", "CORPORATE_EVENT"],
+    },
     "POST /api/v1/feedback": {
         "rating": 4, "message": "Booking flow was smooth. UPI autopay would help.",
         "appVersion": "1.4.2", "platform": "ANDROID",
@@ -621,6 +632,14 @@ REQUEST_ORDER = [
     # "read-all" precedes "{id}/read", so the unlisted default would mark
     # everything read before the single-item request ran - it would then assert
     # against updated: 0 and pass without testing anything.
+    "POST /api/v1/facilities/{id}/faqs",
+    "GET /api/v1/facilities/{id}/faqs",
+    "PUT /api/v1/facilities/{id}/faqs/{childId}",
+
+    "GET /api/v1/events",
+    "PUT /api/v1/facilities/{id}/events",
+    "GET /api/v1/facilities/{id}/events",
+
     "GET /api/v1/facilities/compare",
 
     "GET /api/v1/reviews/my-reviews",
@@ -888,6 +907,8 @@ def path_var(path, name):
     if name == "facilityId" and "/favourites" in path:
         # Favourites take a facility id; the run creates a hall, so point at it.
         return "hallId"
+    if name == "childId" and "/faqs" in path:
+        return "faqId"
     if name == "childId" and "/cancellation-policies" in path:
         return "cancellationId"
     if name == "childId":
@@ -1257,6 +1278,8 @@ if (d && d.items && d.items.length) {
   pm.collectionVariables.set("notificationId",
     "00000000-0000-0000-0000-000000000000");
 }""",
+    "POST /api/v1/facilities/{id}/faqs": """const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("faqId", d.id);""",
     "POST /api/v1/feedback": """const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);""",
     "POST /api/v1/admin/reviews": """const d = pm.response.json().data;
@@ -1615,6 +1638,8 @@ def main():
             {"key": "videoId", "value": ""},
             {"key": "videoId2", "value": ""},
             {"key": "bookingId", "value": ""},
+            {"key": "faqId", "value": "",
+             "description": "Captured from POST /facilities/{id}/faqs."},
             {"key": "feedbackId", "value": "",
              "description": "Captured from POST /feedback."},
             {"key": "notificationId", "value": "",

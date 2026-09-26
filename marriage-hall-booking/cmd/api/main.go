@@ -191,7 +191,11 @@ func main() {
 	fh.RegisterCancellation(mux)
 	// Serves files uploaded with a facility (see internal/facility/handler/upload.go).
 	facilityhandler.ServeUploads(mux)
-	bookinghandler.New(bookingSvc, signer).Register(mux)
+	bookingHandler := bookinghandler.New(bookingSvc, signer)
+	// Assigned rather than constructed inline so the event check can be wired;
+	// the facilities repo already exists here, and booking never imports facility.
+	bookingHandler.HostsEvent = facilities.HostsEvent
+	bookingHandler.Register(mux)
 	// Sending happens in the worker; the API only enqueues, so this service
 	// has no senders wired. The trigger hooks below share it.
 	notifier := notifysvc.New(notifyrepo.New(db), nil)
