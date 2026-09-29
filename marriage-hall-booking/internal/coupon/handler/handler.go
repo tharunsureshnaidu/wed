@@ -49,6 +49,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/coupons/{id}", owner(h.update))
 	mux.Handle("DELETE /api/v1/coupons/{id}", owner(h.delete))
 
+	// Coupon cards for signed-in users on app screen (filtered by location <= 50 km or no location)
+	mux.Handle("GET /api/v1/coupons/available", auth(http.HandlerFunc(h.listAvailable)))
+
 	// Any signed-in customer can check a code before booking.
 	mux.Handle("POST /api/v1/coupons/validate", auth(http.HandlerFunc(h.validateCode)))
 }
@@ -430,6 +433,89 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 		"couponId": id, "code": strings.ToUpper(req.Code),
 		"discountAmount": discount, "finalAmount": req.Amount - discount,
 	})
+}
+
+type availableCouponItem struct {
+	ID               string     `json:"id"`
+	Code             string     `json:"code"`
+	Description      *string    `json:"description"`
+	FacilityID       *string    `json:"facilityId,omitempty"`
+	FacilityName     *string    `json:"facilityName,omitempty"`
+	DiscountType     string     `json:"discountType"`
+	DiscountValue    float64    `json:"discountValue"`
+	MaxDiscount      *float64   `json:"maxDiscount,omitempty"`
+	MinBookingAmount *float64   `json:"minBookingAmount,omitempty"`
+	ValidFrom        *time.Time `json:"validFrom,omitempty"`
+	ValidUntil       *time.Time `json:"validUntil,omitempty"`
+	UsageLimit       *int       `json:"usageLimit,omitempty"`
+	UsedCount        int        `json:"usedCount"`
+	IsActive         bool       `json:"isActive"`
+	DistanceKm       *float64   `json:"distanceKm,omitempty"`
+}
+
+const defaultGeoRadiusMetres = 50000.0 // 50 km
+
+// listAvailable returns coupon cards for a user's app screen.
+//
+// Selection rule:
+// 1. User has location AND Facility has location: included ONLY if distance <= 50 km.
+// 2. User has NO location (lat/lng is null) OR Facility has NO location: ALWAYS INCLUDED.
+// 3. Platform-wide coupons (facilityId is null): ALWAYS INCLUDED.
+func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Authentication required", "UNAUTHORIZED")
+		return
+	}
+
+	rows, err := h.db.Query(r.Context(), `
+		SELECT c.id::text, c.code, c.description, c.facility_id::text, COALESCE(f.name, ''),
+		       c.discount_type, c.discount_value, c.max_discount, c.min_booking_amount,
+		       c.valid_from, c.valid_until, c.usage_limit, c.used_count, c.is_active,
+		       CASE
+		         WHEN up.lat IS NOT NULL AND up.lng IS NOT NULL AND f.lat IS NOT NULL AND f.lng IS NOT NULL THEN
+		           earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision), ll_to_earth(up.lat, up.lng)) / 1000.0
+		         ELSE NULL
+		       END AS distance_km
+		  FROM coupons c
+		  LEFT JOIN user_profiles up ON up.id = $1
+		  LEFT JOIN facilities f ON f.id = c.facility_id AND f.is_deleted = FALSE
+		 WHERE c.is_active = TRUE
+		   AND c.is_deleted = FALSE
+		   AND (c.valid_from IS NULL OR c.valid_from <= CURRENT_TIMESTAMP)
+		   AND (c.valid_until IS NULL OR c.valid_until >= CURRENT_TIMESTAMP)
+		   AND (c.usage_limit IS NULL OR c.used_count < c.usage_limit)
+		   AND (
+		     c.facility_id IS NULL
+		     OR up.lat IS NULL OR up.lng IS NULL
+		     OR f.lat IS NULL OR f.lng IS NULL
+		     OR earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision), ll_to_earth(up.lat, up.lng)) <= $2
+		   )
+		 ORDER BY c.created_at DESC`, userID, defaultGeoRadiusMetres)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	defer rows.Close()
+
+	out := []availableCouponItem{}
+	for rows.Next() {
+		var x availableCouponItem
+		if err := rows.Scan(&x.ID, &x.Code, &x.Description, &x.FacilityID, &x.FacilityName,
+			&x.DiscountType, &x.DiscountValue, &x.MaxDiscount, &x.MinBookingAmount,
+			&x.ValidFrom, &x.ValidUntil, &x.UsageLimit, &x.UsedCount, &x.IsActive,
+			&x.DistanceKm); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	response.OK(w, "Available coupons retrieved successfully", out)
 }
 
 func nullUUID(s *string) any {

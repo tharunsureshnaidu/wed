@@ -98,8 +98,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 	var id string
 	err = tx.QueryRow(r.Context(),
-		`INSERT INTO reviews (facility_id, user_id, booking_id, rating, title, comment)
-		 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+		`INSERT INTO reviews (facility_id, user_id, booking_id, rating, title, comment, status)
+		 VALUES ($1,$2,$3,$4,$5,$6,'PENDING') RETURNING id`,
 		req.FacilityID, userID, req.BookingID, req.Rating, req.Title, req.Comment).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -123,9 +123,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if h.OnReviewCreated != nil {
 		h.OnReviewCreated(r.Context(), req.FacilityID, req.Rating)
 	}
-	response.Created(w, "Review submitted successfully", "/api/v1/reviews/"+id, map[string]any{
+	response.Created(w, "Review submitted successfully and is waiting for admin approval.", "/api/v1/reviews/"+id, map[string]any{
 		"id": id, "facilityId": req.FacilityID, "rating": req.Rating,
-		"title": req.Title, "comment": req.Comment,
+		"title": req.Title, "comment": req.Comment, "status": "PENDING",
 	})
 }
 
@@ -140,9 +140,9 @@ func (h *Handler) recalcRating(ctx context.Context, tx pgx.Tx, facilityID string
 	_, err := tx.Exec(ctx,
 		`UPDATE facilities f SET
 		    avg_rating = COALESCE((SELECT round(avg(rating)::numeric, 2) FROM reviews
-		        WHERE facility_id = f.id AND is_deleted = FALSE), 0),
+		        WHERE facility_id = f.id AND is_deleted = FALSE AND status = 'APPROVED'), 0),
 		    review_count = (SELECT count(*) FROM reviews
-		        WHERE facility_id = f.id AND is_deleted = FALSE),
+		        WHERE facility_id = f.id AND is_deleted = FALSE AND status = 'APPROVED'),
 		    updated_at = CURRENT_TIMESTAMP
 		 WHERE f.id = $1 AND f.rating_is_manual = FALSE`, facilityID)
 	return err
@@ -158,7 +158,7 @@ func (h *Handler) listForFacility(w http.ResponseWriter, r *http.Request) {
 
 	var total int64
 	if err := h.db.QueryRow(r.Context(),
-		`SELECT count(*) FROM reviews WHERE facility_id = $1 AND is_deleted = FALSE`,
+		`SELECT count(*) FROM reviews WHERE facility_id = $1 AND is_deleted = FALSE AND status = 'APPROVED'`,
 		facilityID).Scan(&total); err != nil {
 		httpx.Fail(w, err)
 		return
@@ -166,7 +166,7 @@ func (h *Handler) listForFacility(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(),
 		`SELECT r.id, r.user_id, u.full_name, r.rating, r.title, r.comment, r.created_at
 		 FROM reviews r JOIN users u ON u.id = r.user_id
-		 WHERE r.facility_id = $1 AND r.is_deleted = FALSE
+		 WHERE r.facility_id = $1 AND r.is_deleted = FALSE AND r.status = 'APPROVED'
 		 ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`, facilityID, size, page*size)
 	if err != nil {
 		httpx.Fail(w, err)
@@ -221,7 +221,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		        count(*) FILTER (WHERE rating = 5), count(*) FILTER (WHERE rating = 4),
 		        count(*) FILTER (WHERE rating = 3), count(*) FILTER (WHERE rating = 2),
 		        count(*) FILTER (WHERE rating = 1)
-		 FROM reviews WHERE facility_id = $1 AND is_deleted = FALSE`, facilityID).
+		 FROM reviews WHERE facility_id = $1 AND is_deleted = FALSE AND status = 'APPROVED'`, facilityID).
 		Scan(&s.AvgRating, &s.Total, &s.Five, &s.Four, &s.Three, &s.Two, &s.One)
 	if err != nil {
 		httpx.Fail(w, err)

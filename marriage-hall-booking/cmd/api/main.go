@@ -206,7 +206,7 @@ func main() {
 
 	coupons := couponhandler.New(db, signer)
 	coupons.OnCouponCreated = func(ctx context.Context, couponID, code, facilityID string, createdBy int64) {
-		notifier.AnnounceFacilityNearby(ctx, facilityID, "has a new offer: "+code, "coupon:"+couponID)
+		notifier.AnnounceFacilityCoupon(ctx, facilityID, couponID, code, createdBy)
 	}
 	coupons.Register(mux)
 
