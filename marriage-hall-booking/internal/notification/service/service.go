@@ -610,7 +610,10 @@ func (s *Service) AnnounceNearby(ctx context.Context, a GeoAnnounce) int {
 	for _, t := range targets {
 		uid := t.UserID
 		subject := a.Subject
-		km := t.Distance / 1000
+		km := -1.0
+		if t.Distance >= 0 {
+			km = t.Distance / 1000.0
+		}
 		if err := s.repo.Enqueue(ctx, repository.Notification{
 			RecipientRole: "USER", RecipientID: &uid,
 			Channel:     string(notify.Push),
@@ -663,7 +666,55 @@ func (s *Service) AnnounceFacilityNearby(ctx context.Context, facilityID, what, 
 		Type: "facility.nearby", SubjectID: facilityID + ":" + dedupeKey,
 		Lat: lat, Lng: lng, Subject: subject,
 		Body: func(km float64) string {
-			return fmt.Sprintf("%s is %.0f km from you.\n\n%s", name, km, what)
+			if km >= 0 {
+				return fmt.Sprintf("%s is %.0f km from you.\n\n%s", name, km, what)
+			}
+			return fmt.Sprintf("%s\n\n%s", name, what)
+		},
+		ExcludeUserID: ownerID,
+	})
+}
+
+// AnnounceFacilityCoupon sends a rich offer announcement to eligible users
+// (users within 50 km OR users with no location saved).
+func (s *Service) AnnounceFacilityCoupon(ctx context.Context, facilityID, couponID, code string, createdBy int64) int {
+	lat, lng, name, ownerID, ok, err := s.repo.FacilityPoint(ctx, facilityID)
+	if err != nil {
+		logger.Error("geo: facility lookup", "facilityId", facilityID, logger.Err(err))
+		return 0
+	}
+	if !ok {
+		logger.Warn("geo: facility has no coordinates, location-based coupon notification skipped",
+			"facilityId", facilityID, "name", name,
+			"fix", "PATCH /api/v1/admin/facilities/{id} with lat and lng")
+		return 0
+	}
+
+	cDetails, err := s.repo.CouponDetails(ctx, couponID)
+	if err != nil {
+		logger.Error("geo: coupon lookup", "couponId", couponID, logger.Err(err))
+		cDetails = repository.CouponDetails{ID: couponID, Code: code, DiscountType: "PERCENT", DiscountValue: 0}
+	}
+
+	discountStr := ""
+	if strings.ToUpper(cDetails.DiscountType) == "PERCENT" {
+		discountStr = fmt.Sprintf("%.0f%%", cDetails.DiscountValue)
+	} else {
+		discountStr = fmt.Sprintf("₹%.0f", cDetails.DiscountValue)
+	}
+
+	subject := fmt.Sprintf("🎉 New Offer Available at %s!", name)
+	return s.AnnounceNearby(ctx, GeoAnnounce{
+		Type:      "facility.nearby",
+		SubjectID: facilityID + ":coupon:" + couponID,
+		Lat:       lat, Lng: lng, Subject: subject,
+		Body: func(km float64) string {
+			if km >= 0 {
+				return fmt.Sprintf("🎉 New Offer Available! Get %s OFF using coupon code %s at %s. (%s is %.0f km from you).",
+					discountStr, cDetails.Code, name, name, km)
+			}
+			return fmt.Sprintf("🎉 New Offer Available! Get %s OFF using coupon code %s at %s.",
+				discountStr, cDetails.Code, name)
 		},
 		ExcludeUserID: ownerID,
 	})

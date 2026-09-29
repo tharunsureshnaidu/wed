@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking (Go)",
-    "description": "173 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 1 hour; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
+    "description": "177 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 1 hour; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -7566,7 +7566,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"facilityId\": \"{{hallId}}\",\n  \"bookingId\": \"{{bookingId}}\",\n  \"rating\": 5,\n  \"comment\": \"Beautiful venue and excellent service.\"\n}",
+              "raw": "{\n  \"facilityId\": \"{{hallId}}\",\n  \"bookingId\": \"{{bookingId}}\",\n  \"rating\": 5,\n  \"title\": \"Excellent venue\",\n  \"comment\": \"Beautiful venue and excellent service.\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -8609,7 +8609,7 @@
       ]
     },
     {
-      "name": "Coupons (5)",
+      "name": "Coupons (6)",
       "item": [
         {
           "name": "GET Coupons",
@@ -8712,6 +8712,68 @@
                   "language": "json"
                 }
               }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Coupons Available",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coupons/available",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coupons",
+                "available"
+              ]
+            },
+            "description": "Lists coupon data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -9894,7 +9956,7 @@
       "description": "Venue search plus the trending and recent-search endpoints backed by Redis."
     },
     {
-      "name": "Admin (26)",
+      "name": "Admin (29)",
       "item": [
         {
           "name": "Dashboard",
@@ -11033,6 +11095,390 @@
           ]
         },
         {
+          "name": "Admin: list reviews",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/reviews?status=PENDING&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "reviews"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Lists all reviews with optional status filter (e.g. ?status=PENDING) for admin moderation.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "const list = d && d.content ? d.content : (Array.isArray(d) ? d : []);",
+                  "if (list.length > 0 && list[0].id) {",
+                  "  pm.collectionVariables.set(\"adminReviewId\", list[0].id);",
+                  "}",
+                  "",
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin: add review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/reviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "reviews"
+              ]
+            },
+            "description": "Adds a review as admin, skipping the booking requirement the public endpoint enforces - for seeding ratings imported from elsewhere. Re-posting for the same facility and user updates that review rather than failing.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"facilityId\": \"{{hallId}}\",\n  \"rating\": 5,\n  \"title\": \"Excellent venue\",\n  \"comment\": \"Beautiful hall, great service.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (d) pm.collectionVariables.set(\"adminReviewId\", d.id);",
+                  "",
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin: edit review",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/reviews/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "reviews",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{adminReviewId}}"
+                }
+              ]
+            },
+            "description": "Updates the admin record. Send the full object, not a partial one.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 4,\n  \"title\": \"Very good\",\n  \"comment\": \"Updated by admin.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin: approve review",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/reviews/:id/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "reviews",
+                ":id",
+                "approve"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{adminReviewId}}"
+                }
+              ]
+            },
+            "description": "Approves a pending review, making it visible publicly and recalculating the venue's average rating.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin: reject review",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/reviews/:id/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "reviews",
+                ":id",
+                "reject"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{adminReviewId}}"
+                }
+              ]
+            },
+            "description": "Rejects a review, hiding it from public queries and updating the venue's average rating.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "GET Admin Feedback",
           "request": {
             "method": "GET",
@@ -11414,168 +11860,6 @@
           ]
         },
         {
-          "name": "Admin: add review",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/admin/reviews",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "admin",
-                "reviews"
-              ]
-            },
-            "description": "Adds a review as admin, skipping the booking requirement the public endpoint enforces - for seeding ratings imported from elsewhere. Re-posting for the same facility and user updates that review rather than failing.",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{adminToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"facilityId\": \"{{hallId}}\",\n  \"rating\": 5,\n  \"title\": \"Excellent venue\",\n  \"comment\": \"Beautiful hall, great service.\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const d = pm.response.json().data;",
-                  "if (d) pm.collectionVariables.set(\"adminReviewId\", d.id);",
-                  "",
-                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
-                  "// so the distinction cannot silently regress - the envelope check below passes",
-                  "// either way, which is how every create sat at 200 unnoticed.",
-                  "if (pm.response.code === 201) {",
-                  "    pm.test(\"201 carries a Location header\", function () {",
-                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
-                  "    });",
-                  "}",
-                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "if (ct.indexOf(\"text/html\") !== -1) {",
-                  "    pm.test(\"renders a page\", function () {",
-                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
-                  "    });",
-                  "} else {",
-                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
-                  "        const b = pm.response.json();",
-                  "        pm.expect(b).to.have.property(\"success\");",
-                  "        pm.expect(b).to.have.property(\"message\");",
-                  "        pm.expect(b).to.have.property(\"timestamp\");",
-                  "    });",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Admin: edit review",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/admin/reviews/:id",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "admin",
-                "reviews",
-                ":id"
-              ],
-              "variable": [
-                {
-                  "key": "id",
-                  "value": "{{adminReviewId}}"
-                }
-              ]
-            },
-            "description": "Updates the admin record. Send the full object, not a partial one.",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{adminToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"rating\": 4,\n  \"title\": \"Very good\",\n  \"comment\": \"Updated by admin.\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
-                  "// so the distinction cannot silently regress - the envelope check below passes",
-                  "// either way, which is how every create sat at 200 unnoticed.",
-                  "if (pm.response.code === 201) {",
-                  "    pm.test(\"201 carries a Location header\", function () {",
-                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
-                  "    });",
-                  "}",
-                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "if (ct.indexOf(\"text/html\") !== -1) {",
-                  "    pm.test(\"renders a page\", function () {",
-                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
-                  "    });",
-                  "} else {",
-                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
-                  "        const b = pm.response.json();",
-                  "        pm.expect(b).to.have.property(\"success\");",
-                  "        pm.expect(b).to.have.property(\"message\");",
-                  "        pm.expect(b).to.have.property(\"timestamp\");",
-                  "    });",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
           "name": "GET Admin Support",
           "request": {
             "method": "GET",
@@ -11714,12 +11998,12 @@
           ]
         },
         {
-          "name": "DELETE Admin Facilities Rating",
+          "name": "Admin: delete review",
           "request": {
             "method": "DELETE",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/admin/facilities/:id/rating",
+              "raw": "{{baseUrl}}/api/v1/admin/reviews/:id",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -11727,14 +12011,13 @@
                 "api",
                 "v1",
                 "admin",
-                "facilities",
-                ":id",
-                "rating"
+                "reviews",
+                ":id"
               ],
               "variable": [
                 {
                   "key": "id",
-                  "value": "{{facilityId}}"
+                  "value": "{{adminReviewId}}"
                 }
               ]
             },
@@ -11784,12 +12067,12 @@
           ]
         },
         {
-          "name": "Admin: delete review",
+          "name": "DELETE Admin Facilities Rating",
           "request": {
             "method": "DELETE",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/admin/reviews/:id",
+              "raw": "{{baseUrl}}/api/v1/admin/facilities/:id/rating",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -11797,13 +12080,14 @@
                 "api",
                 "v1",
                 "admin",
-                "reviews",
-                ":id"
+                "facilities",
+                ":id",
+                "rating"
               ],
               "variable": [
                 {
                   "key": "id",
-                  "value": "{{adminReviewId}}"
+                  "value": "{{facilityId}}"
                 }
               ]
             },

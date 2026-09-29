@@ -403,7 +403,7 @@ func (r *Repo) reviewsOf(ctx context.Context, id string) ([]Review, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT rv.id, rv.user_id, u.full_name, rv.rating, rv.title, rv.comment, rv.created_at
 		   FROM reviews rv JOIN users u ON u.id = rv.user_id
-		  WHERE rv.facility_id = $1 AND rv.is_deleted = FALSE
+		  WHERE rv.facility_id = $1 AND rv.is_deleted = FALSE AND rv.status = 'APPROVED'
 		  ORDER BY rv.created_at DESC LIMIT 20`, id)
 	if err != nil {
 		return nil, err

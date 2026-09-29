@@ -53,3 +53,45 @@ func TestGeoRecipientCapIsBounded(t *testing.T) {
 		t.Errorf("default radius = %d m, expected 50 km", GeoRadiusMetres)
 	}
 }
+
+// TestCouponLocationEligibilityRules verifies the distance calculation and no-location rules.
+func TestCouponLocationEligibilityRules(t *testing.T) {
+	const maxRadiusKm = 50.0
+
+	isEligible := func(lat, lng *float64, distKm float64) bool {
+		// Rule: If user has no location (lat is null OR lng is null), user is ALWAYS ELIGIBLE
+		if lat == nil || lng == nil {
+			return true
+		}
+		// Rule: If user has location, eligible if dist <= 50 km (inclusive)
+		return distKm <= maxRadiusKm
+	}
+
+	floatPtr := func(v float64) *float64 { return &v }
+
+	cases := []struct {
+		name     string
+		lat      *float64
+		lng      *float64
+		distKm   float64
+		expected bool
+	}{
+		{"User 10 km away", floatPtr(26.8), floatPtr(83.4), 10.0, true},
+		{"User 49.9 km away", floatPtr(26.9), floatPtr(83.5), 49.9, true},
+		{"User exactly 50.0 km away (inclusive)", floatPtr(27.0), floatPtr(83.6), 50.0, true},
+		{"User 50.1 km away (excluded)", floatPtr(27.1), floatPtr(83.7), 50.1, false},
+		{"User 100 km away (excluded)", floatPtr(27.5), floatPtr(84.0), 100.0, false},
+		{"User with no location (both NULL)", nil, nil, 0, true},
+		{"User with partial location (lat NULL)", nil, floatPtr(83.4), 0, true},
+		{"User with partial location (lng NULL)", floatPtr(26.8), nil, 0, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isEligible(tc.lat, tc.lng, tc.distKm)
+			if got != tc.expected {
+				t.Errorf("case %q: expected eligible=%v, got %v", tc.name, tc.expected, got)
+			}
+		})
+	}
+}

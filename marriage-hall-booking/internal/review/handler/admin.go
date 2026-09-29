@@ -2,7 +2,9 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -27,8 +29,11 @@ func (h *Handler) RegisterAdmin(mux *http.ServeMux) {
 			middleware.RequireAuth(h.signer),
 			middleware.RequireRole(domain.RoleAdmin))
 	}
+	mux.Handle("GET /api/v1/admin/reviews", admin(h.adminList))
 	mux.Handle("POST /api/v1/admin/reviews", admin(h.adminCreate))
 	mux.Handle("PUT /api/v1/admin/reviews/{id}", admin(h.adminUpdate))
+	mux.Handle("PATCH /api/v1/admin/reviews/{id}/approve", admin(h.adminApprove))
+	mux.Handle("PATCH /api/v1/admin/reviews/{id}/reject", admin(h.adminReject))
 	mux.Handle("DELETE /api/v1/admin/reviews/{id}", admin(h.adminDelete))
 }
 
@@ -38,6 +43,131 @@ type adminReviewReq struct {
 	Rating     int     `json:"rating"`
 	Title      *string `json:"title"`
 	Comment    *string `json:"comment"`
+}
+
+type adminReviewRow struct {
+	ID           string    `json:"id"`
+	UserID       int64     `json:"userId"`
+	UserName     string    `json:"userName"`
+	FacilityID   string    `json:"facilityId"`
+	FacilityName string    `json:"facilityName"`
+	Rating       int       `json:"rating"`
+	Title        *string   `json:"title"`
+	Comment      *string   `json:"comment"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
+	page, size := httpx.Page(r)
+	statusFilter := r.URL.Query().Get("status")
+
+	qCount := `SELECT COUNT(*) FROM reviews r WHERE r.is_deleted = FALSE`
+	qRows := `SELECT r.id::text, r.user_id, u.full_name, r.facility_id::text, f.name,
+	                 r.rating, r.title, r.comment, r.status, r.created_at
+	            FROM reviews r
+	            JOIN users u ON u.id = r.user_id
+	            JOIN facilities f ON f.id = r.facility_id
+	           WHERE r.is_deleted = FALSE`
+	argsCount := []any{}
+	argsRows := []any{}
+
+	if statusFilter != "" {
+		qCount += ` AND r.status = $1`
+		qRows += ` AND r.status = $1`
+		argsCount = append(argsCount, statusFilter)
+		argsRows = append(argsRows, statusFilter)
+	}
+
+	var total int64
+	if err := h.db.QueryRow(r.Context(), qCount, argsCount...).Scan(&total); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	limitIdx := len(argsRows) + 1
+	offsetIdx := len(argsRows) + 2
+	qRows += fmt.Sprintf(` ORDER BY r.created_at DESC LIMIT $%d OFFSET $%d`, limitIdx, offsetIdx)
+	argsRows = append(argsRows, size, page*size)
+
+	rows, err := h.db.Query(r.Context(), qRows, argsRows...)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	defer rows.Close()
+
+	out := []adminReviewRow{}
+	for rows.Next() {
+		var x adminReviewRow
+		if err := rows.Scan(&x.ID, &x.UserID, &x.UserName, &x.FacilityID, &x.FacilityName,
+			&x.Rating, &x.Title, &x.Comment, &x.Status, &x.CreatedAt); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	response.OK(w, "Admin reviews retrieved successfully", httpx.NewPaged(out, page, size, total))
+}
+
+func (h *Handler) adminApprove(w http.ResponseWriter, r *http.Request) {
+	h.adminUpdateStatus(w, r, "APPROVED")
+}
+
+func (h *Handler) adminReject(w http.ResponseWriter, r *http.Request) {
+	h.adminUpdateStatus(w, r, "REJECTED")
+}
+
+func (h *Handler) adminUpdateStatus(w http.ResponseWriter, r *http.Request, targetStatus string) {
+	id := r.PathValue("id")
+	if !httpx.ValidUUID(id) {
+		response.Error(w, http.StatusBadRequest, "Invalid review id", "VALIDATION_ERROR")
+		return
+	}
+
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	var facilityID string
+	err = tx.QueryRow(r.Context(),
+		`UPDATE reviews SET status = $2, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND is_deleted = FALSE
+		 RETURNING facility_id`, id, targetStatus).Scan(&facilityID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		response.Error(w, http.StatusNotFound, "Review not found", "REVIEW_NOT_FOUND")
+		return
+	}
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	if err := h.recalcRating(r.Context(), tx, facilityID); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	msg := "Review approved successfully"
+	if targetStatus == "REJECTED" {
+		msg = "Review rejected successfully"
+	}
+	response.OK(w, msg, map[string]any{
+		"id": id, "facilityId": facilityID, "status": targetStatus,
+	})
 }
 
 func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
@@ -78,11 +208,11 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 	// fails the whole statement.
 	var id string
 	err = tx.QueryRow(r.Context(),
-		`INSERT INTO reviews (facility_id, user_id, rating, title, comment)
-		 VALUES ($1,$2,$3,$4,$5)
+		`INSERT INTO reviews (facility_id, user_id, rating, title, comment, status)
+		 VALUES ($1,$2,$3,$4,$5,'APPROVED')
 		 ON CONFLICT (user_id, facility_id) WHERE is_deleted = FALSE DO UPDATE
 		    SET rating = excluded.rating, title = excluded.title,
-		        comment = excluded.comment, updated_at = CURRENT_TIMESTAMP
+		        comment = excluded.comment, status = 'APPROVED', updated_at = CURRENT_TIMESTAMP
 		 RETURNING id`,
 		req.FacilityID, author, req.Rating, req.Title, req.Comment).Scan(&id)
 	if err != nil {
@@ -99,7 +229,7 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	response.OK(w, "Review saved successfully", map[string]any{
 		"id": id, "facilityId": req.FacilityID, "userId": author,
-		"rating": req.Rating, "title": req.Title, "comment": req.Comment,
+		"rating": req.Rating, "title": req.Title, "comment": req.Comment, "status": "APPROVED",
 	})
 }
 

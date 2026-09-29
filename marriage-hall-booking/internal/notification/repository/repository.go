@@ -461,33 +461,41 @@ type GeoTarget struct {
 	Distance float64 // metres from the subject, for the message
 }
 
-// UsersNear returns customers within radiusM metres of a point.
+// UsersNear returns customers eligible for a geo announcement:
+// 1. Users with valid coordinates (lat/lng) within radiusM metres of a point (distance <= radiusM).
+// 2. Users without location saved (lat IS NULL OR lng IS NULL), who are always included.
 //
-// Two predicates, deliberately: earth_box is a bounding cube the GiST index can
-// answer, earth_distance is the exact great-circle check. The box alone would
-// include corners up to ~41% beyond the radius; the distance alone cannot use
-// an index and scans every row.
+// For users with location, earth_box provides a bounding cube index scan (idx_user_profiles_earth)
+// and earth_distance provides the exact great-circle check. For users without location, distance is returned as -1.
 //
-// Excludes: users who opted out, deleted or suspended accounts, and the actor
-// who caused the event - nobody needs telling about their own listing.
+// Excludes: users who opted out, deleted or suspended accounts, and the actor who caused the event.
 func (r *Repo) UsersNear(ctx context.Context, lat, lng, radiusM float64, excludeUserID int64, limit int) ([]GeoTarget, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT u.id, u.full_name, u.email, u.phone_number,
-		       earth_distance(ll_to_earth(p.lat, p.lng), ll_to_earth($1, $2)) AS dist
+		       CASE
+		         WHEN p.lat IS NOT NULL AND p.lng IS NOT NULL THEN earth_distance(ll_to_earth(p.lat, p.lng), ll_to_earth($1, $2))
+		         ELSE -1
+		       END AS dist
 		  FROM user_profiles p
 		  JOIN users u ON u.id = p.id
 		  JOIN user_roles ur ON ur.user_id = u.id
 		  JOIN roles ro ON ro.id = ur.role_id
-		 WHERE p.lat IS NOT NULL AND p.lng IS NOT NULL
-		   AND p.geo_notifications_enabled
+		 WHERE p.geo_notifications_enabled
 		   AND p.is_deleted = FALSE
 		   AND u.is_deleted = FALSE
 		   AND u.status = 'ACTIVE'
 		   AND ro.role_name = 'ROLE_CUSTOMER'
 		   AND u.id <> $5
-		   AND ll_to_earth(p.lat, p.lng) <@ earth_box(ll_to_earth($1, $2), $3)
-		   AND earth_distance(ll_to_earth(p.lat, p.lng), ll_to_earth($1, $2)) <= $3
-		 ORDER BY dist
+		   AND (
+		     (
+		       p.lat IS NOT NULL AND p.lng IS NOT NULL
+		       AND ll_to_earth(p.lat, p.lng) <@ earth_box(ll_to_earth($1, $2), $3)
+		       AND earth_distance(ll_to_earth(p.lat, p.lng), ll_to_earth($1, $2)) <= $3
+		     )
+		     OR
+		     (p.lat IS NULL OR p.lng IS NULL)
+		   )
+		 ORDER BY (CASE WHEN p.lat IS NOT NULL AND p.lng IS NOT NULL THEN earth_distance(ll_to_earth(p.lat, p.lng), ll_to_earth($1, $2)) ELSE 99999999 END)
 		 LIMIT $4`, lat, lng, radiusM, limit, excludeUserID)
 	if err != nil {
 		return nil, err
@@ -522,6 +530,26 @@ func (r *Repo) FacilityPoint(ctx context.Context, facilityID string) (lat, lng f
 		return 0, 0, name, ownerID, false, nil
 	}
 	return *la, *ln, name, ownerID, true, nil
+}
+
+type CouponDetails struct {
+	ID            string
+	Code          string
+	Description   *string
+	DiscountType  string
+	DiscountValue float64
+	MaxDiscount   *float64
+	ValidUntil    *time.Time
+}
+
+// CouponDetails loads coupon attributes for generating rich notification text.
+func (r *Repo) CouponDetails(ctx context.Context, couponID string) (CouponDetails, error) {
+	var c CouponDetails
+	err := r.db.QueryRow(ctx,
+		`SELECT id::text, code, description, discount_type, discount_value, max_discount, valid_until
+		   FROM coupons WHERE id = $1 AND is_deleted = FALSE`, couponID).Scan(
+		&c.ID, &c.Code, &c.Description, &c.DiscountType, &c.DiscountValue, &c.MaxDiscount, &c.ValidUntil)
+	return c, err
 }
 
 // SaveUserLocation stores a user's coordinates.

@@ -21,6 +21,7 @@ type myReview struct {
 	Rating       int       `json:"rating"`
 	Title        *string   `json:"title"`
 	Comment      *string   `json:"comment"`
+	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
@@ -53,7 +54,7 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
 		       (SELECT i.url FROM facility_images i
 		         WHERE i.facility_id = f.id
 		         ORDER BY i.is_cover DESC, i.sort_order LIMIT 1),
-		       r.rating, r.title, r.comment, r.created_at
+		       r.rating, r.title, r.comment, r.status, r.created_at
 		  FROM reviews r
 		  JOIN facilities f ON f.id = r.facility_id
 		 WHERE r.user_id = $1 AND r.is_deleted = FALSE
@@ -69,7 +70,7 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m myReview
 		if err := rows.Scan(&m.ID, &m.FacilityID, &m.FacilityName, &m.FacilityCity,
-			&m.CoverImage, &m.Rating, &m.Title, &m.Comment, &m.CreatedAt); err != nil {
+			&m.CoverImage, &m.Rating, &m.Title, &m.Comment, &m.Status, &m.CreatedAt); err != nil {
 			httpx.Fail(w, err)
 			return
 		}

@@ -261,7 +261,8 @@ BODIES = {
     },
     "POST /api/v1/reviews": {
         "facilityId": "{{hallId}}", "bookingId": "{{bookingId}}",
-        "rating": 5, "comment": "Beautiful venue and excellent service.",
+        "rating": 5, "title": "Excellent venue",
+        "comment": "Beautiful venue and excellent service.",
     },
     # JSON, not multipart: the attachment is optional and a text-only report is
     # the common case. Postman can still send multipart by hand.
@@ -324,6 +325,7 @@ QUERIES = {
     "GET /api/v1/quotes/my-requests": "status=&page=0&size=20",
     "GET /api/v1/quotes/owner": "status=&page=0&size=20",
     "GET /api/v1/reviews/facility/{facilityId}": "page=0&size=20",
+    "GET /api/v1/admin/reviews": "status=PENDING&page=0&size=20",
     "GET /api/v1/admin/users": "search=&page=0&size=20",
     "GET /api/v1/admin/vendors": "status=PENDING&page=0&size=20",
     "GET /api/v1/admin/facilities": "type=&search=&page=0&size=20",
@@ -614,6 +616,12 @@ REQUEST_ORDER = [
     "POST /api/v1/admin/facilities/{id}/approve",
     "POST /api/v1/admin/fraud-reports",
     "POST /api/v1/admin/fraud-reports/{reportId}/resolve",
+    "GET /api/v1/admin/reviews",
+    "POST /api/v1/admin/reviews",
+    "PUT /api/v1/admin/reviews/{id}",
+    "PATCH /api/v1/admin/reviews/{id}/approve",
+    "PATCH /api/v1/admin/reviews/{id}/reject",
+    "DELETE /api/v1/admin/reviews/{id}",
     "DELETE /api/v1/admin/users/{id}",
 
     # Cleanup folder: children first, parents last.
@@ -757,8 +765,11 @@ NAMES = {
     "POST /api/v1/facilities/{id}/cancellation-policies": "Add cancellation tier",
     "GET /api/v1/facilities/{id}/cancellation-policies": "List cancellation tiers",
     "DELETE /api/v1/facilities/{id}/cancellation-policies/{childId}": "Delete cancellation tier",
+    "GET /api/v1/admin/reviews": "Admin: list reviews",
     "POST /api/v1/admin/reviews": "Admin: add review",
     "PUT /api/v1/admin/reviews/{id}": "Admin: edit review",
+    "PATCH /api/v1/admin/reviews/{id}/approve": "Admin: approve review",
+    "PATCH /api/v1/admin/reviews/{id}/reject": "Admin: reject review",
     "DELETE /api/v1/admin/reviews/{id}": "Admin: delete review",
     "POST /api/v1/payments/create": "Create payment",
     "POST /api/v1/payments/webhook": "Gateway webhook (HMAC signed)",
@@ -1085,9 +1096,12 @@ DESCRIPTIONS = {
     "POST /api/v1/facilities/{id}/cancellation-policies": "A refund tier: how much is returned "
         "if the customer cancels at least this many days before the event. Refund amounts are "
         "computed from these, so a venue with no tiers refunds nothing.",
+    "GET /api/v1/admin/reviews": "Lists all reviews with optional status filter (e.g. ?status=PENDING) for admin moderation.",
     "POST /api/v1/admin/reviews": "Adds a review as admin, skipping the booking requirement "
         "the public endpoint enforces - for seeding ratings imported from elsewhere. Re-posting "
         "for the same facility and user updates that review rather than failing.",
+    "PATCH /api/v1/admin/reviews/{id}/approve": "Approves a pending review, making it visible publicly and recalculating the venue's average rating.",
+    "PATCH /api/v1/admin/reviews/{id}/reject": "Rejects a review, hiding it from public queries and updating the venue's average rating.",
     "POST /api/v1/bookings/halls": "Books a hall for one date and slot. The price is computed "
         "server-side from the hall and any pricing rules - an amount in the body is ignored.\n\n"
         "The slot is claimed with a conditional insert, so of two simultaneous bookings exactly "
@@ -1291,6 +1305,11 @@ if (d && d.id) pm.collectionVariables.set("faqId", d.id);""",
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);""",
     "POST /api/v1/admin/reviews": """const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("adminReviewId", d.id);""",
+    "GET /api/v1/admin/reviews": """const d = pm.response.json().data;
+const list = d && d.content ? d.content : (Array.isArray(d) ? d : []);
+if (list.length > 0 && list[0].id) {
+  pm.collectionVariables.set("adminReviewId", list[0].id);
+}""",
     "POST /api/v1/facilities/{id}/cancellation-policies": """const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("cancellationId", d.id);""",
     "POST /api/v1/auth/login": """const d = pm.response.json().data;
@@ -1669,9 +1688,11 @@ def main():
             {"key": "webhookSignature", "value": ""},
         ],
     }
-    json.dump(collection, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    print(f"generated {total} requests in {len(items)} folders", file=sys.stderr)
+    out_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "postman_collection.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(collection, f, indent=2)
+        f.write("\n")
+    print(f"generated {total} requests in {len(items)} folders -> {out_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
