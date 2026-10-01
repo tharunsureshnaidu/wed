@@ -33,6 +33,9 @@ import (
 	notifysvc "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/service"
 	paymenthandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/payment/handler"
 	paymentservice "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/payment/service"
+	privacypolicyhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/privacypolicy/handler"
+	privacypolicyrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/privacypolicy/repository"
+	privacypolicysvc "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/privacypolicy/service"
 	quotehandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/quote/handler"
 	reviewhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/review/handler"
 	searchhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/search/handler"
@@ -235,6 +238,10 @@ func main() {
 		}
 	}
 	feedback.Register(mux)
+
+	privacyRepo := privacypolicyrepo.New(db)
+	privacySvc := privacypolicysvc.New(privacyRepo, db)
+	privacypolicyhandler.New(privacySvc, signer).Register(mux)
 
 	admins := adminhandler.New(db, signer)
 	admins.OnStatusChange = func(ctx context.Context, ev adminhandler.StatusChange) {
