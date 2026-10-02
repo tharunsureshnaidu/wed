@@ -864,3 +864,240 @@ func (r *Repo) EventsOfMany(ctx context.Context, ids []string) (map[string][]str
 	}
 	return out, rows.Err()
 }
+
+// RoomType represents hotel room configurations and pricing.
+type RoomType struct {
+	ID                string  `json:"id"`
+	FacilityID        string  `json:"facilityId,omitempty"`
+	Name              string  `json:"name"`
+	Description       *string `json:"description"`
+	CapacityAdults    int     `json:"capacityAdults"`
+	CapacityChildren  int     `json:"capacityChildren"`
+	BasePricePerNight float64 `json:"basePricePerNight"`
+	TotalRooms        int     `json:"totalRooms"`
+}
+
+// HallPackage represents marriage hall package options.
+type HallPackage struct {
+	ID               string  `json:"id"`
+	FacilityID       string  `json:"facilityId,omitempty"`
+	Name             string  `json:"name"`
+	Description      *string `json:"description"`
+	Price            float64 `json:"price"`
+	GuestCapacity    *int    `json:"guestCapacity"`
+	IncludesCatering bool    `json:"includesCatering"`
+	IncludedServices *string `json:"includedServices"`
+	ExcludedServices *string `json:"excludedServices"`
+}
+
+// AddonService represents add-on equipment, catering, decoration, or services.
+type AddonService struct {
+	ID          string  `json:"id"`
+	FacilityID  string  `json:"facilityId,omitempty"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	Price       float64 `json:"price"`
+	ServiceType *string `json:"serviceType"`
+	Unit        *string `json:"unit"`
+}
+
+// CompareAmenityRow represents one row in the amenity comparison matrix.
+type CompareAmenityRow struct {
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	Present  []bool `json:"present"`
+	AllHave  bool   `json:"allHave"`
+	NoneHave bool   `json:"noneHave"`
+}
+
+// VenueCompareDetail holds comprehensive comparison details for a single venue.
+type VenueCompareDetail struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
+	Description *string  `json:"description,omitempty"`
+	City        *string  `json:"city,omitempty"`
+	Address     *string  `json:"address,omitempty"`
+	FullAddress *string  `json:"fullAddress,omitempty"`
+	State       *string  `json:"state,omitempty"`
+	Zipcode     *string  `json:"zipcode,omitempty"`
+	Country     *string  `json:"country,omitempty"`
+	Location    *string  `json:"location,omitempty"`
+	CoverImage  *string  `json:"coverImage,omitempty"`
+	Images      []Image  `json:"images"`
+	AvgRating   float64  `json:"avgRating"`
+	ReviewCount int      `json:"reviewCount"`
+	Reviews     []Review `json:"reviews,omitempty"`
+
+	// Pricing
+	Price           *float64 `json:"price,omitempty"`
+	StartingPrice   *float64 `json:"startingPrice,omitempty"`
+	DiscountedPrice *float64 `json:"discountedPrice,omitempty"`
+	DiscountPercent *float64 `json:"discountPercent,omitempty"`
+	DiscountLabel   *string  `json:"discountLabel,omitempty"`
+	HasDiscount     bool     `json:"hasDiscount"`
+	PriceUnit       string   `json:"priceUnit"`
+	PriceUnitLabel  string   `json:"priceUnitLabel"`
+
+	// Capacity
+	Capacity         *int `json:"capacity,omitempty"`
+	CapacityPax      *int `json:"capacityPax,omitempty"`
+	SeatingCapacity  *int `json:"seatingCapacity,omitempty"`
+	FloatingCapacity *int `json:"floatingCapacity,omitempty"`
+	AreaSqft         *int `json:"areaSqft,omitempty"`
+
+	// Amenities / Facilities
+	Amenities []Amenity `json:"amenities"`
+
+	// Coordinates / Location
+	Lat        *float64 `json:"lat,omitempty"`
+	Lng        *float64 `json:"lng,omitempty"`
+	DistanceKm *float64 `json:"distanceKm,omitempty"`
+
+	// Hotel-specific details
+	StarRating   *int       `json:"starRating,omitempty"`
+	CheckInTime  *string    `json:"checkInTime,omitempty"`
+	CheckOutTime *string    `json:"checkOutTime,omitempty"`
+	RoomTypes    []RoomType `json:"roomTypes,omitempty"`
+
+	// Marriage Hall-specific details
+	BasePricePerDay *float64       `json:"basePricePerDay,omitempty"`
+	MinBookingSize  *int           `json:"minBookingSize,omitempty"`
+	Packages        []HallPackage  `json:"packages,omitempty"`
+	Addons          []AddonService `json:"addons,omitempty"`
+}
+
+// RoomTypesOfMany loads room types for several hotel facilities in one round trip.
+func (r *Repo) RoomTypesOfMany(ctx context.Context, ids []string) (map[string][]RoomType, error) {
+	out := map[string][]RoomType{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, facility_id::text, name, description, capacity_adults,
+		       capacity_children, base_price_per_night, total_rooms
+		  FROM room_types
+		 WHERE facility_id::text = ANY($1) AND is_deleted = FALSE
+		 ORDER BY facility_id, created_at`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var x RoomType
+		if err := rows.Scan(&x.ID, &x.FacilityID, &x.Name, &x.Description,
+			&x.CapacityAdults, &x.CapacityChildren, &x.BasePricePerNight, &x.TotalRooms); err != nil {
+			return nil, err
+		}
+		out[x.FacilityID] = append(out[x.FacilityID], x)
+	}
+	return out, rows.Err()
+}
+
+// PackagesOfMany loads packages for several marriage hall facilities in one query.
+func (r *Repo) PackagesOfMany(ctx context.Context, ids []string) (map[string][]HallPackage, error) {
+	out := map[string][]HallPackage{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, facility_id::text, name, description, price, guest_capacity,
+		       includes_catering, included_services, excluded_services
+		  FROM hall_packages
+		 WHERE facility_id::text = ANY($1) AND is_deleted = FALSE
+		 ORDER BY facility_id, created_at`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var x HallPackage
+		if err := rows.Scan(&x.ID, &x.FacilityID, &x.Name, &x.Description,
+			&x.Price, &x.GuestCapacity, &x.IncludesCatering, &x.IncludedServices, &x.ExcludedServices); err != nil {
+			return nil, err
+		}
+		out[x.FacilityID] = append(out[x.FacilityID], x)
+	}
+	return out, rows.Err()
+}
+
+// AddonsOfMany loads add-ons for several marriage hall facilities in one query.
+func (r *Repo) AddonsOfMany(ctx context.Context, ids []string) (map[string][]AddonService, error) {
+	out := map[string][]AddonService{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, facility_id::text, name, description, price, service_type, unit
+		  FROM add_on_services
+		 WHERE facility_id::text = ANY($1) AND is_deleted = FALSE
+		 ORDER BY facility_id, created_at`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var x AddonService
+		if err := rows.Scan(&x.ID, &x.FacilityID, &x.Name, &x.Description,
+			&x.Price, &x.ServiceType, &x.Unit); err != nil {
+			return nil, err
+		}
+		out[x.FacilityID] = append(out[x.FacilityID], x)
+	}
+	return out, rows.Err()
+}
+
+// AllImagesOfMany loads all images for several facilities in one query.
+func (r *Repo) AllImagesOfMany(ctx context.Context, ids []string) (map[string][]Image, error) {
+	out := map[string][]Image{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT facility_id::text, id::text, url, is_cover, sort_order
+		  FROM facility_images
+		 WHERE facility_id::text = ANY($1)
+		 ORDER BY facility_id, is_cover DESC, sort_order ASC`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fid string
+		var im Image
+		if err := rows.Scan(&fid, &im.ID, &im.URL, &im.IsCover, &im.SortOrder); err != nil {
+			return nil, err
+		}
+		out[fid] = append(out[fid], im)
+	}
+	return out, rows.Err()
+}
+
+// ReviewsOfMany loads recent approved reviews for several facilities in one query.
+func (r *Repo) ReviewsOfMany(ctx context.Context, ids []string) (map[string][]Review, error) {
+	out := map[string][]Review{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT rv.facility_id::text, rv.id::text, rv.user_id, u.full_name, rv.rating,
+		       rv.title, rv.comment, rv.created_at
+		  FROM reviews rv JOIN users u ON u.id = rv.user_id
+		 WHERE rv.facility_id::text = ANY($1) AND rv.is_deleted = FALSE AND rv.status = 'APPROVED'
+		 ORDER BY rv.facility_id, rv.created_at DESC`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fid string
+		var rv Review
+		if err := rows.Scan(&fid, &rv.ID, &rv.UserID, &rv.UserName, &rv.Rating,
+			&rv.Title, &rv.Comment, &rv.CreatedAt); err != nil {
+			return nil, err
+		}
+		out[fid] = append(out[fid], rv)
+	}
+	return out, rows.Err()
+}
+

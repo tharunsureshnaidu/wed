@@ -2,11 +2,12 @@ package handler
 
 import (
 	"context"
-	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"

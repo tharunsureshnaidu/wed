@@ -9,6 +9,7 @@ import (
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/events"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
@@ -25,9 +26,10 @@ const (
 )
 
 type Handler struct {
-	repo   *repository.Repo
-	signer *jwt.Signer
-	media  storage.Store
+	repo       *repository.Repo
+	signer     *jwt.Signer
+	media      storage.Store
+	compareSvc *service.CompareService
 	// OnMediaUpload queues a file for the worker to upload. Nil means no
 	// publisher (Kafka disabled), and uploads run inline on the request.
 	OnMediaUpload func(ctx context.Context, m events.MediaUpload) error
@@ -41,7 +43,12 @@ type Handler struct {
 }
 
 func New(repo *repository.Repo, signer *jwt.Signer, media storage.Store) *Handler {
-	return &Handler{repo: repo, signer: signer, media: media}
+	return &Handler{
+		repo:       repo,
+		signer:     signer,
+		media:      media,
+		compareSvc: service.NewCompareService(repo),
+	}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -57,6 +64,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// venues is what a visitor does before signing up. The literal path beats
 	// /{id} in ServeMux's specificity rules, so "compare" is never read as an id.
 	mux.HandleFunc("GET /api/v1/facilities/compare", h.compare)
+	mux.HandleFunc("GET /api/v1/venues/compare", h.compare)
+	mux.HandleFunc("POST /api/v1/facilities/compare", h.compareVenues)
+	mux.HandleFunc("POST /api/v1/venues/compare", h.compareVenues)
 
 	// The event catalogue and a venue's own selection. The catalogue is public
 	// (a visitor picks an occasion before signing up); setting the list is the
