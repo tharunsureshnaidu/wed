@@ -27,6 +27,8 @@ import (
 	facilityrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	feedbackhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/feedback/handler"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/health"
+	helpdomain "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/help/domain"
+	helphandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/help/handler"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/migrations"
 	notifyhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/handler"
 	notifyrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/repository"
@@ -238,6 +240,31 @@ func main() {
 		}
 	}
 	feedback.Register(mux)
+
+	// Help Center customer support messages. Super admins receive notifications
+	// when a customer submits a new message.
+	helpCenter := helphandler.New(db, signer)
+	helpCenter.OnMessageCreated = func(ctx context.Context, msg *helpdomain.HelpCenterMessage) {
+		email := "N/A"
+		if msg.UserEmail != nil && *msg.UserEmail != "" {
+			email = *msg.UserEmail
+		}
+		phone := "N/A"
+		if msg.UserPhone != nil && *msg.UserPhone != "" {
+			phone = *msg.UserPhone
+		}
+		body := fmt.Sprintf("A new support message has been received from %s.\n\nEmail:\n%s\n\nPhone:\n%s\n\nMessage:\n%s",
+			msg.UserName, email, phone, msg.Message)
+		if err := notifier.NotifySuperAdmins(ctx, notifysvc.Event{
+			Type:      "HELP_CENTER_MESSAGE",
+			SubjectID: msg.ID,
+			Subject:   "New Help Center Message",
+			Body:      body,
+		}); err != nil {
+			logger.Error("help: notify super admin", "messageId", msg.ID, logger.Err(err))
+		}
+	}
+	helpCenter.Register(mux)
 
 	privacyRepo := privacypolicyrepo.New(db)
 	privacySvc := privacypolicysvc.New(privacyRepo, db)

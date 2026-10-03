@@ -787,3 +787,37 @@ func scanIDs(rows pgx.Rows) ([]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// SuperAdminUser holds the notification coordinates for a user with ROLE_SUPER_ADMIN.
+type SuperAdminUser struct {
+	ID    int64
+	Email *string
+	Phone *string
+}
+
+// FindSuperAdmins returns distinct active users assigned the ROLE_SUPER_ADMIN role.
+// Avoids duplicate notifications if multiple user_roles match.
+func (r *Repo) FindSuperAdmins(ctx context.Context) ([]SuperAdminUser, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT u.id, u.email, u.phone_number
+		  FROM users u
+		  JOIN user_roles ur ON ur.user_id = u.id
+		  JOIN roles r ON r.id = ur.role_id
+		 WHERE r.role_name = 'ROLE_SUPER_ADMIN'
+		   AND u.is_deleted = FALSE
+		   AND u.status = 'ACTIVE'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SuperAdminUser
+	for rows.Next() {
+		var u SuperAdminUser
+		if err := rows.Scan(&u.ID, &u.Email, &u.Phone); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}

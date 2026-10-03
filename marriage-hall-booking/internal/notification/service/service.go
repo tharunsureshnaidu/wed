@@ -251,6 +251,63 @@ func (s *Service) NotifyAdmins(ctx context.Context, e Event) error {
 	return nil
 }
 
+// NotifySuperAdmins enqueues a notification to all active users holding ROLE_SUPER_ADMIN.
+// Only SUPER_ADMIN users receive this notification; USER and ADMIN do not.
+func (s *Service) NotifySuperAdmins(ctx context.Context, e Event) error {
+	superAdmins, err := s.repo.FindSuperAdmins(ctx)
+	if err != nil {
+		return err
+	}
+	if len(superAdmins) == 0 {
+		logger.Warn("notify: no active super admin users found to notify", "event", e.Type, "subjectId", e.SubjectID)
+		return nil
+	}
+
+	for _, sa := range superAdmins {
+		channels := e.Channels
+		if len(channels) == 0 {
+			channels = []notify.Channel{notify.Email, notify.SMS, notify.Push}
+		}
+		uid := sa.ID
+		for _, ch := range channels {
+			var dest string
+			switch ch {
+			case notify.Email:
+				if sa.Email != nil {
+					dest = *sa.Email
+				}
+			case notify.SMS, notify.WhatsApp:
+				if sa.Phone != nil {
+					dest = *sa.Phone
+				}
+			case notify.Push:
+				dest = strconv.FormatInt(sa.ID, 10)
+			}
+			if strings.TrimSpace(dest) == "" {
+				continue
+			}
+			subject := e.Subject
+			subjectID := e.SubjectID
+			if len(superAdmins) > 1 {
+				subjectID = fmt.Sprintf("%s:%d", e.SubjectID, sa.ID)
+			}
+			if err := s.repo.Enqueue(ctx, repository.Notification{
+				RecipientRole: "SUPER_ADMIN",
+				RecipientID:   &uid,
+				Channel:       string(ch),
+				Destination:   strings.TrimSpace(dest),
+				Subject:       &subject,
+				Body:          e.Body,
+				EventType:     e.Type,
+				SubjectID:     subjectID,
+			}); err != nil {
+				logger.Error("notify: super admin notification enqueue failed", "userId", sa.ID, "subjectId", e.SubjectID, logger.Err(err))
+			}
+		}
+	}
+	return nil
+}
+
 // SaveUserLocation stores where a user is, for radius targeting.
 func (s *Service) SaveUserLocation(ctx context.Context, userID int64, lat, lng float64, source string) error {
 	return s.repo.SaveUserLocation(ctx, userID, lat, lng, source)

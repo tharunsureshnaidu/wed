@@ -29,10 +29,11 @@ func (t OtpType) Valid() bool {
 }
 
 const (
-	RoleCustomer  = "ROLE_CUSTOMER"
-	RoleHallOwner = "ROLE_HALL_OWNER"
-	RoleAdmin     = "ROLE_ADMIN"
-	RoleStaff     = "ROLE_STAFF"
+	RoleCustomer   = "ROLE_CUSTOMER"
+	RoleHallOwner  = "ROLE_HALL_OWNER"
+	RoleAdmin      = "ROLE_ADMIN"
+	RoleStaff      = "ROLE_STAFF"
+	RoleSuperAdmin = "ROLE_SUPER_ADMIN"
 )
 
 type User struct {

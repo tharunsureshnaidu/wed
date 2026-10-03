@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
@@ -88,11 +89,79 @@ type compareAmenityRow struct {
 	NoneHave bool `json:"noneHave"`
 }
 
-// compare is GET /api/v1/facilities/compare?ids=a,b,c
+// compareVenues is POST /api/v1/facilities/compare and POST /api/v1/venues/compare
+//
+// Supports comparing 2 or 3 venues of the same type (Hotels or Marriage Halls).
+// Mixed comparisons (e.g. Hotel + Marriage Hall) are rejected.
+func (h *Handler) compareVenues(w http.ResponseWriter, r *http.Request) {
+	var req service.CompareRequest
+	if !httpx.Decode(w, r, &req) {
+		return
+	}
+
+	if here := parseUserLocation(r); here.OK {
+		req.UserLat = &here.Lat
+		req.UserLng = &here.Lng
+	}
+
+	svc := h.compareSvc
+	if svc == nil {
+		svc = service.NewCompareService(h.repo)
+	}
+
+	resp, err := svc.Compare(r.Context(), req)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	response.OK(w, "Venues retrieved for comparison successfully", resp)
+}
+
+// compare is GET /api/v1/facilities/compare?ids=a,b,c or ?type=hotel&venue_ids=a,b
 //
 // Public, like the rest of the facility reads: comparing venues is something a
 // visitor does before signing up.
 func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
+	reqType := r.URL.Query().Get("type")
+	venueIDsRaw := r.URL.Query().Get("venue_ids")
+	if venueIDsRaw == "" {
+		venueIDsRaw = r.URL.Query().Get("ids")
+	}
+
+	if reqType != "" {
+		parts := strings.Split(venueIDsRaw, ",")
+		cleanParts := make([]string, 0, len(parts))
+		for _, p := range parts {
+			trimmed := strings.TrimSpace(p)
+			if trimmed != "" {
+				cleanParts = append(cleanParts, trimmed)
+			}
+		}
+
+		svc := h.compareSvc
+		if svc == nil {
+			svc = service.NewCompareService(h.repo)
+		}
+		var userLat, userLng *float64
+		if here := parseUserLocation(r); here.OK {
+			userLat = &here.Lat
+			userLng = &here.Lng
+		}
+		resp, err := svc.Compare(r.Context(), service.CompareRequest{
+			Type:     reqType,
+			VenueIDs: cleanParts,
+			UserLat:  userLat,
+			UserLng:  userLng,
+		})
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		response.OK(w, "Venues retrieved for comparison successfully", resp)
+		return
+	}
+
 	ids, errMsg := parseCompareIDs(r.URL.Query().Get("ids"))
 	if errMsg != "" {
 		response.Error(w, http.StatusBadRequest, errMsg, "VALIDATION_ERROR")
