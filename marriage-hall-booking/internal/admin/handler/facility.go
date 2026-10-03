@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/audit"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
@@ -84,7 +85,10 @@ type patchReq struct {
 	FloatingCapacity *int     `json:"floatingCapacity"`
 	MinBookingSize   *int     `json:"minBookingSize"`
 
-	Status     *string `json:"status"`
+	Status *string `json:"status"`
+	// Reason is why a listing was rejected or blocked. Recorded on the audit
+	// row, so "why was this turned down" has an answer later.
+	Reason     *string `json:"reason"`
 	IsVerified *bool   `json:"isVerified"`
 	IsFeatured *bool   `json:"isFeatured"`
 	OwnerID    *int64  `json:"ownerId"`
@@ -269,6 +273,17 @@ func (h *Handler) patchFacility(w http.ResponseWriter, r *http.Request) {
 	// Only a status change is worth telling the owner about; renaming a field
 	// on their behalf is not news.
 	if req.Status != nil {
+		reason := ""
+		if req.Reason != nil {
+			reason = strings.TrimSpace(*req.Reason)
+		}
+		actor, _ := middleware.UserID(r.Context())
+		audit.Record(r.Context(), h.db, audit.Decision{
+			Actor: actor, Action: "SET_FACILITY_STATUS_" + status,
+			Entity: audit.EntityFacility, EntityID: id,
+			Status: status, Reason: reason, IP: httpx.IP(r),
+			Extra: map[string]any{"name": name, "ownerId": ownerID},
+		})
 		h.notifyStatus(r.Context(), StatusChange{
 			Entity: "facility", EntityID: id, UserID: ownerID,
 			Status: status, Name: name,

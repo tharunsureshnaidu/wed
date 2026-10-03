@@ -189,8 +189,13 @@ BODIES = {
         "code": "WED{{runId}}", "amount": 200000, "facilityId": "{{hallId}}",
     },
     # An all-halls coupon: no facilityId - sending one is a 400.
+    "POST /api/v1/bookings/{id}/reject": {
+        "reason": "Date already held for a prior function",
+    },
     "POST /api/v1/admin/coupons": {
-        "code": "ALLHALLS{{runId}}", "description": "10% off any marriage hall",
+        "code": "ALLHALLS{{runId}}", "description": "10% off at any venue",
+        # appliesTo scopes an admin coupon: HALL (the default), HOTEL or ALL.
+        "appliesTo": "ALL",
         "discountType": "PERCENT", "discountValue": 10, "maxDiscount": 5000,
         "usageLimit": 100,
     },
@@ -317,12 +322,17 @@ BODIES = {
 QUERIES = {
     # lat/lng are the caller's live location; omitting them is valid and simply
     # returns no distances.
+    "GET /api/v1/admin/analytics/decisions": "entity=&from=&until=",
+    # lat/lng are the caller's live location; omitting them still returns the
+    # dashboard, with top-rated venues instead of nearest.
+    "GET /api/v1/users/me/dashboard": "lat=12.9716&lng=77.5946",
     "GET /api/v1/facilities": "type=HALL&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
     "GET /api/v1/halls": "search=&page=0&size=20&lat=12.9716&lng=77.5946",
     "GET /api/v1/halls/my-halls": "page=0&size=20",
     "GET /api/v1/hotels/my-hotels": "page=0&size=20",
     "GET /api/v1/amenities": "",
     "GET /api/v1/bookings": "page=0&size=20",
+    "GET /api/v1/bookings/owner": "status=&page=0&size=20",
     # before is left empty on purpose: it is a keyset cursor the client copies
     # from the previous page's nextBefore, not a value anyone types.
     "GET /api/v1/notifications": "limit=20&unreadOnly=&before=",
@@ -411,6 +421,10 @@ REQUEST_TOKEN = {
     "POST /api/v1/refunds/{paymentId}": "ownerToken",
     # The all-halls coupon routes live in the coupon module, so they land in
     # the Coupons folder - whose owner token would 403 on every one of them.
+    "GET /api/v1/admin/analytics/decisions": "adminToken",
+    "GET /api/v1/bookings/owner": "ownerToken",
+    "POST /api/v1/bookings/{id}/confirm": "ownerToken",
+    "POST /api/v1/bookings/{id}/reject": "ownerToken",
     "POST /api/v1/admin/coupons": "adminToken",
     "GET /api/v1/admin/coupons": "adminToken",
     "PUT /api/v1/admin/coupons/{id}": "adminToken",

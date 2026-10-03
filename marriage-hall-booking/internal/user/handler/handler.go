@@ -26,6 +26,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	get := func(p string, fn http.HandlerFunc) { mux.Handle(p, auth(fn)) }
 
 	get("GET /api/v1/users/me", h.get)
+	get("GET /api/v1/users/me/dashboard", h.dashboard)
 	get("PUT /api/v1/users/me", h.update)
 	get("DELETE /api/v1/users/me", h.delete)
 	get("GET /api/v1/users/me/favourites", h.listFavourites)

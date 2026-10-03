@@ -44,6 +44,7 @@ import (
 	userhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/user/handler"
 	userrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/user/repository"
 	vendorhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/vendors/handler"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/audit"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/config"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/events"
@@ -150,6 +151,19 @@ func main() {
 		publisher.Publish(ctx, events.TopicBookingCancelled, b.ID, map[string]any{
 			"bookingId": b.ID, "userId": b.UserID,
 		})
+		// The occasion rides on the audit row, so the rejection analytics can
+		// break down by event without joining back to a booking that may since
+		// have been deleted.
+		eventType := ""
+		if b.EventType != nil {
+			eventType = *b.EventType
+		}
+		audit.Record(ctx, db, audit.Decision{
+			Actor: b.UserID, Action: "CANCEL_BOOKING",
+			Entity: audit.EntityBooking, EntityID: b.ID,
+			Status: "CANCELLED", EventType: eventType,
+			Extra: map[string]any{"userId": b.UserID},
+		})
 	}
 	paymentSvc := paymentservice.New(db, bookings, cfg.WebhookSecret)
 	paymentSvc.OnPaid = func(ctx context.Context, bookingID, paymentID string, amount float64) {
@@ -197,6 +211,35 @@ func main() {
 	// has no senders wired. The feed/device/ack endpoints use it, and so does
 	// the publisher's in-process fallback below.
 	notifier := notifysvc.New(notifyrepo.New(db), nil)
+
+	// The customer is waiting on the owner's answer, so it goes straight to
+	// them. NotifyUser rather than a new topic: this needs no fan-out and no
+	// retry-until-acknowledged, and a topic would have to be added to both
+	// events.Topics and consumer.Topics to avoid being published and dropped.
+	bookingSvc.OnBookingDecided = func(ctx context.Context, b *bookingrepo.Booking, confirmed bool, reason string) {
+		subject, body := "Your booking is confirmed", "The venue has confirmed your booking."
+		eventType := "booking.confirmed"
+		if !confirmed {
+			subject, body = "Your booking was not accepted",
+				"The venue could not accept this booking."
+			eventType = "booking.rejected"
+			if reason != "" {
+				body += " Reason: " + reason
+			}
+		}
+		audit.Record(ctx, db, audit.Decision{
+			Action: "DECIDE_BOOKING", Entity: audit.EntityBooking, EntityID: b.ID,
+			Status: b.Status, Reason: reason,
+			EventType: derefString(b.EventType),
+		})
+		if err := notifier.NotifyUser(ctx, notifysvc.Event{
+			Type: eventType, SubjectID: b.ID, UserID: b.UserID,
+			Subject: subject, Body: body,
+		}); err != nil {
+			logger.Error("notify booking decision", "bookingId", b.ID, logger.Err(err))
+		}
+	}
+
 	// Every hook below only publishes; the worker reacts. When Kafka is off or
 	// refuses the write, the same reactions run here instead - see
 	// events.Publisher.Local.
@@ -321,4 +364,13 @@ func main() {
 		logger.Error("shutdown", logger.Err(err))
 	}
 	logger.Info("stopped")
+}
+
+// derefString is "" for a nil pointer, for optional columns going into a log
+// or an audit payload.
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }

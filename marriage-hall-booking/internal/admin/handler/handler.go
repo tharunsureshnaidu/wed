@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/audit"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
@@ -71,6 +72,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	}
 
 	mux.Handle("GET /api/v1/admin/dashboard", admin(h.dashboard))
+	mux.Handle("GET /api/v1/admin/analytics/decisions", admin(h.decisionAnalytics))
 	mux.Handle("GET /api/v1/admin/users", admin(h.listUsers))
 	mux.Handle("POST /api/v1/admin/users", admin(h.createUser))
 	mux.Handle("PUT /api/v1/admin/users/{id}", admin(h.updateUser))
@@ -249,6 +251,15 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	if _, err := tx.Exec(r.Context(),
 		`INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE role_name = $2`,
 		id, req.Role); err != nil {
+		// A customer and a vendor are separate entities; the database refuses
+		// the pair. Reported as a conflict rather than a 500, which would send
+		// an admin looking for a server fault instead of reading the message.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
+			response.Error(w, http.StatusConflict,
+				"A customer account cannot also be a vendor", "ROLE_CONFLICT")
+			return
+		}
 		httpx.Fail(w, err)
 		return
 	}
@@ -608,6 +619,13 @@ func (h *Handler) setKyc(w http.ResponseWriter, r *http.Request, status, reason 
 			"KYC_NOT_SUBMITTED")
 		return
 	}
+	actor, _ := middleware.UserID(r.Context())
+	audit.Record(r.Context(), h.db, audit.Decision{
+		Actor: actor, Action: "SET_KYC_" + status,
+		Entity: audit.EntityVendor, EntityID: vendorID,
+		Status: status, Reason: reason, IP: httpx.IP(r),
+		Extra: map[string]any{"vendorName": vendorName, "userId": ownerUserID},
+	})
 	h.notifyStatus(r.Context(), StatusChange{
 		Entity: "vendor.kyc", EntityID: vendorID, UserID: ownerUserID,
 		Status: status, Reason: reason, Name: vendorName,

@@ -27,12 +27,13 @@ type Querier interface {
 // AppliesSQL is true when coupon c may be used at facility f. The most
 // specific scope wins: a coupon pinned to a venue applies there only, a
 // vendor's coupon to that vendor's venues, and an admin coupon to every venue
-// of its type. Shared by Load and the public list, so what the offers screen
+// of its type - or to every venue at all, when that type is ALL. Shared by Load and the public list, so what the offers screen
 // shows is exactly what checkout accepts.
 const AppliesSQL = `CASE
 	WHEN c.facility_id IS NOT NULL THEN c.facility_id = f.id
 	WHEN c.vendor_id IS NOT NULL THEN EXISTS (
 	     SELECT 1 FROM vendors v WHERE v.id = c.vendor_id AND v.user_id = f.owner_id)
+	WHEN c.facility_type = 'ALL' THEN TRUE
 	ELSE c.facility_type = f.type
 END`
 

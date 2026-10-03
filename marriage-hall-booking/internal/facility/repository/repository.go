@@ -776,6 +776,18 @@ type FAQ struct {
 	SortOrder int    `json:"sortOrder"`
 }
 
+// IsUserVerified reports whether an account has confirmed its email or phone.
+//
+// Either, not both: a vendor who registered by phone has no email to confirm,
+// and demanding both would lock them out of listing forever.
+func (r *Repo) IsUserVerified(ctx context.Context, userID int64) (bool, error) {
+	var verified bool
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(is_email_verified, FALSE) OR COALESCE(is_phone_verified, FALSE)
+		   FROM users WHERE id = $1 AND is_deleted = FALSE`, userID).Scan(&verified)
+	return verified, err
+}
+
 // FaqsOf returns a venue's live FAQs in display order.
 func (r *Repo) FaqsOf(ctx context.Context, facilityID string) ([]FAQ, error) {
 	rows, err := r.db.Query(ctx, `
@@ -1100,4 +1112,3 @@ func (r *Repo) ReviewsOfMany(ctx context.Context, ids []string) (map[string][]Re
 	}
 	return out, rows.Err()
 }
-

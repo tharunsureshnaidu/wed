@@ -208,6 +208,23 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// Java's message names POST /api/v1/vendors, which exists in neither
 	// codebase; the business is created with PUT /api/v1/vendors/me.
 	if !middleware.HasRole(r.Context(), "ROLE_ADMIN") {
+		// A listing carries a contact real customers will use, so the vendor
+		// confirms theirs before publishing one. This is the only thing
+		// verification gates - a customer never has to verify to browse or
+		// book. Checked before HasVendor so an unverified vendor is told what
+		// to fix rather than being sent to create a business they already have.
+		verified, err := h.repo.IsUserVerified(r.Context(), userID)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if !verified {
+			response.Error(w, http.StatusForbidden,
+				"Verify your email or phone before listing a venue",
+				"UNVERIFIED_ACCOUNT")
+			return
+		}
+
 		ok, err := h.repo.HasVendor(r.Context(), userID)
 		if err != nil {
 			httpx.Fail(w, err)

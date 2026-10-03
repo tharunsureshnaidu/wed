@@ -33,6 +33,9 @@ type Service struct {
 	// than a direct dependency so booking does not import the events package.
 	OnBookingCreated   func(ctx context.Context, b *repository.Booking)
 	OnBookingCancelled func(ctx context.Context, b *repository.Booking)
+	// OnBookingDecided fires when a venue owner accepts or rejects a request.
+	// The customer is waiting on that answer, so it must reach them.
+	OnBookingDecided func(ctx context.Context, b *repository.Booking, confirmed bool, reason string)
 }
 
 func New(repo *repository.Repo, db *pgxpool.Pool) *Service {

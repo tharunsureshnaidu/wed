@@ -71,6 +71,23 @@ func (u *User) PrimaryRole() string {
 	return u.Roles[0]
 }
 
+// HasRole reports whether the account holds a role.
+func (u *User) HasRole(name string) bool {
+	for _, r := range u.AllRoles() {
+		if r == name {
+			return true
+		}
+	}
+	return false
+}
+
+// IsVerified is true once either contact has been confirmed. Either, not both:
+// a vendor who registered by phone has no email to verify, and requiring both
+// would lock them out of their own listing forever.
+func (u *User) IsVerified() bool {
+	return u.IsEmailVerified || u.IsPhoneVerified
+}
+
 // AllRoles is what goes into the token. A user with no roles still gets
 // ROLE_CUSTOMER so authorization always has something concrete to check.
 func (u *User) AllRoles() []string {

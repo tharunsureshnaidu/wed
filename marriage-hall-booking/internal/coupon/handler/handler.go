@@ -94,6 +94,27 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // migration - only a route.
 const hallType = "MARRIAGE_HALL"
 
+// scopeAll is the facility_type an admin coupon carries when it applies to
+// every venue, hall and hotel alike. A value rather than NULL, so the scope
+// CHECK still guarantees no coupon means "applies nowhere".
+const scopeAll = "ALL"
+
+// adminScope maps the appliesTo a request may send onto the stored
+// facility_type. HALL is the default: every admin coupon before this field
+// existed was a halls-only coupon, and an omitted value must not silently
+// widen those to hotels too.
+func adminScope(appliesTo string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(appliesTo)) {
+	case "", venuetype.Hall, venuetype.StoredHall:
+		return hallType, true
+	case venuetype.Hotel:
+		return venuetype.Hotel, true
+	case scopeAll:
+		return scopeAll, true
+	}
+	return "", false
+}
+
 type couponReq struct {
 	Code             string   `json:"code"`
 	Description      *string  `json:"description"`
@@ -106,6 +127,10 @@ type couponReq struct {
 	ValidUntil       *string  `json:"validUntil"`
 	UsageLimit       *int     `json:"usageLimit"`
 	IsActive         *bool    `json:"isActive"`
+
+	// AppliesTo scopes an admin coupon: HALL (the default), HOTEL, or ALL for
+	// every venue. Ignored on a vendor coupon, which is scoped by ownership.
+	AppliesTo *string `json:"appliesTo"`
 }
 
 func (r couponReq) validateInto(e *validate.Errors) (from, until *time.Time) {
@@ -346,7 +371,15 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 	var e validate.Errors
 	from, until := req.validateInto(&e)
 	if req.FacilityID != nil {
-		e = append(e, "facilityId is not accepted here - this coupon applies to every marriage hall")
+		e = append(e, "facilityId is not accepted here - an admin coupon is scoped with appliesTo")
+	}
+	appliesTo := ""
+	if req.AppliesTo != nil {
+		appliesTo = *req.AppliesTo
+	}
+	scope, ok := adminScope(appliesTo)
+	if !ok {
+		e = append(e, "appliesTo must be HALL, HOTEL or ALL")
 	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
@@ -363,7 +396,7 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 		    valid_from, valid_until, usage_limit, is_active, created_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING id::text`,
-		code, req.Description, hallType, strings.ToUpper(req.DiscountType), req.DiscountValue,
+		code, req.Description, scope, strings.ToUpper(req.DiscountType), req.DiscountValue,
 		req.MaxDiscount, req.MinBookingAmount, from, until, req.UsageLimit,
 		active, userID).Scan(&id)
 	if err != nil {
@@ -388,7 +421,7 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	response.Created(w, "Coupon created successfully", "/api/v1/admin/coupons/"+id,
-		map[string]any{"id": id, "code": code, "appliesTo": venuetype.API(hallType), "announced": h.OnCouponCreated != nil && usableNow})
+		map[string]any{"id": id, "code": code, "appliesTo": venuetype.API(scope), "announced": h.OnCouponCreated != nil && usableNow})
 }
 
 // available lists the coupons a customer can use at a venue - or, without a
@@ -396,9 +429,11 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 // coupons are filtered in SQL, so the list never offers a code checkout rejects.
 func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
 	facilityID := r.URL.Query().Get("facilityId")
-	// Without a venue: coupons for every hall. With one: whatever applies
+	// Without a venue: the platform-wide offers - every-hall coupons and the
+	// ALL-venue ones, which would otherwise be invisible on this screen even
+	// though checkout accepts them everywhere. With a venue: whatever applies
 	// there, by the same rule checkout uses.
-	join, where, args := ``, `c.facility_type = $1`, []any{hallType}
+	join, where, args := ``, `c.facility_type IN ($1, $2)`, []any{hallType, scopeAll}
 	if facilityID != "" {
 		if !httpx.ValidUUID(facilityID) {
 			response.Error(w, http.StatusBadRequest, "facilityId must be a valid id", "VALIDATION_ERROR")

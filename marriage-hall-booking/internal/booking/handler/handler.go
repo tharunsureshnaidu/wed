@@ -40,6 +40,16 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/bookings", auth(http.HandlerFunc(h.list)))
 	mux.Handle("GET /api/v1/bookings/{id}", auth(http.HandlerFunc(h.get)))
 	mux.Handle("POST /api/v1/bookings/{id}/cancel", auth(http.HandlerFunc(h.cancel)))
+
+	// The venue owner's side. Registered before {id} routes cannot shadow it:
+	// Go's mux prefers the more specific pattern, and "owner" is a literal.
+	owner := func(fn http.HandlerFunc) http.Handler {
+		return middleware.Chain(fn, auth,
+			middleware.RequireRole(domain.RoleHallOwner, domain.RoleAdmin))
+	}
+	mux.Handle("GET /api/v1/bookings/owner", owner(h.ownerBookings))
+	mux.Handle("POST /api/v1/bookings/{id}/confirm", owner(h.confirm))
+	mux.Handle("POST /api/v1/bookings/{id}/reject", owner(h.reject))
 	h.registerQuote(mux)
 }
 

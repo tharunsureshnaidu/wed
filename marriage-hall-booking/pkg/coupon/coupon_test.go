@@ -2,6 +2,7 @@ package coupon
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,23 @@ func TestCheck(t *testing.T) {
 		if got := c.c.Check(c.amount); !errors.Is(got, c.want) {
 			t.Errorf("%s: Check = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// An ALL coupon must reach hotels as well as halls. The scope exists because
+// an admin coupon could previously only ever be written as MARRIAGE_HALL, so
+// "applies to everything" was not expressible.
+func TestAppliesSQLHandlesTheAllScope(t *testing.T) {
+	if !strings.Contains(AppliesSQL, "'ALL'") {
+		t.Error("AppliesSQL does not mention the ALL scope, so an all-venue " +
+			"coupon would be created and then match nothing")
+	}
+	// The ALL branch must come before the facility_type equality, or
+	// c.facility_type = f.type would be reached first and never be true for
+	// the literal 'ALL'.
+	all := strings.Index(AppliesSQL, "'ALL'")
+	eq := strings.Index(AppliesSQL, "c.facility_type = f.type")
+	if all > eq {
+		t.Error("the ALL branch must be tested before the type equality")
 	}
 }

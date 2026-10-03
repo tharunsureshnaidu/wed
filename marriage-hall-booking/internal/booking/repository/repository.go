@@ -75,6 +75,16 @@ const cols = `id, user_id, target_type, target_id, check_in, check_out, slot_typ
 	to_char(start_time,'HH24:MI'), to_char(end_time,'HH24:MI'), guest_count, event_type,
 	room_count, coupon_code`
 
+// ownerCols is cols with the bookings alias, for the owner listing's join
+// against facilities. Written out rather than derived: a column added to cols
+// and not here is a compile-time scan mismatch, which is a louder failure than
+// a string rewriter quietly mangling a function name.
+const ownerCols = `b.id, b.user_id, b.target_type, b.target_id, b.check_in, b.check_out, b.slot_type,
+	b.total_amount, COALESCE(b.discount_amount,0), COALESCE(b.paid_amount,0), b.status,
+	b.idempotent_key, b.expires_at, b.guest_name, b.guest_email, b.guest_phone, b.created_at,
+	to_char(b.start_time,'HH24:MI'), to_char(b.end_time,'HH24:MI'), b.guest_count, b.event_type,
+	b.room_count, b.coupon_code`
+
 func scan(row pgx.Row) (*Booking, error) {
 	var b Booking
 	err := row.Scan(&b.ID, &b.UserID, &b.TargetType, &b.TargetID, &b.CheckIn, &b.CheckOut,
@@ -391,7 +401,8 @@ func (r *Repo) SetStatus(ctx context.Context, id, to, reason string, from ...str
 	// A booking that ends without being used gives its coupon use back. The
 	// FOR UPDATE and the from-status guard above make this run once per
 	// booking, however often a cancel is retried.
-	if (to == "CANCELLED" || to == "EXPIRED") && (current == "PENDING" || current == "CONFIRMED") {
+	if (to == "CANCELLED" || to == "EXPIRED" || to == "REJECTED") &&
+		(current == "PENDING" || current == "CONFIRMED") {
 		if err := coupon.Release(ctx, tx, id); err != nil {
 			return err
 		}
@@ -468,6 +479,50 @@ func (r *Repo) ListForUser(ctx context.Context, userID int64, page, size int) ([
 	rows, err := r.db.Query(ctx,
 		`SELECT `+cols+` FROM bookings WHERE user_id = $1 AND is_deleted = FALSE
 		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, userID, size, page*size)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []Booking{}
+	for rows.Next() {
+		b, err := scan(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, *b)
+	}
+	return out, total, rows.Err()
+}
+
+// FacilityOwner is who owns the venue a booking is for. Used to decide whether
+// the caller may accept or reject it.
+func (r *Repo) FacilityOwner(ctx context.Context, facilityID string) (int64, error) {
+	var ownerID int64
+	err := r.db.QueryRow(ctx,
+		`SELECT owner_id FROM facilities WHERE id = $1 AND is_deleted = FALSE`,
+		facilityID).Scan(&ownerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return ownerID, err
+}
+
+// ListForOwner is the bookings made at an owner's venues - their side of
+// ListForUser. An empty status means every status.
+func (r *Repo) ListForOwner(ctx context.Context, ownerID int64, status string, page, size int) ([]Booking, int64, error) {
+	var total int64
+	if err := r.db.QueryRow(ctx,
+		`SELECT count(*) FROM bookings b JOIN facilities f ON f.id = b.target_id
+		  WHERE f.owner_id = $1 AND b.is_deleted = FALSE
+		    AND ($2 = '' OR b.status = $2)`, ownerID, status).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := r.db.Query(ctx,
+		`SELECT `+ownerCols+` FROM bookings b JOIN facilities f ON f.id = b.target_id
+		  WHERE f.owner_id = $1 AND b.is_deleted = FALSE
+		    AND ($2 = '' OR b.status = $2)
+		  ORDER BY b.created_at DESC LIMIT $3 OFFSET $4`,
+		ownerID, status, size, page*size)
 	if err != nil {
 		return nil, 0, err
 	}

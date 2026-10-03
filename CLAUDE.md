@@ -648,6 +648,170 @@ a deleted coupon's code can be reused.
 omits add-ons. The coupon is taken off before fee and tax in both. Settle which
 side is right before touching either.
 
+## Verification gates vendors, not customers
+
+A customer logs in without verifying. A vendor must confirm their email or
+phone before they can log in *or* list a venue.
+
+Login used to refuse any `PENDING_VERIFICATION` account, so a customer who
+signed up and had not yet opened the OTP mail was locked out of the account
+they had just created - 19 customers were in that state. They are now let in
+and the status is **left as PENDING_VERIFICATION** rather than flipped to
+ACTIVE, so "never verified" stays visible to ops and can gate a future action.
+
+**`Refresh` carries the same rule as `Login`.** Relaxing only login would let
+an unverified customer in and then sign them out at the first token refresh -
+the worst of both behaviours. Both check
+`status == PENDING_VERIFICATION && HasRole(HALL_OWNER)`.
+
+**`IsVerified()` is email OR phone, never both.** A vendor who registered by
+phone has no email to confirm; demanding both would lock them out of their own
+listing forever.
+
+`POST /api/v1/facilities` checks verification before `HasVendor`, so an
+unverified vendor is told to verify rather than sent to create a business they
+already have. **Admin is exempt** - an admin listing a venue on a vendor's
+behalf must not be blocked by that vendor's verification state. 69 of 73
+vendors already pass; the 4 that do not are the same ones who could not log in
+anyway.
+
+Verification gates nothing else: an unverified customer browses, books and pays
+like anyone else (verified live).
+
+## A customer and a vendor are separate entities
+
+`ROLE_CUSTOMER` and `ROLE_HALL_OWNER` are mutually exclusive, enforced by the
+`trg_customer_vendor_exclusive` trigger on `user_roles` (migration 057).
+
+In the database rather than only in Go, because roles are granted from three
+places - registration, the admin create-user screen and `cmd/import` - and a
+rule kept in one handler is one new code path away from being broken silently.
+The admin create path translates the trigger's `23514` into a 409
+`ROLE_CONFLICT`, so an admin reads the reason instead of a 500.
+
+**`ROLE_ADMIN` + `ROLE_CUSTOMER` is still allowed and must stay allowed** - 107
+accounts hold exactly that pair and admin tokens list both. The rule is narrow:
+customer and vendor specifically, not "one role per user", which would break
+every one of them. No row violated it when it was added.
+
+One login API serves both: `POST /auth/login` already returns `user.roles`, and
+the client picks the dashboard from that.
+
+### Dashboards, one per entity
+
+```
+GET /api/v1/users/me/dashboard    customer
+GET /api/v1/vendors/dashboard     vendor
+GET /api/v1/admin/dashboard       admin
+```
+
+The customer one was missing, so the app assembled that screen from five calls.
+It returns `stats`, `pendingActions`, `upcomingBookings`, `favourites`,
+`recommended` and `coupons` in six queries - the counts are scalar aggregates
+and the rest are capped lists, which one statement cannot express without
+`array_agg` of whole rows.
+
+- **A vendor gets 403 `WRONG_DASHBOARD` naming the vendor URL**, not an empty
+  customer dashboard, which would read as lost data rather than a wrong screen.
+- **`awaitingReview` mirrors what `POST /reviews` enforces** - a
+  CONFIRMED/COMPLETED stay, unique per (user, facility) - or the screen prompts
+  for a review whose submission 403s.
+- **Recommendations degrade rather than empty.** Only 36 of 506 profiles have
+  coordinates, so with no usable location it returns top-rated approved halls.
+  `?lat=&lng=` overrides the saved profile location; bad input is treated as
+  absent, never a 400.
+- `pendingActions` are counts, not booleans: "2 unpaid" is actionable, "you
+  have unpaid bookings" is not.
+
+## Confirming a booking
+
+```
+GET  /api/v1/bookings/owner              the owner's inbox, ?status= filters
+POST /api/v1/bookings/{id}/confirm       owner or admin
+POST /api/v1/bookings/{id}/reject        owner or admin, body {"reason": "..."}
+```
+
+Before this an owner had **no booking routes at all**: a request arrived as a
+notification and could then be found nowhere in the API, and the only way to
+reach CONFIRMED was paying in full. Zero bookings had ever been CONFIRMED.
+
+**CONFIRMED means "the venue accepted", not "the money arrived."** A hall
+agrees an advance offline and the balance comes later, so the owner can confirm
+an unpaid booking. Payment still confirms on its own, as before.
+
+That has two consequences, both of which bit on the first run:
+
+- **A CONFIRMED booking must stay payable.** `payments/create` only allowed
+  PENDING, so confirming first made the balance impossible to settle - the
+  booking owed money it could never pay. Caught by newman: the refund request
+  collapsed to `/api/v1/refunds/` because no payment id was ever captured.
+- **The payment history row must read the real previous status.** It hardcoded
+  `PENDING -> CONFIRMED`, which became a false record once an owner could
+  confirm first. It now captures the status before the update and writes
+  `CONFIRMED -> CONFIRMED  Payment received`.
+
+**REJECTED is its own status (migration 058), not CANCELLED.** A customer
+cancelling is their own choice; a venue refusing is something the customer did
+not ask for, carries a reason, and is the number an owner is judged on.
+Folding them together makes "rejection rate" unanswerable.
+
+**A rejected booking releases its inventory**, or the venue stays blocked by a
+booking it just turned down - verified by rebooking the same date immediately
+after. It releases its coupon too, via the same rule in `SetStatus`.
+
+Only a PENDING booking can be decided: a second confirm is a 409 naming the
+current status, never a silent no-op, and a cancelled booking can never be
+revived. A customer cannot confirm their own booking - they have cancel.
+
+## Decision audit
+
+Every approve/reject writes one row to `audit_logs` through `pkg/audit`:
+facility status, vendor KYC, quote settle, booking cancel. Before this, a
+verdict lived only in the entity's own column - `facilities.status`,
+`vendors.kyc_rejection_reason`, `quotes.rejection_reason`, and for a booking
+nowhere at all - so "why was this rejected, and by whom" had no answer and
+every entity needed its own query to count.
+
+- **Best-effort, never fatal.** A failed audit write is logged loudly and the
+  decision stands. Rolling back an approval because a log row would not insert
+  turns observability into an outage.
+- **A system actor is NULL, not 0.** `user_id` has an FK; 0 is not a real user
+  and the insert would be rejected.
+- **An absent reason omits the key** rather than storing `""`, because the
+  analytics count rows "with a reason".
+- **`eventType` rides on a booking's row.** The occasion is copied onto the
+  audit entry rather than joined back from `bookings`, which would lose every
+  booking later deleted.
+
+`GET /api/v1/admin/analytics/decisions` reads those rows: counts per entity and
+status, a rejection rate, the top rejection reasons, and a breakdown by event
+type. `?entity=`, `?from=`, `?until=`.
+
+- **It reads the audit, not current status.** A listing rejected then approved
+  is indistinguishable from one approved first time if you only count statuses.
+- **A bare `until=YYYY-MM-DD` means the end of that day**, or `?until=today`
+  returns nothing that happened today.
+- **`rejectionRate` is null, not 0, when nothing was decided** - 0% reads as
+  "we rejected nobody", which is not "nothing happened".
+- An unknown `?entity=` is a 400, not an empty result: a typo must not look
+  like a quiet month.
+
+## Coupon scope: HALL, HOTEL or ALL
+
+`POST /api/v1/admin/coupons` takes `appliesTo`. It was hardcoded to
+`MARRIAGE_HALL`, so an admin coupon could never reach a hotel.
+
+**`appliesTo` defaults to HALL when omitted.** Every admin coupon written
+before this field existed was halls-only, and defaulting to ALL would silently
+widen all of them.
+
+`ALL` is a value in `facility_type`, not a NULL - `chk_coupons_scope` still
+guarantees no coupon can mean "applies nowhere". `coupon.AppliesSQL` tests the
+`ALL` branch **before** `c.facility_type = f.type`, or the equality would be
+reached first and never match the literal. The no-venue branch of the public
+offers list queries `IN (MARRIAGE_HALL, ALL)`, or an all-venue coupon would be
+invisible on a screen that checkout nevertheless accepts it on.
+
 ## App settings (support helpline)
 
 `app_settings` is a key/value table for admin-editable values; `support.*` holds

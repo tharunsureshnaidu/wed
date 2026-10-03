@@ -190,8 +190,19 @@ func (s *AuthService) Login(ctx context.Context, identifier, password, ip, devic
 	if u.Status == domain.StatusSuspended {
 		return nil, apperr.Forbidden("ACCOUNT_SUSPENDED", "Account is suspended")
 	}
-	if u.Status == domain.StatusPendingVerification {
-		return nil, apperr.Forbidden("UNVERIFIED_ACCOUNT", "Account not verified")
+	// Verification gates vendors, not customers. A customer who signed up and
+	// has not yet opened the OTP mail should still be able to browse and book;
+	// locking them out of an account they just created is the surest way to
+	// lose them. A vendor is different: their listing carries a contact that
+	// real customers will rely on, so the contact is confirmed before they can
+	// publish one.
+	//
+	// The status is left as PENDING_VERIFICATION rather than flipped to ACTIVE,
+	// so "never verified" stays visible to ops and can gate a future action.
+	if u.Status == domain.StatusPendingVerification &&
+		u.HasRole(domain.RoleHallOwner) && !u.IsVerified() {
+		return nil, apperr.Forbidden("UNVERIFIED_ACCOUNT",
+			"Verify your email or phone to access your vendor account")
 	}
 
 	if err := s.repo.RecordSuccessfulAttempt(ctx, identifier, ip); err != nil {
@@ -257,7 +268,12 @@ func (s *AuthService) Refresh(ctx context.Context, raw, ip, device string) (*Aut
 	if err != nil {
 		return nil, err
 	}
-	if u.Status != domain.StatusActive || u.IsDeleted {
+	// Mirrors the login gate exactly. Allowing an unverified customer to log in
+	// but not to refresh would sign them out an hour later with no explanation
+	// - the worst of both behaviours.
+	pendingOnly := u.Status == domain.StatusPendingVerification &&
+		!u.HasRole(domain.RoleHallOwner)
+	if (u.Status != domain.StatusActive && !pendingOnly) || u.IsDeleted {
 		return nil, apperr.Forbidden("USER_INACTIVE", "User account is inactive or disabled")
 	}
 	return s.issue(ctx, u, ip, device)

@@ -64,7 +64,11 @@ func (s *Service) Create(ctx context.Context, userID int64, bookingID string) (*
 	if ownerID != userID {
 		return nil, apperr.Forbidden("NOT_BOOKING_OWNER", "You cannot pay for this booking")
 	}
-	if status != "PENDING" {
+	// CONFIRMED is payable as well as PENDING. A venue owner can accept a
+	// booking before the money arrives - that is what confirmation means here,
+	// and the balance is usually paid afterwards. Refusing payment on a
+	// confirmed booking would leave it owing money it could never settle.
+	if status != "PENDING" && status != "CONFIRMED" {
 		return nil, apperr.Conflict("INVALID_STATE", "Booking is not awaiting payment")
 	}
 	due := total - paid
@@ -168,6 +172,13 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 			    updated_at = CURRENT_TIMESTAMP WHERE id = $1`, paymentID, p.PaymentID); err != nil {
 			return err
 		}
+		// Captured before the update: once the row is written the previous
+		// status is gone, and the history row would have to guess at it.
+		var wasStatus string
+		if err := tx.QueryRow(ctx,
+			`SELECT status FROM bookings WHERE id = $1`, bookingID).Scan(&wasStatus); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx,
 			`UPDATE bookings SET paid_amount = paid_amount + $2,
 			    status = CASE WHEN paid_amount + $2 >= total_amount THEN 'CONFIRMED' ELSE status END,
@@ -176,9 +187,13 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 			 WHERE id = $1`, bookingID, amount); err != nil {
 			return err
 		}
+		// The real previous status, not a hardcoded PENDING: an owner may have
+		// confirmed the booking before the money arrived, and a history row
+		// claiming PENDING -> CONFIRMED would be a false record.
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO booking_status_history (booking_id, from_status, to_status, reason)
-			 VALUES ($1, 'PENDING', 'CONFIRMED', 'Payment received')`, bookingID); err != nil {
+			 SELECT $1, $2, status, 'Payment received' FROM bookings WHERE id = $1`,
+			bookingID, wasStatus); err != nil {
 			return err
 		}
 	case "FAILED":

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
 	bookingservice "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/service"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/audit"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
@@ -755,6 +757,12 @@ func (h *Handler) settle(w http.ResponseWriter, r *http.Request, status, verb st
 		httpx.Fail(w, err)
 		return
 	}
+	actor, _ := middleware.UserID(r.Context())
+	audit.Record(r.Context(), h.db, audit.Decision{
+		Actor: actor, Action: "SET_QUOTE_" + status,
+		Entity: audit.EntityQuote, EntityID: q.QuoteID,
+		Status: status, Reason: strings.TrimSpace(req.Reason), IP: httpx.IP(r),
+	})
 	response.OK(w, "Quote "+verb+" successfully", map[string]any{
 		"id": q.QuoteID, "status": status,
 	})
