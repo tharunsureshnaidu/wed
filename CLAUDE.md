@@ -43,10 +43,37 @@ keeps `admin` from importing `notification`.
 Hooks fire **after commit** — never tell a user about a change that rolled back.
 A hook failure must not fail the request that triggered it.
 
+**Hooks only publish; the worker reacts.** Every reaction lives in
+`internal/notification/consumer` (`Handle`). The worker runs it from Kafka; the
+API runs the *same* `Handle` in-process via `Publisher.Local` when Kafka is
+disabled or refuses the write, so a broker outage delays nothing and drops
+nothing (verified: booking with Kafka stopped → 28ms response, 9 outbox rows).
+
+- **At-least-once: `FetchMessage`, commit after success.** `ReadMessage` commits
+  *before* returning, so a failed handler or a killed worker lost the event.
+  Handlers must therefore be idempotent — the outbox unique key is what makes
+  them so.
+- **Retry ~1 min, then `<topic>.dlq`.** An error wrapping `events.ErrPermanent`
+  (malformed, missing id) skips the retries. The loop does not move on until the
+  DLQ write lands: kafka-go fetches forward regardless of commits.
+- **A new topic goes in `events.Topics` *and* `consumer.Topics`**, or it is
+  published and never handled. `TestEveryTopicHasAConsumer` enforces it.
+- **`ClaimDue` skips rows of CANCELLED/EXPIRED bookings.** `booking.created` and
+  `booking.cancelled` are separate topics with no ordering between them; the
+  cancel was reproduced landing first, catching 1 of 9 rows. The send-time check
+  holds for every ordering.
+- **The worker validates `spoolPath` with `storage.InSpool`** before opening it.
+  The broker has no auth, and a forged path would upload any readable file to
+  public storage.
+
+**`make test` runs the DB tests against the dev database**, and
+`booking_test.go`'s `ExpireHolds` expires *every* lapsed hold there, not just its
+fixtures. For a no-side-effect run: `env -u TEST_DATABASE_URL go test ./...`.
+
 ## Migrations
 
 `internal/migrations/NNN_name.sql`, embedded, forward-only, applied on startup.
-Next number: check `ls internal/migrations/ | tail -1` (currently at 043).
+Next number: check `ls internal/migrations/ | tail -1` (currently at 050).
 
 House style: `IF NOT EXISTS`, `UUID PRIMARY KEY DEFAULT gen_random_uuid()`,
 `DECIMAL(10,2)` for money, `TIMESTAMPTZ`, `VARCHAR` + inline `CHECK` for enums,
@@ -591,6 +618,35 @@ Facility approved, amenities added and coupon created push to customers within
   bug shipped and was caught in testing.
 - **Only genuinely new amenities announce.** `ON CONFLICT DO NOTHING` hides
   whether anything changed; re-adding an existing amenity must notify nobody.
+
+## Coupons
+
+Three scopes, most specific first: one venue (`facility_id`), one vendor's
+venues (`vendor_id`), every venue of a type (`facility_type`, admin only, via
+`/api/v1/admin/coupons` — halls only today). A CHECK constraint forbids an
+unscoped row.
+
+**`pkg/coupon` is the only definition of "applies" and "what it takes off".**
+`AppliesSQL` + `LiveSQL` drive checkout, `validate` and the public
+`/coupons/available` list, so none can offer a code another refuses. Never
+re-derive the scope in a handler — the old `validate` did, skipped it whenever
+`facilityId` was omitted, and let one venue's code work at every venue.
+
+**Checkout order: venue discount, then coupon.** `service.DayRate` rounds
+exactly like the card's `discountedPrice`; before this the booking charged full
+base price while the card advertised 15% off. Packages and add-ons are not
+discounted by the venue offer; the coupon comes off the whole sum.
+
+**Redeem and release live in the status transaction.** `coupon.Redeem` is a
+conditional UPDATE inside `CreateHallBooking`'s tx (that is what enforces
+`usage_limit` under concurrency); `coupon.Release` runs in `SetStatus` on
+PENDING/CONFIRMED → CANCELLED/EXPIRED. By `bookings.coupon_id`, never by code —
+a deleted coupon's code can be reused.
+
+**The price preview does not match the booking**, and did not before coupons:
+`POST /bookings/quote` adds a 2% fee and 18% GST the booking never charges, and
+omits add-ons. The coupon is taken off before fee and tax in both. Settle which
+side is right before touching either.
 
 ## App settings (support helpline)
 

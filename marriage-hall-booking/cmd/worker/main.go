@@ -8,14 +8,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/segmentio/kafka-go"
 
 	bookingrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/consumer"
 	notifyrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/repository"
 	notifysvc "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/config"
@@ -25,11 +28,6 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/notify"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 )
-
-// notifier is package-level because handle() is called from every consumer
-// goroutine and threading it through each one buys nothing - there is exactly
-// one, set once before the consumers start.
-var notifier *notifysvc.Service
 
 func main() {
 	logger.Init("worker")
@@ -64,7 +62,7 @@ func main() {
 
 	// Notifications: the consumer below only writes outbox rows; this ticker
 	// does the vendor calls and the retry-until-acknowledged chasing.
-	notifier = notifysvc.New(notifyrepo.New(db), notify.FromEnv(nil))
+	notifier := notifysvc.New(notifyrepo.New(db), notify.FromEnv(nil))
 	if d := envDuration("NOTIFY_RETRY_EVERY", 0); d > 0 {
 		notifier.RetryEvery = d
 	}
@@ -105,6 +103,15 @@ func main() {
 		}
 	}()
 
+	// Kafka's own publisher: the sweeper below announces expiries, and the
+	// consumers park poison events on their dead-letter topic. Local is the
+	// same handler the consumers run, so with Kafka off (or down) an expiry is
+	// still handled, in-process.
+	reactions := consumer.New(notifier, db)
+	pub := events.NewPublisher(cfg.KafkaBrokers)
+	pub.Local = reactions.Handle
+	defer pub.Close()
+
 	// Sweeper: release slots held by bookings that were never paid for. This is
 	// what stops an abandoned checkout from blocking a date forever.
 	go func() {
@@ -115,56 +122,92 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n, err := bookings.ExpireHolds(ctx)
+				ids, err := bookings.ExpireHolds(ctx)
+				for _, id := range ids {
+					pub.Publish(ctx, events.TopicBookingExpired, id, events.Booking{BookingID: id})
+				}
 				if err != nil {
 					logger.Error("expire holds", logger.Err(err))
 					continue
 				}
-				if n > 0 {
-					logger.Info("released unpaid bookings", "count", n)
+				if len(ids) > 0 {
+					logger.Info("released unpaid bookings", "count", len(ids))
 				}
 			}
 		}
 	}()
 
-	topics := []string{
-		events.TopicUserRegistered,
-		events.TopicBookingCreated,
-		events.TopicBookingCancelled,
-		events.TopicPaymentCompleted,
-		events.TopicPaymentFailed,
-	}
-	for _, topic := range topics {
-		go consume(ctx, cfg.KafkaBrokers, topic)
-	}
-
-	// Media uploads get their own consumer: it needs the database and a storage
-	// backend, and a slow S3 PUT must not delay notification events.
+	// Media uploads need a storage backend; a slow S3 PUT runs on its own
+	// consumer, so it never delays a notification event.
 	media, err := storage.New(ctx, "uploads", os.Getenv("PUBLIC_BASE_URL"))
 	if err != nil {
 		logger.Fatal("media storage unavailable", logger.Err(err))
 	}
-	go consumeMediaUploads(ctx, cfg.KafkaBrokers, db, media)
+
+	var wg sync.WaitGroup
+	if pub.Enabled {
+		for _, topic := range consumer.Topics {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(ctx, cfg.KafkaBrokers, topic, "booking-worker-"+topic, pub, reactions.Handle)
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			consume(ctx, cfg.KafkaBrokers, events.TopicMediaUploadRequested, "media-upload",
+				pub, mediaUploader(db, media))
+		}()
+	} else {
+		// No brokers: the API handles its events in-process and uploads media
+		// inline, so there is nothing to consume.
+		logger.Warn("kafka disabled, no consumers started")
+	}
 
 	logger.Info("worker started", "kafka", cfg.KafkaBrokers)
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 	logger.Info("worker stopping")
+	// Wait for the consumers to leave their groups. Returning straight away
+	// skipped every reader's Close, so the broker held the dead members until
+	// their 30s session timeout and the next worker consumed nothing meanwhile.
+	cancel()
+	wg.Wait()
 }
 
-func consume(ctx context.Context, brokers []string, topic string) {
-	// One consumer group per topic. A single group spanning several single-partition
-	// topics leaves the group permanently rebalancing as its members contend for
-	// assignments, and nothing is ever delivered (observed live: the worker sat in
-	// "rebalancing" and consumed zero messages).
+// retryDelay is the first wait between attempts; it doubles each time. A var
+// so the test does not sleep for a minute.
+var retryDelay = 2 * time.Second
+
+// maxAttempts x doubling from 2s is ~1 minute of retries - long enough to ride
+// out a database restart, short enough that one poison event does not hold up
+// its topic for long.
+const maxAttempts = 6
+
+// consume reads one topic at-least-once: the offset is committed only after
+// the handler succeeded or the message was dead-lettered.
+//
+// ReadMessage used to be called here, and it commits BEFORE returning the
+// message - so a handler that failed (database blip) or a worker killed
+// mid-handle lost the event for good.
+//
+// One consumer group per topic. A single group spanning several single-partition
+// topics leaves the group permanently rebalancing as its members contend for
+// assignments, and nothing is ever delivered (observed live: the worker sat in
+// "rebalancing" and consumed zero messages).
+func consume(ctx context.Context, brokers []string, topic, group string, pub *events.Publisher, handle events.Handler) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: brokers,
 		Topic:   topic,
-		GroupID: "booking-worker-" + topic,
+		GroupID: group,
 		// Start from the beginning so events published while the worker was
 		// down are still handled.
 		StartOffset: kafka.FirstOffset,
+		// Every message is one unit of work; nothing to gain from waiting to
+		// batch reads.
+		MaxWait: time.Second,
 		// On a fresh broker the topic does not exist until the API's first
 		// publish auto-creates it. A group that joined before then is assigned
 		// zero partitions and, without this, never rebalances - the worker runs
@@ -181,7 +224,7 @@ func consume(ctx context.Context, brokers []string, topic string) {
 	// under identical "connection refused" lines.
 	failing := false
 	for {
-		m, err := r.ReadMessage(ctx)
+		m, err := r.FetchMessage(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -197,60 +240,62 @@ func consume(ctx context.Context, brokers []string, topic string) {
 			failing = false
 			logger.Info("kafka reconnected", "topic", topic)
 		}
-		var e events.Envelope
-		if err := json.Unmarshal(m.Value, &e); err != nil {
-			logger.Error("malformed event", "topic", topic, logger.Err(err))
-			continue
+
+		err = handleWithRetry(ctx, topic, m.Value, handle)
+		if ctx.Err() != nil {
+			return // shutting down: left uncommitted, redelivered on the next start
 		}
-		handle(ctx, e)
+		if err != nil {
+			logger.Error("event failed, dead-lettering", "topic", topic,
+				"offset", m.Offset, "key", string(m.Key), logger.Err(err))
+			// Must land before the commit, or the event is gone. kafka-go keeps
+			// fetching forward regardless of commits, so the only way to not
+			// lose it is to not move on.
+			for pub.DeadLetter(ctx, m, err) != nil {
+				if !sleep(ctx, 5*time.Second) {
+					return
+				}
+			}
+		}
+		if err := r.CommitMessages(ctx, m); err != nil && ctx.Err() == nil {
+			// Harmless: the next commit covers this offset, and at worst the
+			// event is redelivered and absorbed by the outbox unique key.
+			logger.Warn("kafka commit failed", "topic", topic, logger.Err(err))
+		}
 	}
 }
 
-// handle is where notifications would be dispatched. There is no mail or SMS
-// provider configured, so for now each event is logged - the consumer, topics
-// and offsets are real, only the delivery side is a stub.
-func handle(ctx context.Context, e events.Envelope) {
-	switch e.Type {
-	case events.TopicUserRegistered:
-		logger.Info("notify: welcome email", "userId", e.Payload["userId"])
-	case events.TopicBookingCreated:
-		id, _ := e.Payload["bookingId"].(string)
-		if id == "" || notifier == nil {
-			return
+// handleWithRetry runs the handler until it succeeds, fails permanently, or
+// runs out of attempts. The returned error, if any, is why it gave up.
+func handleWithRetry(ctx context.Context, topic string, value []byte, handle events.Handler) error {
+	var e events.Envelope
+	if err := json.Unmarshal(value, &e); err != nil {
+		return fmt.Errorf("%w: malformed event: %w", events.ErrPermanent, err)
+	}
+	delay := retryDelay
+	for attempt := 1; ; attempt++ {
+		err := handle(ctx, e)
+		if err == nil || errors.Is(err, events.ErrPermanent) || attempt == maxAttempts {
+			return err
 		}
-		// Enqueue only. A booking that is not against a facility (or was
-		// already deleted) has no owner to chase, and is skipped rather than
-		// retried - the event is not coming back.
-		if err := notifier.EnqueueBookingCreated(ctx, id); err != nil {
-			if errors.Is(err, notifyrepo.ErrNotFound) {
-				logger.Warn("notify: booking not found, skipping", "bookingId", id)
-				return
-			}
-			logger.Error("notify: enqueue", "bookingId", id, logger.Err(err))
+		logger.Warn("event handler failed, retrying", "topic", topic,
+			"attempt", attempt, "in", delay, logger.Err(err))
+		if !sleep(ctx, delay) {
+			return ctx.Err()
 		}
-	case events.TopicBookingCancelled:
-		id, _ := e.Payload["bookingId"].(string)
-		logger.Info("notify: cancellation", "bookingId", id)
-		if id != "" && notifier != nil {
-			if err := notifier.Cancel(ctx, id); err != nil {
-				logger.Error("notify: cancel", "bookingId", id, logger.Err(err))
-			}
-		}
-	case events.TopicPaymentCompleted:
-		bookingID, _ := e.Payload["bookingId"].(string)
-		paymentID, _ := e.Payload["paymentId"].(string)
-		amount, _ := e.Payload["amount"].(float64)
-		logger.Info("notify: payment receipt", "bookingId", bookingID, "paymentId", paymentID)
-		if bookingID != "" && notifier != nil {
-			if err := notifier.NotifyPaymentReceived(ctx, bookingID, paymentID, amount); err != nil {
-				logger.Error("notify: payment receipt", "bookingId", bookingID, logger.Err(err))
-			}
-		}
-	case events.TopicPaymentFailed:
-		logger.Warn("notify: payment failed",
-			"bookingId", e.Payload["bookingId"], "reason", e.Payload["reason"])
-	default:
-		logger.Warn("unhandled event type", "type", e.Type)
+		delay *= 2
+	}
+}
+
+// sleep waits d, or reports false if ctx ended first.
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 

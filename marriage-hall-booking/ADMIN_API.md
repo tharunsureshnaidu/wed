@@ -180,6 +180,82 @@ Notes that matter when wiring the UI:
 - The PUT returns the full updated object, so the UI can store the response
   directly without re-fetching.
 
+## Coupons for every marriage hall
+
+An admin coupon that works at **every marriage hall** (never a hotel). It has
+its own routes, and they take no `facilityId`:
+
+```
+POST   /api/v1/admin/coupons        create   (201, Location header)
+GET    /api/v1/admin/coupons        list the all-halls coupons
+PUT    /api/v1/admin/coupons/{id}   edit     (full body, as for create)
+DELETE /api/v1/admin/coupons/{id}   soft delete
+```
+
+```json
+POST /api/v1/admin/coupons
+{
+  "code": "MONSOON10",
+  "description": "10% off any marriage hall",
+  "discountType": "PERCENT",        // or FLAT
+  "discountValue": 10,
+  "maxDiscount": 5000,              // caps a PERCENT coupon; strongly advised
+  "minBookingAmount": 50000,        // optional
+  "validFrom": "2026-10-01",        // optional; YYYY-MM-DD or RFC3339
+  "validUntil": "2026-10-31",       // optional
+  "usageLimit": 500,                // optional; null = unlimited
+  "isActive": true
+}
+```
+
+- **Sending `facilityId` returns a 400, not a silent ignore.** A client that
+  meant one venue finds out instead of discounting all of them. For one venue,
+  use `POST /api/v1/coupons` with a `facilityId`. An admin coupon there now
+  *requires* one: without it, it used to become a platform coupon that also
+  worked on hotels.
+- **Creating one pushes it to every active customer** who hasn't turned off
+  announcements (push plus an in-app feed item). This only happens if the coupon
+  is active and valid today; a coupon scheduled for later is never announced,
+  not even when its start date arrives. The response's `announced` field tells
+  you which case you got.
+- The list shows `usedCount` against `usageLimit`.
+
+### How a coupon is priced at checkout
+
+`POST /api/v1/bookings/halls` takes an optional `couponCode`. The server works
+it out in this order:
+
+1. The hall's day rate after its **advertised discount** (`discountPercent`),
+   rounded exactly like the listing's `discountedPrice`, so checkout charges
+   what the card showed.
+2. Plus packages and add-ons, at full price.
+3. Minus the **coupon**, taken off that sum.
+
+The booking stores `couponCode`, and `discountAmount` holds both discounts
+combined. `totalAmount` is what the customer pays.
+
+**Uses are counted in the booking's own transaction**, so a `usageLimit` of 100
+holds even when bookings race. A booking that is **cancelled or expires unpaid
+gives its use back**, so abandoned checkouts don't use up a limited coupon.
+
+A price agreed through a quote is final: no advertised discount and no coupon
+apply on top of it.
+
+### What customers see
+
+- `GET /api/v1/coupons/available?facilityId=` is public and needs no sign-in.
+  It lists every code usable at that venue: all-halls coupons (`"appliesTo":
+  "HALL"`), plus the venue's own and its vendor's. Without `facilityId` it lists
+  only the all-halls coupons. Exhausted and expired codes are never listed.
+- `POST /api/v1/coupons/validate` **now requires `facilityId`**. Without one, a
+  coupon for one venue used to validate at any venue. Send the price *after*
+  the venue discount as `amount`.
+- `POST /api/v1/bookings/quote` takes an optional `couponCode`. The response's
+  `priceBreakdown` now includes `venueDiscount`, `couponDiscount` and
+  `couponCode`.
+
+---
+
 ## Loading imported data
 
 The intended order per venue:

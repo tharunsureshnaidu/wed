@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // SpoolDir holds bytes between the API accepting an upload and the worker
@@ -50,15 +51,23 @@ func Unspool(path string) error {
 	if path == "" {
 		return nil
 	}
-	// Refuse anything outside the spool directory. The path arrives in a Kafka
-	// message, and a message is data, not something to trust with an unlink.
-	clean := filepath.Clean(path)
-	if rel, err := filepath.Rel(SpoolDir, clean); err != nil ||
-		rel == ".." || len(rel) > 2 && rel[:3] == "../" {
+	// The path arrives in a Kafka message, and a message is data, not
+	// something to trust with an unlink.
+	if !InSpool(path) {
 		return nil
 	}
-	if err := os.Remove(clean); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(filepath.Clean(path)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
+}
+
+// InSpool reports whether path names a file inside the spool directory. Both
+// the worker's read and its unlink check it: the path comes from a message.
+func InSpool(path string) bool {
+	if path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(SpoolDir, filepath.Clean(path))
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, "../")
 }

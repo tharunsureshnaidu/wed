@@ -2,8 +2,10 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
@@ -35,6 +37,8 @@ type quoteReq struct {
 	SlotType   string   `json:"slotType"`
 	GuestCount *int     `json:"guestCount"`
 	PackageIDs []string `json:"packageIds"`
+	// CouponCode is optional, priced exactly as the booking will price it.
+	CouponCode string `json:"couponCode"`
 }
 
 func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
@@ -90,13 +94,14 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 		name        string
 		city        *string
 		basePrice   *float64
+		discountPct *float64
 		capacityPax *int
 		facType     string
 	)
 	if err := h.svc.Pool().QueryRow(r.Context(),
-		`SELECT name, city, base_price_per_day, capacity_pax, type
+		`SELECT name, city, base_price_per_day, capacity_pax, type, `+service.ActiveDiscountSQL+`
 		   FROM facilities WHERE id = $1 AND is_deleted = FALSE`,
-		facilityID).Scan(&name, &city, &basePrice, &capacityPax, &facType); err != nil {
+		facilityID).Scan(&name, &city, &basePrice, &capacityPax, &facType, &discountPct); err != nil {
 		response.Error(w, http.StatusNotFound, "Hall not found", "HALL_NOT_FOUND")
 		return
 	}
@@ -109,9 +114,13 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	if days < 1 {
 		days = 1
 	}
-	hallPrice := 0.0
+	// The same day rate the booking charges: after the venue's advertised
+	// discount.
+	hallPrice, venueDiscount := 0.0, 0.0
 	if basePrice != nil {
-		hallPrice = *basePrice * float64(days)
+		rate := service.DayRate(*basePrice, discountPct)
+		hallPrice = rate * float64(days)
+		venueDiscount = (*basePrice - rate) * float64(days)
 	}
 
 	// Packages must belong to this hall, the same rule the booking applies -
@@ -130,6 +139,22 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 		}
 		packages = append(packages, map[string]any{"id": id, "name": pname, "price": price})
 		hallPrice += price
+	}
+
+	// The coupon comes off after the venue discount and before fee and tax, in
+	// the order the booking applies them. An unusable code fails the preview
+	// with the same error the booking would give, rather than quietly pricing
+	// without it.
+	var couponCode *string
+	couponDiscount := 0.0
+	if code := strings.TrimSpace(req.CouponCode); code != "" {
+		c, d, err := h.svc.PriceCoupon(r.Context(), code, facilityID, hallPrice)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		couponCode, couponDiscount = &c.Code, d
+		hallPrice -= d
 	}
 
 	serviceFee := round2(hallPrice * serviceFeeRate)
@@ -176,11 +201,14 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 		"exceedsCapacity": overCapacity,
 		"packages":        packages,
 		"priceBreakdown": map[string]any{
-			"hallPrice":  round2(hallPrice),
-			"serviceFee": serviceFee,
-			"taxes":      taxes,
-			"total":      total,
-			"currency":   "INR",
+			"hallPrice":      round2(hallPrice),
+			"venueDiscount":  round2(venueDiscount),
+			"couponDiscount": round2(couponDiscount),
+			"couponCode":     couponCode,
+			"serviceFee":     serviceFee,
+			"taxes":          taxes,
+			"total":          total,
+			"currency":       "INR",
 		},
 		"available":            available,
 		"cancellationPolicies": policies,

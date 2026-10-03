@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
@@ -16,6 +17,9 @@ var (
 	ErrSlotTaken    = errors.New("slot already booked")
 	ErrNoInventory  = errors.New("insufficient inventory")
 	ErrDuplicateKey = errors.New("idempotency key already used")
+	// ErrCouponUnavailable: the coupon was valid when priced but could not be
+	// redeemed - its last use went to a concurrent booking, or it was switched off.
+	ErrCouponUnavailable = errors.New("coupon no longer available")
 )
 
 type Repo struct{ db *pgxpool.Pool }
@@ -54,6 +58,7 @@ type Booking struct {
 	SlotType       *string    `json:"slotType,omitempty"`
 	TotalAmount    float64    `json:"totalAmount"`
 	DiscountAmount float64    `json:"discountAmount"`
+	CouponCode     *string    `json:"couponCode"`
 	PaidAmount     float64    `json:"paidAmount"`
 	Status         string     `json:"status"`
 	IdempotentKey  *string    `json:"idempotentKey,omitempty"`
@@ -68,14 +73,14 @@ const cols = `id, user_id, target_type, target_id, check_in, check_out, slot_typ
 	total_amount, COALESCE(discount_amount,0), COALESCE(paid_amount,0), status,
 	idempotent_key, expires_at, guest_name, guest_email, guest_phone, created_at,
 	to_char(start_time,'HH24:MI'), to_char(end_time,'HH24:MI'), guest_count, event_type,
-	room_count`
+	room_count, coupon_code`
 
 func scan(row pgx.Row) (*Booking, error) {
 	var b Booking
 	err := row.Scan(&b.ID, &b.UserID, &b.TargetType, &b.TargetID, &b.CheckIn, &b.CheckOut,
 		&b.SlotType, &b.TotalAmount, &b.DiscountAmount, &b.PaidAmount, &b.Status,
 		&b.IdempotentKey, &b.ExpiresAt, &b.GuestName, &b.GuestEmail, &b.GuestPhone, &b.CreatedAt,
-		&b.StartTime, &b.EndTime, &b.GuestCount, &b.EventType, &b.RoomCount)
+		&b.StartTime, &b.EndTime, &b.GuestCount, &b.EventType, &b.RoomCount, &b.CouponCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -132,6 +137,11 @@ type HallBookingInput struct {
 	HoldFor       time.Duration
 	PackageIDs    []string
 	Addons        []AddonLine
+	// DiscountAmount is everything taken off: the venue's advertised discount
+	// plus the coupon. TotalAmount is already net of it.
+	DiscountAmount float64
+	CouponID       string
+	CouponCode     string
 }
 
 type AddonLine struct {
@@ -168,12 +178,15 @@ func (r *Repo) CreateHallBooking(ctx context.Context, in HallBookingInput) (*Boo
 	err = tx.QueryRow(ctx,
 		`INSERT INTO bookings (user_id, target_type, target_id, check_in, check_out,
 		    slot_type, total_amount, idempotent_key, expires_at, guest_name, guest_email,
-		    guest_phone, start_time, end_time, guest_count, event_type, room_count)
+		    guest_phone, start_time, end_time, guest_count, event_type, room_count,
+		    discount_amount, coupon_id, coupon_code)
 		 VALUES ($1,'HALL',$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10,$11,
-		         NULLIF($12,'')::time, NULLIF($13,'')::time, $14, $15, $16) RETURNING id`,
+		         NULLIF($12,'')::time, NULLIF($13,'')::time, $14, $15, $16,
+		         $17, NULLIF($18,'')::uuid, NULLIF($19,'')) RETURNING id`,
 		in.UserID, in.FacilityID, in.EventDate, in.EndDate, in.SlotType, in.TotalAmount,
 		in.IdempotentKey, expiresAt, in.GuestName, in.GuestEmail, in.GuestPhone,
-		in.StartTime, in.EndTime, in.GuestCount, in.EventType, in.RoomCount).Scan(&bookingID)
+		in.StartTime, in.EndTime, in.GuestCount, in.EventType, in.RoomCount,
+		in.DiscountAmount, in.CouponID, in.CouponCode).Scan(&bookingID)
 	if err != nil {
 		if isUnique(err, "idx_bookings_idempotent") {
 			return nil, ErrDuplicateKey
@@ -229,6 +242,17 @@ func (r *Repo) CreateHallBooking(ctx context.Context, in HallBookingInput) (*Boo
 		`INSERT INTO booking_status_history (booking_id, to_status, reason)
 		 VALUES ($1, 'PENDING', 'Booking created')`, bookingID); err != nil {
 		return nil, err
+	}
+	// Redeemed in this transaction, so a slot clash above - or anything else
+	// that rolls it back - never spends a use.
+	if in.CouponID != "" {
+		ok, err := coupon.Redeem(ctx, tx, in.CouponID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrCouponUnavailable
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -364,6 +388,14 @@ func (r *Repo) SetStatus(ctx context.Context, id, to, reason string, from ...str
 		 VALUES ($1, $2, $3, $4)`, id, current, to, reason); err != nil {
 		return err
 	}
+	// A booking that ends without being used gives its coupon use back. The
+	// FOR UPDATE and the from-status guard above make this run once per
+	// booking, however often a cancel is retried.
+	if (to == "CANCELLED" || to == "EXPIRED") && (current == "PENDING" || current == "CONFIRMED") {
+		if err := coupon.Release(ctx, tx, id); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -451,43 +483,43 @@ func (r *Repo) ListForUser(ctx context.Context, userID int64, page, size int) ([
 	return out, total, rows.Err()
 }
 
-// ExpireHolds releases bookings whose payment window elapsed. Returns how many
-// were expired, so the sweeper can log real work.
-func (r *Repo) ExpireHolds(ctx context.Context) (int, error) {
+// ExpireHolds releases bookings whose payment window elapsed. Returns the ids
+// it expired - also on error, so the ones already expired are still announced.
+func (r *Repo) ExpireHolds(ctx context.Context) ([]string, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT id FROM bookings
 		 WHERE status = 'PENDING' AND expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP`)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return 0, err
+			return nil, err
 		}
 		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	n := 0
+	var expired []string
 	for _, id := range ids {
 		if err := r.ReleaseInventory(ctx, id); err != nil {
-			return n, err
+			return expired, err
 		}
 		if err := r.SetStatus(ctx, id, "EXPIRED", "Payment window elapsed", "PENDING"); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue // someone paid for it in the meantime
 			}
-			return n, err
+			return expired, err
 		}
-		n++
+		expired = append(expired, id)
 	}
-	return n, nil
+	return expired, nil
 }
 
 func (r *Repo) MarkPaid(ctx context.Context, bookingID string, amount float64) error {

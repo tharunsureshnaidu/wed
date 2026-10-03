@@ -199,6 +199,13 @@ func (r *Repo) ClaimDue(ctx context.Context, limit int, backoff time.Duration) (
 		 WHERE status = 'PENDING'
 		   AND next_attempt_at IS NOT NULL
 		   AND next_attempt_at <= CURRENT_TIMESTAMP
+		   -- booking.created and booking.cancelled are separate topics, so the
+		   -- cancel can be consumed first and match no rows yet; the created
+		   -- rows then arrive PENDING. Checked here, at send time, so no
+		   -- ordering of the two can chase an owner about a dead booking.
+		   AND NOT EXISTS (SELECT 1 FROM bookings b
+		                    WHERE b.id = notifications.booking_id
+		                      AND b.status IN ('CANCELLED', 'EXPIRED'))
 		 ORDER BY next_attempt_at
 		 LIMIT $1
 		   FOR UPDATE SKIP LOCKED`, limit)
@@ -468,7 +475,8 @@ type GeoTarget struct {
 // For users with location, earth_box provides a bounding cube index scan (idx_user_profiles_earth)
 // and earth_distance provides the exact great-circle check. For users without location, distance is returned as -1.
 //
-// Excludes: users who opted out, deleted or suspended accounts, and the actor who caused the event.
+// Excludes: users who opted out, deleted or suspended accounts, and the actor
+// who caused the event - nobody needs telling about their own listing.
 func (r *Repo) UsersNear(ctx context.Context, lat, lng, radiusM float64, excludeUserID int64, limit int) ([]GeoTarget, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT u.id, u.full_name, u.email, u.phone_number,
@@ -820,4 +828,31 @@ func (r *Repo) FindSuperAdmins(ctx context.Context) ([]SuperAdminUser, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// EnqueueCustomers inserts one PUSH row per active customer in one statement.
+//
+// ponytail: no recipient cap, unlike UsersNear's GeoMaxRecipients - an
+// all-customer announcement that silently skipped everyone past 2000 would be
+// wrong. One INSERT ... SELECT is fine into six figures; beyond that, batch it
+// by user id.
+//
+// geo_notifications_enabled is the only announcement opt-out a user has, so it
+// is honoured here too. A missing profile row counts as the default, on.
+func (r *Repo) EnqueueCustomers(ctx context.Context, eventType, subjectID, subject, body string) (int64, error) {
+	tag, err := r.db.Exec(ctx, `
+		INSERT INTO notifications (recipient_role, recipient_user_id, channel, destination,
+		                           subject, body, event_type, subject_id)
+		SELECT DISTINCT 'USER', u.id, 'PUSH', u.id::text, $3, $4, $1, $2 || ':' || u.id
+		  FROM users u
+		  JOIN user_roles ur ON ur.user_id = u.id
+		  JOIN roles ro ON ro.id = ur.role_id
+		  LEFT JOIN user_profiles p ON p.id = u.id
+		 WHERE ro.role_name = 'ROLE_CUSTOMER'
+		   AND u.is_deleted = FALSE AND u.status = 'ACTIVE'
+		   AND COALESCE(p.geo_notifications_enabled, TRUE)
+		   AND COALESCE(p.is_deleted, FALSE) = FALSE
+		ON CONFLICT (event_type, subject_id, recipient_role, channel) DO NOTHING`,
+		eventType, subjectID, subject, body)
+	return tag.RowsAffected(), err
 }

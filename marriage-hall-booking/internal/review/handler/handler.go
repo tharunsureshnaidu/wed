@@ -25,7 +25,7 @@ type Handler struct {
 
 	// OnReviewCreated tells the venue owner someone rated them. The reviewer
 	// is not notified - they just wrote it.
-	OnReviewCreated func(ctx context.Context, facilityID string, rating int)
+	OnReviewCreated func(ctx context.Context, reviewID, facilityID string, rating int)
 }
 
 func New(db *pgxpool.Pool, signer *jwt.Signer) *Handler {
@@ -121,7 +121,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.OnReviewCreated != nil {
-		h.OnReviewCreated(r.Context(), req.FacilityID, req.Rating)
+		h.OnReviewCreated(r.Context(), id, req.FacilityID, req.Rating)
 	}
 	response.Created(w, "Review submitted successfully and is waiting for admin approval.", "/api/v1/reviews/"+id, map[string]any{
 		"id": id, "facilityId": req.FacilityID, "rating": req.Rating,

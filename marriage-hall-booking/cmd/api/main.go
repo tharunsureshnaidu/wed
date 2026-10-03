@@ -8,11 +8,9 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	adminhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/admin/handler"
@@ -30,6 +28,7 @@ import (
 	helpdomain "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/help/domain"
 	helphandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/help/handler"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/migrations"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/consumer"
 	notifyhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/handler"
 	notifyrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/repository"
 	notifysvc "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/notification/service"
@@ -51,7 +50,6 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
-	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/notify"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 )
 
@@ -181,13 +179,7 @@ func main() {
 	// no reason to wait for. Without it the handler uploads inline.
 	if publisher.Enabled {
 		fh.OnMediaUpload = func(ctx context.Context, m events.MediaUpload) error {
-			return publisher.PublishSync(ctx, events.TopicMediaUploadRequested, m.MediaID,
-				map[string]any{
-					"mediaId": m.MediaID, "table": m.Table,
-					"facilityId": m.FacilityID, "vendorId": m.VendorID,
-					"spoolPath": m.SpoolPath, "contentType": m.ContentType,
-					"ext": m.Ext, "size": m.Size, "kind": m.Kind,
-				})
+			return publisher.PublishSync(ctx, events.TopicMediaUploadRequested, m.MediaID, m)
 		}
 	}
 	fh.Register(mux)
@@ -202,22 +194,33 @@ func main() {
 	bookingHandler.HostsEvent = facilities.HostsEvent
 	bookingHandler.Register(mux)
 	// Sending happens in the worker; the API only enqueues, so this service
-	// has no senders wired. The trigger hooks below share it.
+	// has no senders wired. The feed/device/ack endpoints use it, and so does
+	// the publisher's in-process fallback below.
 	notifier := notifysvc.New(notifyrepo.New(db), nil)
+	// Every hook below only publishes; the worker reacts. When Kafka is off or
+	// refuses the write, the same reactions run here instead - see
+	// events.Publisher.Local.
+	publisher.Local = consumer.New(notifier, db).Handle
 	notifyhandler.New(notifier, signer).Register(mux)
 	paymenthandler.New(paymentSvc, signer).Register(mux)
 	vendorhandler.New(db, signer).Register(mux)
 	quotehandler.New(db, signer, bookingSvc).Register(mux)
 
 	coupons := couponhandler.New(db, signer)
-	coupons.OnCouponCreated = func(ctx context.Context, couponID, code, facilityID string, createdBy int64) {
-		notifier.AnnounceFacilityCoupon(ctx, facilityID, couponID, code, createdBy)
+	coupons.OnCouponCreated = func(ctx context.Context, c couponhandler.Created) {
+		publisher.Publish(ctx, events.TopicCouponCreated, c.ID, events.CouponCreated{
+			CouponID: c.ID, Code: c.Code, FacilityID: c.FacilityID,
+			DiscountType: c.DiscountType, DiscountValue: c.DiscountValue,
+			MaxDiscount: c.MaxDiscount, CreatedBy: c.CreatedBy,
+		})
 	}
 	coupons.Register(mux)
 
 	reviews := reviewhandler.New(db, signer)
-	reviews.OnReviewCreated = func(ctx context.Context, facilityID string, rating int) {
-		notifyFacilityOwner(ctx, db, notifier, facilityID, rating)
+	reviews.OnReviewCreated = func(ctx context.Context, reviewID, facilityID string, rating int) {
+		publisher.Publish(ctx, events.TopicReviewCreated, facilityID, events.ReviewCreated{
+			ReviewID: reviewID, FacilityID: facilityID, Rating: rating,
+		})
 	}
 	reviews.Register(mux)
 	reviews.RegisterAdmin(mux)
@@ -228,16 +231,9 @@ func main() {
 	// imports notification, and it fires after the insert commits.
 	feedback := feedbackhandler.New(db, signer, media)
 	feedback.OnSubmitted = func(ctx context.Context, id, message string, rating *int) {
-		subject := "[ops] New app feedback"
-		if rating != nil {
-			subject = fmt.Sprintf("[ops] New app feedback (%d/5)", *rating)
-		}
-		if err := notifier.NotifyAdmins(ctx, notifysvc.Event{
-			Type: "feedback.submitted", SubjectID: id,
-			Subject: subject, Body: message,
-		}); err != nil {
-			logger.Error("feedback: notify ops", "id", id, logger.Err(err))
-		}
+		publisher.Publish(ctx, events.TopicFeedbackSubmitted, id, events.FeedbackSubmitted{
+			FeedbackID: id, Message: message, Rating: rating,
+		})
 	}
 	feedback.Register(mux)
 
@@ -272,32 +268,23 @@ func main() {
 
 	admins := adminhandler.New(db, signer)
 	admins.OnStatusChange = func(ctx context.Context, ev adminhandler.StatusChange) {
-		onAdminStatusChange(ctx, notifier, ev)
+		publisher.Publish(ctx, events.TopicAdminStatusChanged, ev.EntityID, events.AdminStatusChanged{
+			Entity: ev.Entity, EntityID: ev.EntityID, UserID: ev.UserID,
+			Status: ev.Status, Reason: ev.Reason, Name: ev.Name,
+		})
 	}
 	admins.Register(mux)
 	admins.RegisterFacilityAdmin(mux)
 
-	// New amenities at an existing venue: told to nearby customers, not to
-	// admins - it needs no approval.
 	fh.OnAmenitiesAdded = func(ctx context.Context, facilityID string, names []string) {
-		if len(names) == 0 {
-			return
-		}
-		notifier.AnnounceFacilityNearby(ctx, facilityID,
-			"now offers "+strings.Join(names, ", "),
-			"amenities:"+strings.Join(names, ","))
+		publisher.Publish(ctx, events.TopicAmenitiesAdded, facilityID, events.AmenitiesAdded{
+			FacilityID: facilityID, Names: names,
+		})
 	}
-
 	fh.OnFacilityCreated = func(ctx context.Context, facilityID, name string, ownerID int64) {
-		if err := notifier.NotifyAdmins(ctx, notifysvc.Event{
-			Type:      "facility.created",
-			SubjectID: facilityID,
-			Subject:   "[ops] New listing awaiting approval: " + name,
-			Body: fmt.Sprintf("A new facility has been submitted and is waiting for approval.\n\n%s\nFacility ref: %s\n\nIt stays invisible to customers until approved.",
-				name, facilityID),
-		}); err != nil {
-			logger.Error("notify: facility created", "facilityId", facilityID, logger.Err(err))
-		}
+		publisher.Publish(ctx, events.TopicFacilityCreated, facilityID, events.FacilityCreated{
+			FacilityID: facilityID, Name: name, OwnerID: ownerID,
+		})
 	}
 
 	handler := middleware.Chain(mux,
@@ -334,105 +321,4 @@ func main() {
 		logger.Error("shutdown", logger.Err(err))
 	}
 	logger.Info("stopped")
-}
-
-// onAdminStatusChange turns one admin decision into a notification the
-// affected user can act on. Wording matters more than usual here: these are
-// the messages that tell someone their livelihood listing was rejected.
-func onAdminStatusChange(ctx context.Context, n *notifysvc.Service, ev adminhandler.StatusChange) {
-	var subject, body string
-	// A blocked user's sessions are revoked as part of the block, so push and
-	// anything in-app is unreadable by the time it arrives. Email and SMS are
-	// the only channels that still reach them.
-	var channels []notify.Channel
-
-	switch ev.Entity {
-	case "vendor.kyc":
-		if ev.Status == "APPROVED" {
-			subject = "Your KYC has been approved"
-			body = "Good news - your KYC verification for " + ev.Name + " has been approved.\n\nYou can now publish listings and accept bookings."
-		} else {
-			subject = "Your KYC needs attention"
-			body = "Your KYC verification for " + ev.Name + " was not approved."
-			if ev.Reason != "" {
-				body += "\n\nReason: " + ev.Reason
-			}
-			body += "\n\nYou can correct the details and submit again."
-		}
-	case "facility":
-		switch ev.Status {
-		case "APPROVED":
-			subject = "Your listing is live: " + ev.Name
-			body = ev.Name + " has been approved and is now visible to customers."
-			// Announced on approval rather than on creation: a PENDING venue is
-			// invisible to customers, so telling them about it sends them to a
-			// listing they cannot open.
-			n.AnnounceFacilityNearby(ctx, ev.EntityID, "is a new venue near you", "approved")
-		case "REJECTED":
-			subject = "Your listing was not approved: " + ev.Name
-			body = ev.Name + " was not approved."
-			if ev.Reason != "" {
-				body += "\n\nReason: " + ev.Reason
-			}
-		case "BLOCKED":
-			subject = "Your listing has been suspended: " + ev.Name
-			body = ev.Name + " has been suspended and is no longer visible to customers."
-		default:
-			// PENDING and anything added later: no message worth sending.
-			return
-		}
-	case "user":
-		if ev.Status == "SUSPENDED" {
-			subject = "Your account has been suspended"
-			body = "Your account has been suspended and you have been signed out."
-			if ev.Reason != "" {
-				body += "\n\nReason: " + ev.Reason
-			}
-			body += "\n\nContact support if you believe this is a mistake."
-			channels = []notify.Channel{notify.Email, notify.SMS}
-		} else {
-			subject = "Your account has been reactivated"
-			body = "Your account is active again. You can sign in as usual."
-		}
-	default:
-		return
-	}
-
-	if err := n.NotifyUser(ctx, notifysvc.Event{
-		Type:      ev.Entity + "." + strings.ToLower(ev.Status),
-		SubjectID: ev.EntityID,
-		UserID:    ev.UserID,
-		Subject:   subject,
-		Body:      body,
-		Channels:  channels,
-	}); err != nil {
-		logger.Error("notify: admin status change",
-			"entity", ev.Entity, "entityId", ev.EntityID, logger.Err(err))
-	}
-}
-
-// notifyFacilityOwner tells a venue owner they have a new review. The owner is
-// looked up here rather than passed in: the review handler has no reason to
-// know who owns the facility.
-func notifyFacilityOwner(ctx context.Context, db *pgxpool.Pool, n *notifysvc.Service, facilityID string, rating int) {
-	var ownerID int64
-	var name string
-	if err := db.QueryRow(ctx,
-		`SELECT owner_id, name FROM facilities WHERE id = $1 AND is_deleted = FALSE`,
-		facilityID).Scan(&ownerID, &name); err != nil {
-		logger.Error("notify: review owner lookup", "facilityId", facilityID, logger.Err(err))
-		return
-	}
-	// The review id would be the natural subject, but the handler does not
-	// return it; facility+rating is enough to dedupe a redelivery.
-	if err := n.NotifyUser(ctx, notifysvc.Event{
-		Type:      "review.created",
-		SubjectID: facilityID + ":" + strconv.Itoa(rating),
-		UserID:    ownerID,
-		Subject:   fmt.Sprintf("New %d-star review for %s", rating, name),
-		Body: fmt.Sprintf("%s received a new %d-star review.\n\nOpen the app to read it and reply.",
-			name, rating),
-	}); err != nil {
-		logger.Error("notify: review created", "facilityId", facilityID, logger.Err(err))
-	}
 }

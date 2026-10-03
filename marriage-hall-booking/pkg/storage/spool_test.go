@@ -83,3 +83,23 @@ func swapSpoolDir(dir string) func() {
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, os.ErrClosed }
+
+// The worker opens whatever path a media event names; a forged event must not
+// be able to point it at .env or anything else outside the spool.
+func TestInSpool(t *testing.T) {
+	defer swapSpoolDir("uploads/spool")()
+	for path, want := range map[string]bool{
+		"uploads/spool/abc.jpg":    true,
+		"uploads/spool/../../.env": false,
+		"uploads/spool/..":         false,
+		"uploads/spool":            false,
+		".env":                     false,
+		"/etc/passwd":              false,
+		"uploads/spoolx/abc.jpg":   false,
+		"":                         false,
+	} {
+		if got := InSpool(path); got != want {
+			t.Errorf("InSpool(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

@@ -62,6 +62,8 @@ type hallReq struct {
 	RoomCount  *int     `json:"roomCount"`
 	EventType  *string  `json:"eventType"`
 	PackageIDs []string `json:"packageIds"`
+	// CouponCode is optional; the discount is computed server-side.
+	CouponCode string `json:"couponCode"`
 
 	// Legacy single-date form.
 	EventDate string `json:"eventDate"`
@@ -214,6 +216,7 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 		StartTime: startTime, EndTime: endTime,
 		GuestCount: req.GuestCount, RoomCount: req.RoomCount, EventType: eventType,
 		SlotType: slot, PackageIDs: req.PackageIDs, IdempotentKey: req.IdempotentKey,
+		CouponCode: strings.TrimSpace(req.CouponCode),
 	})
 	if err != nil {
 		httpx.Fail(w, err)

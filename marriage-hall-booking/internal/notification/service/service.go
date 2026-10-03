@@ -697,6 +697,22 @@ func (s *Service) AnnounceNearby(ctx context.Context, a GeoAnnounce) int {
 	return queued
 }
 
+// AnnounceToCustomers pushes one announcement to every active customer who has
+// not turned announcements off - the audience of an all-halls coupon.
+//
+// PUSH only, for the reason GeoAnnounce gives. Every recipient also gets the
+// item in their in-app feed, including those with no device registered.
+// Idempotent on the outbox key, so a redelivered event enqueues nothing more.
+func (s *Service) AnnounceToCustomers(ctx context.Context, eventType, subjectID, subject, body string) (int64, error) {
+	n, err := s.repo.EnqueueCustomers(ctx, eventType, subjectID, subject, body)
+	if err != nil {
+		return 0, fmt.Errorf("announce %s to customers: %w", eventType, err)
+	}
+	logger.Info("notify: announced to all customers", "event", eventType,
+		"subjectId", subjectID, "recipients", n)
+	return n, nil
+}
+
 // AnnounceFacilityNearby announces something about a venue to nearby users.
 //
 // dedupeKey distinguishes one announcement from another about the same venue:

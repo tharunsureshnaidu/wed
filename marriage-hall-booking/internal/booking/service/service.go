@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 )
 
@@ -55,9 +57,12 @@ type HallBookingRequest struct {
 	PackageIDs    []string
 	Addons        []repository.AddonLine
 	IdempotentKey string
-	GuestName     *string
-	GuestEmail    *string
-	GuestPhone    *string
+	// CouponCode is optional. It comes off the price after the venue's own
+	// advertised discount, and is redeemed in the booking's transaction.
+	CouponCode string
+	GuestName  *string
+	GuestEmail *string
+	GuestPhone *string
 	// OverrideAmount is the price agreed through the quote flow. It is set only
 	// by the quote conversion path, never from an HTTP request body - a client
 	// that could set its own total would book a hall for whatever it liked.
@@ -88,12 +93,12 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		return nil, apperr.BadRequest("INVALID_DATE", "Event date cannot be in the past")
 	}
 
-	var basePrice *float64
+	var basePrice, discountPct *float64
 	var facilityType string
 	err := s.db.QueryRow(ctx,
-		`SELECT base_price_per_day, type FROM facilities
+		`SELECT base_price_per_day, type, `+ActiveDiscountSQL+` FROM facilities
 		 WHERE id = $1 AND is_deleted = FALSE AND status <> 'BLOCKED'`,
-		req.FacilityID).Scan(&basePrice, &facilityType)
+		req.FacilityID).Scan(&basePrice, &facilityType, &discountPct)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.BadRequest("INVALID_HALL", "Invalid hall")
 	}
@@ -118,9 +123,14 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 	if !req.EndDate.IsZero() && req.EndDate.After(req.EventDate) {
 		days = int(req.EndDate.Sub(req.EventDate).Hours()/24) + 1
 	}
-	total := 0.0
+	// The day rate is the discounted one the listing card shows, so checkout
+	// charges what the customer was told. It used to charge the full base
+	// price while the card advertised "15% off".
+	total, venueDiscount := 0.0, 0.0
 	if basePrice != nil {
-		total = *basePrice * float64(days)
+		rate := DayRate(*basePrice, discountPct)
+		total = rate * float64(days)
+		venueDiscount = (*basePrice - rate) * float64(days)
 	}
 
 	// Packages and add-ons are priced from their own rows, and must belong to
@@ -163,7 +173,20 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		if *req.OverrideAmount < 0 {
 			return nil, apperr.BadRequest("INVALID_AMOUNT", "Agreed amount cannot be negative")
 		}
-		total = *req.OverrideAmount
+		// A price agreed through a quote is final: no advertised discount on
+		// top of a negotiated one.
+		total, venueDiscount = *req.OverrideAmount, 0
+	}
+
+	var couponID, couponCode string
+	couponDiscount := 0.0
+	if req.CouponCode != "" && req.OverrideAmount == nil {
+		c, d, err := s.PriceCoupon(ctx, req.CouponCode, req.FacilityID, total)
+		if err != nil {
+			return nil, err
+		}
+		couponID, couponCode, couponDiscount = c.ID, c.Code, d
+		total -= d
 	}
 
 	b, err := s.repo.CreateHallBooking(ctx, repository.HallBookingInput{
@@ -174,10 +197,16 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		SlotType: req.SlotType, TotalAmount: total, IdempotentKey: req.IdempotentKey,
 		GuestName: req.GuestName, GuestEmail: req.GuestEmail, GuestPhone: req.GuestPhone,
 		HoldFor: holdWindow, PackageIDs: req.PackageIDs, Addons: req.Addons,
+		DiscountAmount: venueDiscount + couponDiscount,
+		CouponID:       couponID, CouponCode: couponCode,
 	})
 	switch {
 	case errors.Is(err, repository.ErrSlotTaken):
 		return nil, apperr.Conflict("SLOT_UNAVAILABLE", "Hall slot is no longer available")
+	case errors.Is(err, repository.ErrCouponUnavailable):
+		// Ran out (or was switched off) between pricing and the insert.
+		return nil, apperr.New(coupon.ErrExhausted.Status, coupon.ErrExhausted.Code,
+			"This coupon is no longer available")
 	case errors.Is(err, repository.ErrDuplicateKey):
 		// Lost the race on the idempotency key: the winner's booking is the answer.
 		if existing, e := s.repo.FindByIdempotencyKey(ctx, req.IdempotentKey); e == nil {
@@ -195,6 +224,40 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		s.OnBookingCreated(ctx, b)
 	}
 	return b, nil
+}
+
+// ActiveDiscountSQL is a facility's advertised discount percent, or NULL once
+// it has expired - the same rule the listing applies, so an expired offer is
+// neither shown nor charged.
+const ActiveDiscountSQL = `CASE WHEN discount_valid_until IS NULL OR discount_valid_until > CURRENT_TIMESTAMP
+	THEN discount_percent END`
+
+// DayRate is a hall's day rate after its advertised discount, rounded to whole
+// units exactly as the listing's discountedPrice is. Charging the unrounded
+// figure would put a different number at checkout than on the card.
+func DayRate(base float64, pct *float64) float64 {
+	if pct == nil || *pct <= 0 {
+		return base
+	}
+	return math.Round(base * (100 - *pct) / 100)
+}
+
+// PriceCoupon checks a code against a venue and an amount and returns what it
+// takes off. Shared by the booking and the price preview, so the preview can
+// never promise a discount the booking then refuses.
+func (s *Service) PriceCoupon(ctx context.Context, code, facilityID string, amount float64) (*coupon.Coupon, float64, error) {
+	c, err := coupon.Load(ctx, s.db, code, facilityID)
+	if err == nil {
+		err = c.Check(amount)
+	}
+	var ce *coupon.Error
+	if errors.As(err, &ce) {
+		return nil, 0, apperr.New(ce.Status, ce.Code, ce.Message)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	return c, c.Discount(amount), nil
 }
 
 type HotelBookingRequest struct {
@@ -348,6 +411,6 @@ func (s *Service) List(ctx context.Context, userID int64, page, size int) ([]rep
 	return items, total, nil
 }
 
-func (s *Service) ExpireHolds(ctx context.Context) (int, error) {
+func (s *Service) ExpireHolds(ctx context.Context) ([]string, error) {
 	return s.repo.ExpireHolds(ctx)
 }

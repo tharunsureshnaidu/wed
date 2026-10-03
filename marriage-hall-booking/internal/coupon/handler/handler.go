@@ -16,20 +16,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 type Handler struct {
 	db     *pgxpool.Pool
 	signer *jwt.Signer
 
-	// OnCouponCreated announces a new coupon to customers near the venue it
-	// applies to. Nil disables the announcement entirely.
-	OnCouponCreated func(ctx context.Context, couponID, code, facilityID string, createdBy int64)
+	// OnCouponCreated announces a new coupon: to customers near the venue it
+	// is scoped to, or - for an all-halls coupon - to every customer. Nil
+	// disables the announcement entirely.
+	OnCouponCreated func(ctx context.Context, c Created)
+}
+
+// Created is what the announcement needs to say what the offer is.
+type Created struct {
+	ID            string
+	Code          string
+	FacilityID    string // empty for an all-halls coupon
+	DiscountType  string
+	DiscountValue float64
+	MaxDiscount   *float64
+	CreatedBy     int64
 }
 
 func New(db *pgxpool.Pool, signer *jwt.Signer) *Handler {
@@ -46,15 +60,39 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.Handle("POST /api/v1/coupons", owner(h.create))
 	mux.Handle("GET /api/v1/coupons", owner(h.list))
-	mux.Handle("PUT /api/v1/coupons/{id}", owner(h.update))
-	mux.Handle("DELETE /api/v1/coupons/{id}", owner(h.delete))
+	mux.Handle("PUT /api/v1/coupons/{id}", owner(func(w http.ResponseWriter, r *http.Request) { h.save(w, r, false) }))
+	mux.Handle("DELETE /api/v1/coupons/{id}", owner(func(w http.ResponseWriter, r *http.Request) { h.remove(w, r, false) }))
 
 	// Coupon cards for signed-in users on app screen (filtered by location <= 50 km or no location)
 	mux.Handle("GET /api/v1/coupons/available", auth(http.HandlerFunc(h.listAvailable)))
 
 	// Any signed-in customer can check a code before booking.
 	mux.Handle("POST /api/v1/coupons/validate", auth(http.HandlerFunc(h.validateCode)))
+	// Public: the offers a venue's page can show, for a visitor who is not
+	// signed in. What it lists is exactly what checkout accepts - both use
+	// coupon.AppliesSQL.
+	//
+	// Its own path rather than /available: that one is the signed-in card list
+	// and filters by the caller's saved location, which a logged-out visitor
+	// does not have. Registering both on one pattern panics ServeMux at start.
+	mux.HandleFunc("GET /api/v1/coupons/offers", h.available)
+
+	// Admin coupons for every marriage hall. Their own routes, with no
+	// facilityId in the request at all, rather than "leave facilityId out on
+	// POST /coupons" - which used to create a coupon valid on hotels too.
+	admin := func(fn http.HandlerFunc) http.Handler {
+		return middleware.Chain(fn, auth, middleware.RequireRole(domain.RoleAdmin))
+	}
+	mux.Handle("POST /api/v1/admin/coupons", admin(h.adminCreate))
+	mux.Handle("GET /api/v1/admin/coupons", admin(h.adminList))
+	mux.Handle("PUT /api/v1/admin/coupons/{id}", admin(func(w http.ResponseWriter, r *http.Request) { h.save(w, r, true) }))
+	mux.Handle("DELETE /api/v1/admin/coupons/{id}", admin(func(w http.ResponseWriter, r *http.Request) { h.remove(w, r, true) }))
 }
+
+// hallType is the stored facility type an admin coupon applies to. Halls only
+// for now; the column takes HOTEL too, so a hotel-wide coupon needs no
+// migration - only a route.
+const hallType = "MARRIAGE_HALL"
 
 type couponReq struct {
 	Code             string   `json:"code"`
@@ -158,6 +196,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			"Create your vendor business first (PUT /api/v1/vendors/me)", "VENDOR_REQUIRED")
 		return
 	}
+	// An admin's coupon here must name a venue. One without used to mean
+	// "platform-wide" with no venue type, so it discounted hotels as well.
+	if vendorID == nil && (req.FacilityID == nil || *req.FacilityID == "") {
+		response.Error(w, http.StatusBadRequest,
+			"facilityId is required. For a coupon on every marriage hall use POST /api/v1/admin/coupons",
+			"VALIDATION_ERROR")
+		return
+	}
 	// A vendor may only scope a coupon to a venue they own; an admin may scope
 	// it anywhere. Checked before the insert so the coupon is never created.
 	if req.FacilityID != nil && *req.FacilityID != "" && vendorID != nil {
@@ -207,7 +253,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// and a platform-wide coupon has none. Announcing it to everyone near some
 	// arbitrary venue would be worse than not announcing it.
 	if h.OnCouponCreated != nil && active && req.FacilityID != nil && *req.FacilityID != "" {
-		h.OnCouponCreated(r.Context(), id, req.Code, *req.FacilityID, userID)
+		h.OnCouponCreated(r.Context(), Created{
+			ID: id, Code: strings.ToUpper(strings.TrimSpace(req.Code)), FacilityID: *req.FacilityID,
+			DiscountType: strings.ToUpper(req.DiscountType), DiscountValue: req.DiscountValue,
+			MaxDiscount: req.MaxDiscount, CreatedBy: userID,
+		})
 	}
 	response.Created(w, "Coupon created successfully", "/api/v1/coupons/"+id,
 		map[string]any{"id": id, "code": req.Code})
@@ -224,13 +274,21 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// An admin sees every coupon; a vendor sees only their own.
+	h.listWhere(w, r, `($1::uuid IS NULL OR vendor_id = $1::uuid)`, vendorID)
+}
+
+func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
+	h.listWhere(w, r, `facility_type IS NOT NULL`)
+}
+
+func (h *Handler) listWhere(w http.ResponseWriter, r *http.Request, where string, args ...any) {
 	rows, err := h.db.Query(r.Context(), `
-		SELECT id::text, code, description, facility_id::text, discount_type,
+		SELECT id::text, code, description, facility_id::text, facility_type, discount_type,
 		       discount_value, max_discount, min_booking_amount,
 		       valid_from, valid_until, usage_limit, used_count, is_active
 		  FROM coupons
-		 WHERE is_deleted = FALSE AND ($1::uuid IS NULL OR vendor_id = $1::uuid)
-		 ORDER BY created_at DESC`, vendorID)
+		 WHERE is_deleted = FALSE AND `+where+`
+		 ORDER BY created_at DESC`, args...)
 	if err != nil {
 		httpx.Fail(w, err)
 		return
@@ -238,10 +296,13 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type row struct {
-		ID            string     `json:"id"`
-		Code          string     `json:"code"`
-		Description   *string    `json:"description"`
-		FacilityID    *string    `json:"facilityId"`
+		ID           string  `json:"id"`
+		Code         string  `json:"code"`
+		Description  *string `json:"description"`
+		FacilityID   *string `json:"facilityId"`
+		facilityType *string
+		// AppliesTo is set on an all-venues-of-a-type coupon: "HALL".
+		AppliesTo     *string    `json:"appliesTo"`
 		DiscountType  string     `json:"discountType"`
 		DiscountValue float64    `json:"discountValue"`
 		MaxDiscount   *float64   `json:"maxDiscount"`
@@ -255,18 +316,161 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	out := []row{}
 	for rows.Next() {
 		var x row
-		if err := rows.Scan(&x.ID, &x.Code, &x.Description, &x.FacilityID, &x.DiscountType,
-			&x.DiscountValue, &x.MaxDiscount, &x.MinBooking, &x.ValidFrom, &x.ValidUntil,
-			&x.UsageLimit, &x.UsedCount, &x.IsActive); err != nil {
+		if err := rows.Scan(&x.ID, &x.Code, &x.Description, &x.FacilityID, &x.facilityType,
+			&x.DiscountType, &x.DiscountValue, &x.MaxDiscount, &x.MinBooking, &x.ValidFrom,
+			&x.ValidUntil, &x.UsageLimit, &x.UsedCount, &x.IsActive); err != nil {
 			httpx.Fail(w, err)
 			return
 		}
+		if x.facilityType != nil {
+			t := venuetype.API(*x.facilityType)
+			x.AppliesTo = &t
+		}
 		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, "Coupons retrieved successfully", out)
 }
 
-func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+// adminCreate creates a coupon valid at every marriage hall. There is no
+// facilityId field: sending one is rejected rather than ignored, so a client
+// that meant one venue finds out instead of discounting all of them.
+func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
+	var req couponReq
+	if !httpx.Decode(w, r, &req) {
+		return
+	}
+	var e validate.Errors
+	from, until := req.validateInto(&e)
+	if req.FacilityID != nil {
+		e = append(e, "facilityId is not accepted here - this coupon applies to every marriage hall")
+	}
+	if len(e) > 0 {
+		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
+		return
+	}
+
+	userID, _ := middleware.UserID(r.Context())
+	active := req.IsActive == nil || *req.IsActive
+	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	var id string
+	err := h.db.QueryRow(r.Context(), `
+		INSERT INTO coupons (code, description, facility_type,
+		    discount_type, discount_value, max_discount, min_booking_amount,
+		    valid_from, valid_until, usage_limit, is_active, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		RETURNING id::text`,
+		code, req.Description, hallType, strings.ToUpper(req.DiscountType), req.DiscountValue,
+		req.MaxDiscount, req.MinBookingAmount, from, until, req.UsageLimit,
+		active, userID).Scan(&id)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			response.Error(w, http.StatusConflict,
+				"That coupon code already exists", "COUPON_EXISTS")
+			return
+		}
+		httpx.Fail(w, err)
+		return
+	}
+
+	// Told to every customer, but only when it can be used today: announcing a
+	// coupon scheduled for next month sends people to a code that fails.
+	now := time.Now()
+	usableNow := active && (from == nil || !from.After(now)) && (until == nil || until.After(now))
+	if h.OnCouponCreated != nil && usableNow {
+		h.OnCouponCreated(r.Context(), Created{
+			ID: id, Code: code, DiscountType: strings.ToUpper(req.DiscountType),
+			DiscountValue: req.DiscountValue, MaxDiscount: req.MaxDiscount, CreatedBy: userID,
+		})
+	}
+	response.Created(w, "Coupon created successfully", "/api/v1/admin/coupons/"+id,
+		map[string]any{"id": id, "code": code, "appliesTo": venuetype.API(hallType), "announced": h.OnCouponCreated != nil && usableNow})
+}
+
+// available lists the coupons a customer can use at a venue - or, without a
+// facilityId, the ones valid at every marriage hall. Exhausted and expired
+// coupons are filtered in SQL, so the list never offers a code checkout rejects.
+func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
+	facilityID := r.URL.Query().Get("facilityId")
+	// Without a venue: coupons for every hall. With one: whatever applies
+	// there, by the same rule checkout uses.
+	join, where, args := ``, `c.facility_type = $1`, []any{hallType}
+	if facilityID != "" {
+		if !httpx.ValidUUID(facilityID) {
+			response.Error(w, http.StatusBadRequest, "facilityId must be a valid id", "VALIDATION_ERROR")
+			return
+		}
+		var exists bool
+		if err := h.db.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM facilities WHERE id = $1 AND is_deleted = FALSE)`,
+			facilityID).Scan(&exists); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if !exists {
+			response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
+			return
+		}
+		join = `JOIN facilities f ON f.id = $1 AND f.is_deleted = FALSE`
+		where, args = coupon.AppliesSQL, []any{facilityID}
+	}
+	rows, err := h.db.Query(r.Context(), `
+		SELECT c.id::text, c.code, c.description, c.discount_type, c.discount_value,
+		       c.max_discount, c.min_booking_amount, c.valid_until, c.facility_type
+		  FROM coupons c `+join+`
+		 WHERE `+coupon.LiveSQL+`
+		   AND (c.usage_limit IS NULL OR c.used_count < c.usage_limit)
+		   AND `+where+`
+		 ORDER BY c.facility_type IS NULL, c.created_at DESC`, args...)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	defer rows.Close()
+
+	type offer struct {
+		ID            string     `json:"id"`
+		Code          string     `json:"code"`
+		Description   *string    `json:"description"`
+		DiscountType  string     `json:"discountType"`
+		DiscountValue float64    `json:"discountValue"`
+		MaxDiscount   *float64   `json:"maxDiscount"`
+		MinBooking    *float64   `json:"minBookingAmount"`
+		ValidUntil    *time.Time `json:"validUntil"`
+		// AppliesTo is "HALL" for a coupon valid at every marriage hall, null
+		// for one scoped to this venue or its vendor.
+		AppliesTo    *string `json:"appliesTo"`
+		facilityType *string
+	}
+	out := []offer{}
+	for rows.Next() {
+		var o offer
+		if err := rows.Scan(&o.ID, &o.Code, &o.Description, &o.DiscountType, &o.DiscountValue,
+			&o.MaxDiscount, &o.MinBooking, &o.ValidUntil, &o.facilityType); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if o.facilityType != nil {
+			t := venuetype.API(*o.facilityType)
+			o.AppliesTo = &t
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	response.OK(w, "Coupons retrieved successfully", out)
+}
+
+// save updates a coupon. platform is the admin route: only all-halls coupons,
+// and never a facilityId. Otherwise an admin may edit any coupon and a vendor
+// only their own.
+func (h *Handler) save(w http.ResponseWriter, r *http.Request, platform bool) {
 	id := r.PathValue("id")
 	if !httpx.ValidUUID(id) {
 		response.Error(w, http.StatusBadRequest, "Invalid coupon id", "VALIDATION_ERROR")
@@ -278,6 +482,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	var e validate.Errors
 	from, until := req.validateInto(&e)
+	if platform && req.FacilityID != nil {
+		e = append(e, "facilityId is not accepted here - this coupon applies to every marriage hall")
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -291,10 +498,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusForbidden, "Not your coupon", "NOT_COUPON_OWNER")
 		return
 	}
-	active := true
-	if req.IsActive != nil {
-		active = *req.IsActive
-	}
+	active := req.IsActive == nil || *req.IsActive
 	// Ownership is in the WHERE clause, so another vendor's coupon simply
 	// matches nothing and is reported as not found.
 	tag, err := h.db.Exec(r.Context(), `
@@ -303,11 +507,18 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		    valid_from = $8, valid_until = $9, usage_limit = $10, is_active = $11,
 		    updated_at = CURRENT_TIMESTAMP
 		 WHERE id = $1 AND is_deleted = FALSE
-		   AND ($12::uuid IS NULL OR vendor_id = $12::uuid)`,
+		   AND ($12::uuid IS NULL OR vendor_id = $12::uuid)
+		   AND (NOT $13 OR facility_type IS NOT NULL)`,
 		id, strings.ToUpper(strings.TrimSpace(req.Code)), req.Description,
 		strings.ToUpper(req.DiscountType), req.DiscountValue, req.MaxDiscount,
-		req.MinBookingAmount, from, until, req.UsageLimit, active, vendorID)
+		req.MinBookingAmount, from, until, req.UsageLimit, active, vendorID, platform)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			response.Error(w, http.StatusConflict,
+				"That coupon code already exists", "COUPON_EXISTS")
+			return
+		}
 		httpx.Fail(w, err)
 		return
 	}
@@ -318,7 +529,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Coupon updated successfully", nil)
 }
 
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) remove(w http.ResponseWriter, r *http.Request, platform bool) {
 	id := r.PathValue("id")
 	if !httpx.ValidUUID(id) {
 		response.Error(w, http.StatusBadRequest, "Invalid coupon id", "VALIDATION_ERROR")
@@ -338,7 +549,8 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	tag, err := h.db.Exec(r.Context(), `
 		UPDATE coupons SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
 		 WHERE id = $1 AND is_deleted = FALSE
-		   AND ($2::uuid IS NULL OR vendor_id = $2::uuid)`, id, vendorID)
+		   AND ($2::uuid IS NULL OR vendor_id = $2::uuid)
+		   AND (NOT $3 OR facility_type IS NOT NULL)`, id, vendorID, platform)
 	if err != nil {
 		httpx.Fail(w, err)
 		return
@@ -356,10 +568,15 @@ type validateReq struct {
 	FacilityID *string `json:"facilityId"`
 }
 
-// validateCode prices a coupon against a booking amount.
+// validateCode prices a coupon against an amount at one venue.
 //
-// The discount is always computed here from the stored row, never taken from
-// the client - the same rule the booking service states about prices.
+// amount is what the coupon comes off: the price after the venue's own
+// advertised discount, as the booking applies it. The discount is always
+// computed here from the stored row, never taken from the client.
+//
+// facilityId is required. Without it, a coupon scoped to one venue - or to one
+// vendor's venues - validated for any venue on the platform, because the scope
+// check was skipped whenever the client left the id out.
 func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 	var req validateReq
 	if !httpx.Decode(w, r, &req) {
@@ -370,67 +587,30 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 	if req.Amount <= 0 {
 		e = append(e, "amount must be greater than 0")
 	}
+	if req.FacilityID == nil || !httpx.ValidUUID(*req.FacilityID) {
+		e = append(e, "facilityId is required")
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
 	}
 
-	var (
-		id, dtype           string
-		dvalue              float64
-		maxDisc, minBooking *float64
-		facilityID          *string
-		usageLimit          *int
-		usedCount           int
-	)
-	err := h.db.QueryRow(r.Context(), `
-		SELECT id::text, discount_type, discount_value, max_discount,
-		       min_booking_amount, facility_id::text, usage_limit, used_count
-		  FROM coupons
-		 WHERE upper(code) = upper($1) AND is_deleted = FALSE AND is_active
-		   AND (valid_from IS NULL OR valid_from <= CURRENT_TIMESTAMP)
-		   AND (valid_until IS NULL OR valid_until >= CURRENT_TIMESTAMP)`,
-		strings.TrimSpace(req.Code)).Scan(&id, &dtype, &dvalue, &maxDisc,
-		&minBooking, &facilityID, &usageLimit, &usedCount)
-	if errors.Is(err, pgx.ErrNoRows) {
-		response.Error(w, http.StatusNotFound,
-			"That coupon is not valid or has expired", "COUPON_INVALID")
+	c, err := coupon.Load(r.Context(), h.db, req.Code, *req.FacilityID)
+	if err == nil {
+		err = c.Check(req.Amount)
+	}
+	var ce *coupon.Error
+	if errors.As(err, &ce) {
+		response.Error(w, ce.Status, ce.Message, ce.Code)
 		return
 	}
 	if err != nil {
 		httpx.Fail(w, err)
 		return
 	}
-	if usageLimit != nil && usedCount >= *usageLimit {
-		response.Error(w, http.StatusConflict,
-			"This coupon has been fully redeemed", "COUPON_EXHAUSTED")
-		return
-	}
-	if minBooking != nil && req.Amount < *minBooking {
-		response.Error(w, http.StatusBadRequest,
-			"This coupon needs a minimum booking amount", "COUPON_MIN_AMOUNT")
-		return
-	}
-	if facilityID != nil && req.FacilityID != nil && *facilityID != *req.FacilityID {
-		response.Error(w, http.StatusBadRequest,
-			"This coupon does not apply to that venue", "COUPON_WRONG_FACILITY")
-		return
-	}
-
-	discount := dvalue
-	if dtype == "PERCENT" {
-		discount = req.Amount * dvalue / 100
-		if maxDisc != nil && discount > *maxDisc {
-			discount = *maxDisc
-		}
-	}
-	// Never discount below zero: a flat coupon larger than the booking would
-	// otherwise produce a negative total.
-	if discount > req.Amount {
-		discount = req.Amount
-	}
+	discount := c.Discount(req.Amount)
 	response.OK(w, "Coupon applied", map[string]any{
-		"couponId": id, "code": strings.ToUpper(req.Code),
+		"couponId": c.ID, "code": c.Code,
 		"discountAmount": discount, "finalAmount": req.Amount - discount,
 	})
 }

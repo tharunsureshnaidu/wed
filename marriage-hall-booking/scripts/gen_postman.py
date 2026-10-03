@@ -188,6 +188,16 @@ BODIES = {
     "POST /api/v1/coupons/validate": {
         "code": "WED{{runId}}", "amount": 200000, "facilityId": "{{hallId}}",
     },
+    # An all-halls coupon: no facilityId - sending one is a 400.
+    "POST /api/v1/admin/coupons": {
+        "code": "ALLHALLS{{runId}}", "description": "10% off any marriage hall",
+        "discountType": "PERCENT", "discountValue": 10, "maxDiscount": 5000,
+        "usageLimit": 100,
+    },
+    "PUT /api/v1/admin/coupons/{id}": {
+        "code": "ALLHALLS{{runId}}", "discountType": "PERCENT", "discountValue": 12,
+        "maxDiscount": 6000, "usageLimit": 100, "isActive": True,
+    },
     "POST /api/v1/bookings/quote": {
         "hallId": "{{hallId}}",
         "startDate": "2027-06-25", "endDate": "2027-06-26",
@@ -399,6 +409,12 @@ REQUEST_TOKEN = {
     "GET /api/v1/quotes/owner": "ownerToken",
     "GET /api/v1/quotes/owner/stats": "ownerToken",
     "POST /api/v1/refunds/{paymentId}": "ownerToken",
+    # The all-halls coupon routes live in the coupon module, so they land in
+    # the Coupons folder - whose owner token would 403 on every one of them.
+    "POST /api/v1/admin/coupons": "adminToken",
+    "GET /api/v1/admin/coupons": "adminToken",
+    "PUT /api/v1/admin/coupons/{id}": "adminToken",
+    "DELETE /api/v1/admin/coupons/{id}": "adminToken",
 }
 
 NO_AUTH = {
@@ -409,6 +425,8 @@ NO_AUTH = {
     "POST /api/v1/auth/logout", "POST /api/v1/auth/forgot-password",
     "POST /api/v1/auth/reset-password", "POST /api/v1/payments/webhook",
     "GET /health",
+    # Public on purpose: sending no token proves the offers list needs none.
+    "GET /api/v1/coupons/available",
 }
 
 MODULE_FOLDER = {
@@ -624,6 +642,17 @@ REQUEST_ORDER = [
     "DELETE /api/v1/admin/reviews/{id}",
     "DELETE /api/v1/admin/users/{id}",
 
+    # Coupons: create before anything reads, edits or deletes them.
+    "POST /api/v1/coupons",
+    "GET /api/v1/coupons",
+    "PUT /api/v1/coupons/{id}",
+    "POST /api/v1/coupons/validate",
+    "POST /api/v1/admin/coupons",
+    "GET /api/v1/admin/coupons",
+    "PUT /api/v1/admin/coupons/{id}",
+    "GET /api/v1/coupons/available",
+    "DELETE /api/v1/admin/coupons/{id}",
+    "DELETE /api/v1/coupons/{id}",
     # Cleanup folder: children first, parents last.
     "DELETE /api/v1/facilities/{id}/images/{childId}",
     "DELETE /api/v1/facilities/{id}/videos/{childId}",
@@ -892,6 +921,13 @@ def path_var(path, name):
         # facility the generic fallback would bind.
         if path.startswith("/api/v1/admin/reviews"):
             return "adminReviewId"
+        # Without these both fell through to facilityId: PUT and DELETE
+        # /coupons/{id} addressed the hall's UUID, got COUPON_NOT_FOUND, and
+        # no assertion noticed.
+        if path.startswith("/api/v1/admin/coupons"):
+            return "adminCouponId"
+        if path.startswith("/api/v1/coupons"):
+            return "couponId"
         if path.startswith("/api/v1/halls") or "/halls/" in path:
             return "hallId"
         if path.startswith("/api/v1/hotels") or "/hotels/" in path:
@@ -1303,6 +1339,10 @@ if (d && d.items && d.items.length) {
 if (d && d.id) pm.collectionVariables.set("faqId", d.id);""",
     "POST /api/v1/feedback": """const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);""",
+    "POST /api/v1/coupons": """const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("couponId", d.id);""",
+    "POST /api/v1/admin/coupons": """const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("adminCouponId", d.id);""",
     "POST /api/v1/admin/reviews": """const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("adminReviewId", d.id);""",
     "GET /api/v1/admin/reviews": """const d = pm.response.json().data;
@@ -1668,6 +1708,12 @@ def main():
              "description": "Captured from POST /facilities/{id}/faqs."},
             {"key": "feedbackId", "value": "",
              "description": "Captured from POST /feedback."},
+            # Seeded with the nil UUID: if the create fails, an empty value
+            # would collapse the URL to /coupons/ and hit no route at all.
+            {"key": "couponId", "value": "00000000-0000-0000-0000-000000000000",
+             "description": "Captured from POST /coupons."},
+            {"key": "adminCouponId", "value": "00000000-0000-0000-0000-000000000000",
+             "description": "Captured from POST /admin/coupons."},
             {"key": "notificationId", "value": "",
              "description": "Captured from GET /notifications. Empty until a "
                             "notification exists - the feed is populated by the "

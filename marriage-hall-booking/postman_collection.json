@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking (Go)",
-    "description": "177 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 1 hour; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
+    "description": "206 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 1 hour; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -1490,7 +1490,7 @@
       "description": "Vendor onboarding. PUT /vendors/me has to run before the Facilities folder - creating a facility without a vendor business is refused with VENDOR_REQUIRED."
     },
     {
-      "name": "Facilities (unified) (11)",
+      "name": "Facilities (unified) (28)",
       "item": [
         {
           "name": "Create facility (hall or hotel)",
@@ -2280,6 +2280,1000 @@
           ]
         },
         {
+          "name": "GET Admin Privacy Policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "privacy-policy"
+              ]
+            },
+            "description": "Lists facilities (unified) data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Admin Privacy Policy",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "privacy-policy"
+              ]
+            },
+            "description": "Creates or acts on a facilities (unified) record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Privacy Policy",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "privacy-policy"
+              ]
+            },
+            "description": "Updates the facilities (unified) record. Send the full object, not a partial one.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Privacy Policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "privacy-policy"
+              ]
+            },
+            "description": "Lists facilities (unified) data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Privacy Policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "privacy-policy"
+              ]
+            },
+            "description": "Lists facilities (unified) data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Admin Privacy Policy",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "privacy-policy"
+              ]
+            },
+            "description": "Creates or acts on a facilities (unified) record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Privacy Policy",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "privacy-policy"
+              ]
+            },
+            "description": "Updates the facilities (unified) record. Send the full object, not a partial one.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Facilities Compare",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/facilities/compare",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "facilities",
+                "compare"
+              ]
+            },
+            "description": "Creates or acts on a facilities (unified) record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Help Messages",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/help/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "help",
+                "messages"
+              ]
+            },
+            "description": "Creates or acts on a facilities (unified) record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Privacy Policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "privacy-policy"
+              ]
+            },
+            "description": "Lists facilities (unified) data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Super Admin Help Messages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/super-admin/help/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "super-admin",
+                "help",
+                "messages"
+              ]
+            },
+            "description": "Lists facilities (unified) data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Super Admin Help Messages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/super-admin/help/messages/:messageId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "super-admin",
+                "help",
+                "messages",
+                ":messageId"
+              ],
+              "variable": [
+                {
+                  "key": "messageId",
+                  "value": "{{messageId}}"
+                }
+              ]
+            },
+            "description": "Fetches facilities (unified) data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Venues Compare",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/venues/compare",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "venues",
+                "compare"
+              ]
+            },
+            "description": "Lists facilities (unified) data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Venues Compare",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/venues/compare",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "venues",
+                "compare"
+              ]
+            },
+            "description": "Creates or acts on a facilities (unified) record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE Admin Privacy Policy",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "privacy-policy"
+              ]
+            },
+            "description": "Deletes the facilities (unified) record. Soft delete where the row is still referenced.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE Admin Privacy Policy",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "privacy-policy"
+              ]
+            },
+            "description": "Deletes the facilities (unified) record. Soft delete where the row is still referenced.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "DELETE Facilities Faqs",
           "request": {
             "method": "DELETE",
@@ -2305,6 +3299,76 @@
                 {
                   "key": "childId",
                   "value": "{{faqId}}"
+                }
+              ]
+            },
+            "description": "Deletes the facilities (unified) record. Soft delete where the row is still referenced.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE Super Admin Help Messages",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/super-admin/help/messages/:messageId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "super-admin",
+                "help",
+                "messages",
+                ":messageId"
+              ],
+              "variable": [
+                {
+                  "key": "messageId",
+                  "value": "{{messageId}}"
                 }
               ]
             },
@@ -8609,8 +9673,86 @@
       ]
     },
     {
-      "name": "Coupons (6)",
+      "name": "Coupons (11)",
       "item": [
+        {
+          "name": "POST Coupons",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coupons",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coupons"
+              ]
+            },
+            "description": "Creates or acts on a coupon record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"WED{{runId}}\",\n  \"discountType\": \"PERCENT\",\n  \"discountValue\": 15,\n  \"maxDiscount\": 10000,\n  \"minBookingAmount\": 50000,\n  \"facilityId\": \"{{hallId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (d && d.id) pm.collectionVariables.set(\"couponId\", d.id);",
+                  "",
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "GET Coupons",
           "request": {
@@ -8673,9 +9815,9 @@
           ]
         },
         {
-          "name": "POST Coupons",
+          "name": "PUT Coupons",
           "request": {
-            "method": "POST",
+            "method": "PUT",
             "header": [
               {
                 "key": "Content-Type",
@@ -8683,17 +9825,24 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/coupons",
+              "raw": "{{baseUrl}}/api/v1/coupons/:id",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "v1",
-                "coupons"
+                "coupons",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{couponId}}"
+                }
               ]
             },
-            "description": "Creates or acts on a coupon record.",
+            "description": "Updates the coupon record. Send the full object, not a partial one.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -8706,74 +9855,12 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"code\": \"WED{{runId}}\",\n  \"discountType\": \"PERCENT\",\n  \"discountValue\": 15,\n  \"maxDiscount\": 10000,\n  \"minBookingAmount\": 50000,\n  \"facilityId\": \"{{hallId}}\"\n}",
+              "raw": "{\n  \"code\": \"WED{{runId}}\",\n  \"discountType\": \"PERCENT\",\n  \"discountValue\": 20,\n  \"maxDiscount\": 12000,\n  \"isActive\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
-                  "// so the distinction cannot silently regress - the envelope check below passes",
-                  "// either way, which is how every create sat at 200 unnoticed.",
-                  "if (pm.response.code === 201) {",
-                  "    pm.test(\"201 carries a Location header\", function () {",
-                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
-                  "    });",
-                  "}",
-                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "if (ct.indexOf(\"text/html\") !== -1) {",
-                  "    pm.test(\"renders a page\", function () {",
-                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
-                  "    });",
-                  "} else {",
-                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
-                  "        const b = pm.response.json();",
-                  "        pm.expect(b).to.have.property(\"success\");",
-                  "        pm.expect(b).to.have.property(\"message\");",
-                  "        pm.expect(b).to.have.property(\"timestamp\");",
-                  "    });",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GET Coupons Available",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/coupons/available",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "coupons",
-                "available"
-              ]
-            },
-            "description": "Lists coupon data. See the response fields for the full shape.",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{ownerToken}}",
-                  "type": "string"
-                }
-              ]
             }
           },
           "response": [],
@@ -8886,7 +9973,148 @@
           ]
         },
         {
-          "name": "PUT Coupons",
+          "name": "POST Admin Coupons",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/coupons",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "coupons"
+              ]
+            },
+            "description": "Creates or acts on a coupon record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"ALLHALLS{{runId}}\",\n  \"description\": \"10% off any marriage hall\",\n  \"discountType\": \"PERCENT\",\n  \"discountValue\": 10,\n  \"maxDiscount\": 5000,\n  \"usageLimit\": 100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (d && d.id) pm.collectionVariables.set(\"adminCouponId\", d.id);",
+                  "",
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Coupons",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/coupons",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "coupons"
+              ]
+            },
+            "description": "Lists coupon data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Coupons",
           "request": {
             "method": "PUT",
             "header": [
@@ -8896,20 +10124,21 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/coupons/:id",
+              "raw": "{{baseUrl}}/api/v1/admin/coupons/:id",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "v1",
+                "admin",
                 "coupons",
                 ":id"
               ],
               "variable": [
                 {
                   "key": "id",
-                  "value": "{{facilityId}}"
+                  "value": "{{adminCouponId}}"
                 }
               ]
             },
@@ -8919,19 +10148,205 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerToken}}",
+                  "value": "{{adminToken}}",
                   "type": "string"
                 }
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"code\": \"WED{{runId}}\",\n  \"discountType\": \"PERCENT\",\n  \"discountValue\": 20,\n  \"maxDiscount\": 12000,\n  \"isActive\": true\n}",
+              "raw": "{\n  \"code\": \"ALLHALLS{{runId}}\",\n  \"discountType\": \"PERCENT\",\n  \"discountValue\": 12,\n  \"maxDiscount\": 6000,\n  \"usageLimit\": 100,\n  \"isActive\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Coupons Available",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coupons/available",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coupons",
+                "available"
+              ]
+            },
+            "description": "Lists coupon data. See the response fields for the full shape.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Coupons Offers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coupons/offers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coupons",
+                "offers"
+              ]
+            },
+            "description": "Lists coupon data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE Admin Coupons",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/coupons/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "coupons",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{adminCouponId}}"
+                }
+              ]
+            },
+            "description": "Deletes the coupon record. Soft delete where the row is still referenced.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -8986,7 +10401,7 @@
               "variable": [
                 {
                   "key": "id",
-                  "value": "{{facilityId}}"
+                  "value": "{{couponId}}"
                 }
               ]
             },
@@ -9094,7 +10509,7 @@
       ]
     },
     {
-      "name": "Feedback (2)",
+      "name": "Feedback (7)",
       "item": [
         {
           "name": "POST Feedback",
@@ -9192,6 +10607,325 @@
               ]
             },
             "description": "Lists feedback data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Feedback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/feedback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "feedback"
+              ]
+            },
+            "description": "Lists feedback data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Feedback Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/feedback/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "feedback",
+                "summary"
+              ]
+            },
+            "description": "Lists feedback data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Feedback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/feedback/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "feedback",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}"
+                }
+              ]
+            },
+            "description": "Fetches feedback data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Feedback",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/feedback/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "feedback",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}"
+                }
+              ]
+            },
+            "description": "Updates the feedback record. Send the full object, not a partial one.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Feedback",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/feedback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "feedback"
+              ]
+            },
+            "description": "Creates or acts on a feedback record.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -9956,7 +11690,7 @@
       "description": "Venue search plus the trending and recent-search endpoints backed by Redis."
     },
     {
-      "name": "Admin (29)",
+      "name": "Admin (31)",
       "item": [
         {
           "name": "Dashboard",
@@ -11860,6 +13594,138 @@
           ]
         },
         {
+          "name": "GET Admin Feedback Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/feedback/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "feedback",
+                "summary"
+              ]
+            },
+            "description": "Lists admin data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Feedback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/feedback/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "feedback",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{feedbackId}}"
+                }
+              ]
+            },
+            "description": "Fetches admin data. See the response fields for the full shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
+                  "// so the distinction cannot silently regress - the envelope check below passes",
+                  "// either way, which is how every create sat at 200 unnoticed.",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "GET Admin Support",
           "request": {
             "method": "GET",
@@ -13383,6 +15249,16 @@
       "key": "feedbackId",
       "value": "",
       "description": "Captured from POST /feedback."
+    },
+    {
+      "key": "couponId",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "description": "Captured from POST /coupons."
+    },
+    {
+      "key": "adminCouponId",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "description": "Captured from POST /admin/coupons."
     },
     {
       "key": "notificationId",
