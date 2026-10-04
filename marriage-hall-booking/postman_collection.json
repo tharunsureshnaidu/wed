@@ -2417,7 +2417,12 @@
           "name": "POST Admin Privacy Policy",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/admin/privacy-policy",
               "host": [
@@ -2439,6 +2444,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Privacy Policy\",\n  \"content\": \"We collect only what a booking needs: your name, contact and stay dates.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -2478,7 +2492,12 @@
           "name": "PUT Admin Privacy Policy",
           "request": {
             "method": "PUT",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/admin/privacy-policy",
               "host": [
@@ -2500,6 +2519,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Privacy Policy\",\n  \"content\": \"Updated: we now also record the device you signed in from.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -2661,7 +2689,12 @@
           "name": "POST Admin Privacy Policy",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/admin/privacy-policy",
               "host": [
@@ -2684,6 +2717,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Privacy Policy\",\n  \"content\": \"We collect only what a booking needs: your name, contact and stay dates.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -2723,7 +2765,12 @@
           "name": "PUT Admin Privacy Policy",
           "request": {
             "method": "PUT",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/admin/privacy-policy",
               "host": [
@@ -2746,6 +2793,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Privacy Policy\",\n  \"content\": \"Updated: we now also record the device you signed in from.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -2785,7 +2841,12 @@
           "name": "POST Facilities Compare",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/facilities/compare",
               "host": [
@@ -2808,6 +2869,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"venue_ids\": [\n    \"{{hallId}}\",\n    \"{{hotelId}}\"\n  ],\n  \"lat\": 12.9716,\n  \"lng\": 77.5946\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -2847,7 +2917,12 @@
           "name": "POST Help Messages",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/help/messages",
               "host": [
@@ -2870,6 +2945,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"I cannot see the invoice for my booking last week.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -3165,7 +3249,12 @@
           "name": "POST Venues Compare",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/venues/compare",
               "host": [
@@ -3188,6 +3277,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"venue_ids\": [\n    \"{{hallId}}\",\n    \"{{hotelId}}\"\n  ],\n  \"lat\": 12.9716,\n  \"lng\": 77.5946\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -7341,7 +7439,12 @@
           "name": "POST Bookings Confirm",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/bookings/:id/confirm",
               "host": [
@@ -7371,6 +7474,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Confirmed - we will call you to plan the layout.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -10503,7 +10615,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/coupons/available",
+              "raw": "{{baseUrl}}/api/v1/coupons/available?lat=12.9716&lng=77.5946&radiusKm=50",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -10512,6 +10624,20 @@
                 "v1",
                 "coupons",
                 "available"
+              ],
+              "query": [
+                {
+                  "key": "lat",
+                  "value": "12.9716"
+                },
+                {
+                  "key": "lng",
+                  "value": "77.5946"
+                },
+                {
+                  "key": "radiusKm",
+                  "value": "50"
+                }
               ]
             },
             "description": "Lists coupon data. See the response fields for the full shape.",
@@ -11147,7 +11273,12 @@
           "name": "PUT Admin Feedback",
           "request": {
             "method": "PUT",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/admin/feedback/:id",
               "host": [
@@ -11176,6 +11307,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"adminNote\": \"Passed to the payments team; UPI autopay is on the roadmap.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],
@@ -11215,7 +11355,12 @@
           "name": "POST Feedback",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/feedback",
               "host": [
@@ -11236,6 +11381,15 @@
                   "type": "string"
                 }
               ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 4,\n  \"feedback\": \"Booking flow was smooth. UPI autopay would help.\",\n  \"appVersion\": \"1.4.2\",\n  \"platform\": \"ANDROID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           },
           "response": [],

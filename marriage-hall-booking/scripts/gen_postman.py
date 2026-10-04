@@ -16,6 +16,61 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Example bodies, keyed by "METHOD /path". Fields match the Go request structs.
 BODIES = {
+    # --- bodies that were missing, so the request opened empty and the
+    # reader had to go read the Go struct to know what to send ---
+    "POST /api/v1/feedback": {
+        "rating": 4,
+        "feedback": "Booking flow was smooth. UPI autopay would help.",
+        "appVersion": "1.4.2",
+        "platform": "ANDROID",
+    },
+    "PUT /api/v1/admin/feedback/{id}": {
+        "status": "RESOLVED",
+        "adminNote": "Passed to the payments team; UPI autopay is on the roadmap.",
+    },
+    "POST /api/v1/help/messages": {
+        "message": "I cannot see the invoice for my booking last week.",
+    },
+    "POST /api/v1/admin/privacy-policy": {
+        "title": "Privacy Policy",
+        "content": "We collect only what a booking needs: your name, contact and stay dates.",
+    },
+    "PUT /api/v1/admin/privacy-policy": {
+        "title": "Privacy Policy",
+        "content": "Updated: we now also record the device you signed in from.",
+    },
+    # The pre-/v1 aliases are still registered and take the same bodies.
+    "POST /api/feedback": {
+        "rating": 4,
+        "feedback": "Booking flow was smooth. UPI autopay would help.",
+        "appVersion": "1.4.2",
+        "platform": "ANDROID",
+    },
+    "PUT /api/admin/feedback/{id}": {
+        "status": "RESOLVED",
+        "adminNote": "Passed to the payments team; UPI autopay is on the roadmap.",
+    },
+    "POST /api/admin/privacy-policy": {
+        "title": "Privacy Policy",
+        "content": "We collect only what a booking needs: your name, contact and stay dates.",
+    },
+    "PUT /api/admin/privacy-policy": {
+        "title": "Privacy Policy",
+        "content": "Updated: we now also record the device you signed in from.",
+    },
+    "POST /api/v1/facilities/compare": {
+        # venue_ids is the canonical field; venueIds and ids are accepted too.
+        "venue_ids": ["{{hallId}}", "{{hotelId}}"],
+        "lat": 12.9716, "lng": 77.5946,
+    },
+    "POST /api/v1/venues/compare": {
+        "venue_ids": ["{{hallId}}", "{{hotelId}}"],
+        "lat": 12.9716, "lng": 77.5946,
+    },
+    "POST /api/v1/bookings/{id}/confirm": {
+        # Optional on a confirm; the owner may add a note for the customer.
+        "reason": "Confirmed - we will call you to plan the layout.",
+    },
     # Emails and phones come from variables a pre-request script fills with a
     # fresh value each run. Hardcoding them made the collection work exactly
     # once: the second run got 409 EMAIL_EXISTS on the very first request and
@@ -333,6 +388,9 @@ QUERIES = {
     "GET /api/v1/amenities": "",
     "GET /api/v1/bookings": "page=0&size=20",
     "GET /api/v1/bookings/owner": "status=&page=0&size=20",
+    # lat/lng is the caller's live location and beats the saved profile one;
+    # radiusKm is capped at 500. Omitting them shows every live offer.
+    "GET /api/v1/coupons/available": "lat=12.9716&lng=77.5946&radiusKm=50",
     # before is left empty on purpose: it is a keyset cursor the client copies
     # from the previous page's nextBefore, not a value anyone types.
     "GET /api/v1/notifications": "limit=20&unreadOnly=&before=",

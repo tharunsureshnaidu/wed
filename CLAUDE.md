@@ -796,6 +796,28 @@ type. `?entity=`, `?from=`, `?until=`.
 - An unknown `?entity=` is a 400, not an empty result: a typo must not look
   like a quiet month.
 
+### Coupons near the caller
+
+`GET /api/v1/coupons/available?lat=&lng=&radiusKm=` — the signed-in offers
+screen. A venue-scoped coupon is shown only when its venue is within the
+radius (50 km by default).
+
+**The live `lat`/`lng` beats the saved profile location.** It used to read the
+profile only, and just 54 of 559 profiles have coordinates — so for ~90% of
+users the radius filter did nothing. A phone knows where it is now; a profile
+address set once does not.
+
+**A coupon is hidden only when we can prove it is far away.** No coordinates on
+either side means "not stated", never "no" — hiding every offer because a phone
+refused GPS looks like a broken screen. Verified: from Bengaluru only the
+Bengaluru venue's coupon shows, from Delhi only the Delhi one, with no location
+both appear, and a point 20 km north reports `distanceKm: 20.04`.
+
+**`radiusKm` is capped at 500 and an out-of-range value is a 400**, not a quiet
+fallback to 50 km — a silent fallback answers a question the caller did not
+ask, and that is exactly how a `radiusKm=3000` test looked like a broken filter
+until the cap was made loud.
+
 ## Coupon scope: HALL, HOTEL or ALL
 
 `POST /api/v1/admin/coupons` takes `appliesTo`. It was hardcoded to

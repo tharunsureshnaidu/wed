@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -668,7 +669,32 @@ type availableCouponItem struct {
 	DistanceKm       *float64   `json:"distanceKm,omitempty"`
 }
 
-const defaultGeoRadiusMetres = 50000.0 // 50 km
+const (
+	defaultGeoRadiusMetres = 50000.0 // 50 km
+	maxGeoRadiusKm         = 500.0
+)
+
+// optCoord reads an optional coordinate. Out of range, unparseable or exactly
+// zero is treated as absent: 0,0 is Null Island in the Atlantic, which is what
+// an uninitialised location object serialises to far more often than it is a
+// real position.
+func optCoord(r *http.Request, key string) *float64 {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v == 0 {
+		return nil
+	}
+	if key == "lat" && (v < -90 || v > 90) {
+		return nil
+	}
+	if key == "lng" && (v < -180 || v > 180) {
+		return nil
+	}
+	return &v
+}
 
 // listAvailable returns coupon cards for a user's app screen.
 //
@@ -683,30 +709,68 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The live location the app sent wins over the saved profile one. Only 54
+	// of 559 profiles have coordinates, so without this the radius filter does
+	// nothing for most users - and a phone knows where it is right now, which
+	// a stale profile address does not.
+	lat, lng := optCoord(r, "lat"), optCoord(r, "lng")
+	if lat == nil || lng == nil {
+		lat, lng = nil, nil // half a location is a client bug, not a location
+	}
+	// Capped at 500 km: beyond that "nearby offers" is not a screen anyone is
+	// looking at, and an unbounded radius is a cheap way to ask for every
+	// coupon in the table. An out-of-range value is a 400 rather than a silent
+	// fallback to 50 km, which would answer a question the caller did not ask.
+	radius := float64(defaultGeoRadiusMetres)
+	if v := r.URL.Query().Get("radiusKm"); v != "" {
+		km, err := strconv.ParseFloat(v, 64)
+		if err != nil || km <= 0 || km > maxGeoRadiusKm {
+			response.Error(w, http.StatusBadRequest,
+				"radiusKm must be a number between 0 and 500", "VALIDATION_ERROR")
+			return
+		}
+		radius = km * 1000
+	}
+
 	rows, err := h.db.Query(r.Context(), `
+		WITH me AS (
+		    SELECT COALESCE($3::double precision, up.lat) AS lat,
+		           COALESCE($4::double precision, up.lng) AS lng
+		      FROM user_profiles up WHERE up.id = $1
+		    UNION ALL
+		    SELECT $3::double precision, $4::double precision
+		     WHERE NOT EXISTS (SELECT 1 FROM user_profiles WHERE id = $1)
+		    LIMIT 1
+		)
 		SELECT c.id::text, c.code, c.description, c.facility_id::text, COALESCE(f.name, ''),
 		       c.discount_type, c.discount_value, c.max_discount, c.min_booking_amount,
 		       c.valid_from, c.valid_until, c.usage_limit, c.used_count, c.is_active,
 		       CASE
-		         WHEN up.lat IS NOT NULL AND up.lng IS NOT NULL AND f.lat IS NOT NULL AND f.lng IS NOT NULL THEN
-		           earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision), ll_to_earth(up.lat, up.lng)) / 1000.0
-		         ELSE NULL
+		         WHEN me.lat IS NOT NULL AND me.lng IS NOT NULL AND f.lat IS NOT NULL AND f.lng IS NOT NULL THEN
+		           round((earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision),
+		                                 ll_to_earth(me.lat, me.lng)) / 1000.0)::numeric, 2)
 		       END AS distance_km
 		  FROM coupons c
-		  LEFT JOIN user_profiles up ON up.id = $1
+		  CROSS JOIN me
 		  LEFT JOIN facilities f ON f.id = c.facility_id AND f.is_deleted = FALSE
 		 WHERE c.is_active = TRUE
 		   AND c.is_deleted = FALSE
 		   AND (c.valid_from IS NULL OR c.valid_from <= CURRENT_TIMESTAMP)
 		   AND (c.valid_until IS NULL OR c.valid_until >= CURRENT_TIMESTAMP)
 		   AND (c.usage_limit IS NULL OR c.used_count < c.usage_limit)
+		   -- A venue-scoped coupon is hidden only when we can prove it is far
+		   -- away. No location on either side means "not stated", never "no":
+		   -- hiding offers because a phone refused GPS looks like a broken
+		   -- screen, not a filter.
 		   AND (
 		     c.facility_id IS NULL
-		     OR up.lat IS NULL OR up.lng IS NULL
+		     OR me.lat IS NULL OR me.lng IS NULL
 		     OR f.lat IS NULL OR f.lng IS NULL
-		     OR earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision), ll_to_earth(up.lat, up.lng)) <= $2
+		     OR earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision),
+		                       ll_to_earth(me.lat, me.lng)) <= $2
 		   )
-		 ORDER BY c.created_at DESC`, userID, defaultGeoRadiusMetres)
+		 ORDER BY distance_km NULLS LAST, c.created_at DESC`,
+		userID, radius, lat, lng)
 	if err != nil {
 		httpx.Fail(w, err)
 		return
