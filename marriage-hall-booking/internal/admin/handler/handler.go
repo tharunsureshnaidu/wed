@@ -160,7 +160,7 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		 LEFT JOIN roles r ON r.id = ur.role_id
 		 WHERE ($1 = '' OR u.full_name ILIKE '%'||$1||'%' OR u.email ILIKE '%'||$1||'%'
 		        OR u.phone_number ILIKE '%'||$1||'%')
-		 GROUP BY u.id ORDER BY u.id LIMIT $2 OFFSET $3`, search, size, page*size)
+		 GROUP BY u.id ORDER BY u.id LIMIT $2 OFFSET $3`, search, size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
 		return
@@ -542,7 +542,7 @@ func (h *Handler) listVendors(w http.ResponseWriter, r *http.Request) {
 		`SELECT v.id, v.user_id, v.business_name, v.kyc_status, u.email
 		 FROM vendors v JOIN users u ON u.id = v.user_id
 		 WHERE v.is_deleted = FALSE AND ($1 = '' OR v.kyc_status = $1)
-		 ORDER BY v.created_at DESC LIMIT $2 OFFSET $3`, status, size, page*size)
+		 ORDER BY v.created_at DESC LIMIT $2 OFFSET $3`, status, size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
 		return
@@ -641,7 +641,7 @@ func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
 		   AND ($1 = '' OR type = $1)
 		   AND ($2 = '' OR name ILIKE '%'||$2||'%')
 		 ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
-		r.URL.Query().Get("type"), r.URL.Query().Get("search"), size, page*size)
+		r.URL.Query().Get("type"), r.URL.Query().Get("search"), size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
 		return

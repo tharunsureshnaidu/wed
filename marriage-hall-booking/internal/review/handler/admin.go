@@ -88,7 +88,7 @@ func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
 	limitIdx := len(argsRows) + 1
 	offsetIdx := len(argsRows) + 2
 	qRows += fmt.Sprintf(` ORDER BY r.created_at DESC LIMIT $%d OFFSET $%d`, limitIdx, offsetIdx)
-	argsRows = append(argsRows, size, page*size)
+	argsRows = append(argsRows, size, httpx.Offset(page, size))
 
 	rows, err := h.db.Query(r.Context(), qRows, argsRows...)
 	if err != nil {

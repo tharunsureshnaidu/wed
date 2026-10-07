@@ -92,6 +92,39 @@ func RequireAuth(signer *jwt.Signer) func(http.Handler) http.Handler {
 	}
 }
 
+// OptionalAuth attaches user claims to context if a valid Bearer token is
+// present, but allows unauthenticated requests to proceed.
+func OptionalAuth(signer *jwt.Signer) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			header := r.Header.Get("Authorization")
+			if !strings.HasPrefix(header, "Bearer ") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			claims, err := signer.Parse(strings.TrimPrefix(header, "Bearer "))
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			id, err := strconv.ParseInt(claims.UserID, 10, 64)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if revoker.Revoked(r.Context(), id, claims.IssuedMs) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ctx := context.WithValue(r.Context(), ctxUserID, id)
+			ctx = context.WithValue(ctx, ctxRole, claims.Role)
+			ctx = context.WithValue(ctx, ctxRoles, claims.Roles)
+			ctx = context.WithValue(ctx, ctxUsername, claims.Subject)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // RequireRole is the @PreAuthorize equivalent. Must be chained after RequireAuth.
 func RequireRole(roles ...string) func(http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(roles))

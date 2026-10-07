@@ -393,7 +393,7 @@ func (h *Handler) properties(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(),
 		`SELECT id, name, type, status, COALESCE(city,'') FROM facilities
 		 WHERE owner_id = $1 AND is_deleted = FALSE
-		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, userID, size, page*size)
+		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, userID, size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
 		return

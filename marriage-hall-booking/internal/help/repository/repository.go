@@ -11,6 +11,7 @@ import (
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/help/domain"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/help/dto"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 )
 
 var (
@@ -193,11 +194,7 @@ func (r *pgxRepository) List(ctx context.Context, filter dto.HelpMessageFilter) 
 		size = 100
 	}
 
-	page := filter.Page
-	if page < 0 {
-		page = 0
-	}
-	offset := page * size
+	offset := httpx.Offset(filter.Page, size)
 
 	listSQL := fmt.Sprintf(`
 		SELECT m.id::text, m.user_id, m.user_name, m.user_email, m.user_phone, m.message,

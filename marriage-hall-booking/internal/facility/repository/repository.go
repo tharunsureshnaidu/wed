@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 	"math"
 	"strings"
@@ -503,7 +504,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 		return nil, 0, err
 	}
 
-	args = append(args, f.Size, f.Page*f.Size)
+	args = append(args, f.Size, httpx.Offset(f.Page, f.Size))
 	rows, err := r.db.Query(ctx,
 		`SELECT `+facilityCols+facilityFrom+clause+
 			` ORDER BY f.is_featured DESC, f.created_at DESC LIMIT $5 OFFSET $6`, args...)

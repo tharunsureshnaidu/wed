@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -43,3 +44,18 @@ func TestGeoRadiusCap(t *testing.T) {
 			defaultGeoRadiusMetres)
 	}
 }
+
+func TestCouponsAvailableRouteIsRegistered(t *testing.T) {
+	mux := http.NewServeMux()
+	h := &Handler{}
+	h.Register(mux)
+	req := httptest.NewRequest("GET", "/api/v1/coupons/available?lat=12.9716&lng=77.5946&radiusKm=50", nil)
+	handler, pattern := mux.Handler(req)
+	if pattern != "GET /api/v1/coupons/available" {
+		t.Fatalf("expected pattern 'GET /api/v1/coupons/available', got %q", pattern)
+	}
+	if handler == nil {
+		t.Fatal("expected handler to not be nil")
+	}
+}
+

@@ -67,6 +67,18 @@ BODIES = {
         "venue_ids": ["{{hallId}}", "{{hotelId}}"],
         "lat": 12.9716, "lng": 77.5946,
     },
+    "POST /api/v1/bookings/{id}/status": {
+        "type": "confirm",
+        "reason": "Confirmed - our team will call to coordinate layout.",
+    },
+    "PUT /api/v1/bookings/{id}/status": {
+        "type": "confirm",
+        "reason": "Confirmed - our team will call to coordinate layout.",
+    },
+    "PATCH /api/v1/bookings/{id}/status": {
+        "type": "confirm",
+        "reason": "Confirmed - our team will call to coordinate layout.",
+    },
     "POST /api/v1/bookings/{id}/confirm": {
         # Optional on a confirm; the owner may add a note for the customer.
         "reason": "Confirmed - we will call you to plan the layout.",
@@ -481,6 +493,9 @@ REQUEST_TOKEN = {
     # the Coupons folder - whose owner token would 403 on every one of them.
     "GET /api/v1/admin/analytics/decisions": "adminToken",
     "GET /api/v1/bookings/owner": "ownerToken",
+    "POST /api/v1/bookings/{id}/status": "ownerToken",
+    "PUT /api/v1/bookings/{id}/status": "ownerToken",
+    "PATCH /api/v1/bookings/{id}/status": "ownerToken",
     "POST /api/v1/bookings/{id}/confirm": "ownerToken",
     "POST /api/v1/bookings/{id}/reject": "ownerToken",
     "POST /api/v1/admin/coupons": "adminToken",

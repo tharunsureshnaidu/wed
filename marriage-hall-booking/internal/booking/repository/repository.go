@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
@@ -26,11 +27,20 @@ type Repo struct{ db *pgxpool.Pool }
 
 func New(db *pgxpool.Pool) *Repo { return &Repo{db: db} }
 
+type BookingUser struct {
+	UserID      int64   `json:"userId"`
+	Name        string  `json:"name"`
+	Email       *string `json:"email"`
+	PhoneNumber *string `json:"phoneNumber"`
+	Address     *string `json:"address"`
+}
+
 type Booking struct {
-	ID         string    `json:"id"`
-	UserID     int64     `json:"userId"`
-	TargetType string    `json:"targetType"`
-	TargetID   string    `json:"targetId"`
+	ID         string       `json:"id"`
+	UserID     int64        `json:"userId"`
+	User       *BookingUser `json:"user,omitempty"`
+	TargetType string       `json:"targetType"`
+	TargetID   string       `json:"targetId"`
 	CheckIn    time.Time `json:"checkIn"`
 	// StartDate/EndDate are checkIn/checkOut under the names the booking screen
 	// uses; both spellings are returned so neither client has to translate.
@@ -60,20 +70,24 @@ type Booking struct {
 	DiscountAmount float64    `json:"discountAmount"`
 	CouponCode     *string    `json:"couponCode"`
 	PaidAmount     float64    `json:"paidAmount"`
-	Status         string     `json:"status"`
-	IdempotentKey  *string    `json:"idempotentKey,omitempty"`
-	ExpiresAt      *time.Time `json:"expiresAt,omitempty"`
-	GuestName      *string    `json:"guestName,omitempty"`
-	GuestEmail     *string    `json:"guestEmail,omitempty"`
-	GuestPhone     *string    `json:"guestPhone,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
+	Status          string     `json:"status"`
+	RejectionReason *string    `json:"rejectionReason"`
+	IdempotentKey   *string    `json:"idempotentKey,omitempty"`
+	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
+	GuestName       *string    `json:"guestName,omitempty"`
+	GuestEmail      *string    `json:"guestEmail,omitempty"`
+	GuestPhone      *string    `json:"guestPhone,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
 }
 
 const cols = `id, user_id, target_type, target_id, check_in, check_out, slot_type,
 	total_amount, COALESCE(discount_amount,0), COALESCE(paid_amount,0), status,
 	idempotent_key, expires_at, guest_name, guest_email, guest_phone, created_at,
 	to_char(start_time,'HH24:MI'), to_char(end_time,'HH24:MI'), guest_count, event_type,
-	room_count, coupon_code`
+	room_count, coupon_code,
+	CASE WHEN status = 'REJECTED' THEN COALESCE(rejection_reason, (
+		SELECT reason FROM booking_status_history WHERE booking_id = bookings.id AND to_status = 'REJECTED' ORDER BY id DESC LIMIT 1
+	)) ELSE NULL END`
 
 // ownerCols is cols with the bookings alias, for the owner listing's join
 // against facilities. Written out rather than derived: a column added to cols
@@ -83,14 +97,18 @@ const ownerCols = `b.id, b.user_id, b.target_type, b.target_id, b.check_in, b.ch
 	b.total_amount, COALESCE(b.discount_amount,0), COALESCE(b.paid_amount,0), b.status,
 	b.idempotent_key, b.expires_at, b.guest_name, b.guest_email, b.guest_phone, b.created_at,
 	to_char(b.start_time,'HH24:MI'), to_char(b.end_time,'HH24:MI'), b.guest_count, b.event_type,
-	b.room_count, b.coupon_code`
+	b.room_count, b.coupon_code,
+	CASE WHEN b.status = 'REJECTED' THEN COALESCE(b.rejection_reason, (
+		SELECT reason FROM booking_status_history WHERE booking_id = b.id AND to_status = 'REJECTED' ORDER BY id DESC LIMIT 1
+	)) ELSE NULL END`
 
 func scan(row pgx.Row) (*Booking, error) {
 	var b Booking
 	err := row.Scan(&b.ID, &b.UserID, &b.TargetType, &b.TargetID, &b.CheckIn, &b.CheckOut,
 		&b.SlotType, &b.TotalAmount, &b.DiscountAmount, &b.PaidAmount, &b.Status,
 		&b.IdempotentKey, &b.ExpiresAt, &b.GuestName, &b.GuestEmail, &b.GuestPhone, &b.CreatedAt,
-		&b.StartTime, &b.EndTime, &b.GuestCount, &b.EventType, &b.RoomCount, &b.CouponCode)
+		&b.StartTime, &b.EndTime, &b.GuestCount, &b.EventType, &b.RoomCount, &b.CouponCode,
+		&b.RejectionReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -388,10 +406,18 @@ func (r *Repo) SetStatus(ctx context.Context, id, to, reason string, from ...str
 		return err
 	}
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE bookings SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		id, to); err != nil {
-		return err
+	if to == "REJECTED" {
+		if _, err := tx.Exec(ctx,
+			`UPDATE bookings SET status = $2, rejection_reason = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+			id, to, reason); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.Exec(ctx,
+			`UPDATE bookings SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+			id, to); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO booking_status_history (booking_id, from_status, to_status, reason)
@@ -478,7 +504,7 @@ func (r *Repo) ListForUser(ctx context.Context, userID int64, page, size int) ([
 	}
 	rows, err := r.db.Query(ctx,
 		`SELECT `+cols+` FROM bookings WHERE user_id = $1 AND is_deleted = FALSE
-		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, userID, size, page*size)
+		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, userID, size, httpx.Offset(page, size))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -522,7 +548,7 @@ func (r *Repo) ListForOwner(ctx context.Context, ownerID int64, status string, p
 		  WHERE f.owner_id = $1 AND b.is_deleted = FALSE
 		    AND ($2 = '' OR b.status = $2)
 		  ORDER BY b.created_at DESC LIMIT $3 OFFSET $4`,
-		ownerID, status, size, page*size)
+		ownerID, status, size, httpx.Offset(page, size))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -535,7 +561,15 @@ func (r *Repo) ListForOwner(ctx context.Context, ownerID int64, status string, p
 		}
 		out = append(out, *b)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	ptrs := make([]*Booking, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	_ = r.EnrichUsers(ctx, ptrs)
+	return out, total, nil
 }
 
 // ExpireHolds releases bookings whose payment window elapsed. Returns the ids
@@ -667,3 +701,91 @@ func (r *Repo) Enrich(ctx context.Context, userID int64, bookings []*Booking) er
 	}
 	return nil
 }
+
+// EnrichUsers attaches booker details (name, email, phone, address) to each
+// booking. Used on the owner's booking feed so venue owners see who booked
+// their venue without requiring additional API calls.
+func (r *Repo) EnrichUsers(ctx context.Context, bookings []*Booking) error {
+	if len(bookings) == 0 {
+		return nil
+	}
+	userIDs := make([]int64, 0, len(bookings))
+	seen := map[int64]bool{}
+	for _, b := range bookings {
+		if b != nil && b.UserID > 0 && !seen[b.UserID] {
+			seen[b.UserID] = true
+			userIDs = append(userIDs, b.UserID)
+		}
+	}
+	if len(userIDs) == 0 {
+		return nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT u.id,
+		       COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''), 'User') AS name,
+		       u.email,
+		       u.phone_number,
+		       (SELECT NULLIF(CONCAT_WS(', ',
+		           NULLIF(TRIM(a.street), ''),
+		           NULLIF(TRIM(a.city), ''),
+		           NULLIF(TRIM(a.state), ''),
+		           NULLIF(TRIM(a.zip_code), ''),
+		           NULLIF(TRIM(a.country), '')
+		       ), '')
+		        FROM addresses a
+		        WHERE a.user_profile_id = u.id AND a.is_deleted = FALSE
+		        ORDER BY a.id LIMIT 1) AS address
+		  FROM users u
+		  LEFT JOIN user_profiles p ON p.id = u.id
+		 WHERE u.id = ANY($1)`, userIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	byID := map[int64]BookingUser{}
+	for rows.Next() {
+		var u BookingUser
+		if err := rows.Scan(&u.UserID, &u.Name, &u.Email, &u.PhoneNumber, &u.Address); err != nil {
+			return err
+		}
+		byID[u.UserID] = u
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, b := range bookings {
+		if b == nil {
+			continue
+		}
+		if u, ok := byID[b.UserID]; ok {
+			userCopy := u
+			if (userCopy.Name == "" || userCopy.Name == "User") && b.GuestName != nil && *b.GuestName != "" {
+				userCopy.Name = *b.GuestName
+			}
+			if userCopy.Email == nil && b.GuestEmail != nil {
+				userCopy.Email = b.GuestEmail
+			}
+			if userCopy.PhoneNumber == nil && b.GuestPhone != nil {
+				userCopy.PhoneNumber = b.GuestPhone
+			}
+			b.User = &userCopy
+		} else {
+			name := "User"
+			if b.GuestName != nil && *b.GuestName != "" {
+				name = *b.GuestName
+			}
+			b.User = &BookingUser{
+				UserID:      b.UserID,
+				Name:        name,
+				Email:       b.GuestEmail,
+				PhoneNumber: b.GuestPhone,
+				Address:     nil,
+			}
+		}
+	}
+	return nil
+}
+

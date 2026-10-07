@@ -167,7 +167,7 @@ func (h *Handler) listForFacility(w http.ResponseWriter, r *http.Request) {
 		`SELECT r.id, r.user_id, u.full_name, r.rating, r.title, r.comment, r.created_at
 		 FROM reviews r JOIN users u ON u.id = r.user_id
 		 WHERE r.facility_id = $1 AND r.is_deleted = FALSE AND r.status = 'APPROVED'
-		 ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`, facilityID, size, page*size)
+		 ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`, facilityID, size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
 		return

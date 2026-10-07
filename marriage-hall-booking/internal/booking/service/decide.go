@@ -79,6 +79,7 @@ func (s *Service) Decide(ctx context.Context, bookingID string, actorID int64, i
 	if err != nil {
 		return nil, err
 	}
+	_ = s.repo.EnrichUsers(ctx, []*repository.Booking{b})
 	if s.OnBookingDecided != nil {
 		s.OnBookingDecided(ctx, b, confirm, reason)
 	}
