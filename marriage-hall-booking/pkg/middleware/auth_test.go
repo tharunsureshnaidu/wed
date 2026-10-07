@@ -70,3 +70,48 @@ func TestMissingTokenDenied(t *testing.T) {
 		t.Fatalf("want 401 without a token, got %d", rec.Code)
 	}
 }
+
+func TestOptionalAuthWithoutTokenProceeds(t *testing.T) {
+	s, _ := jwt.NewSigner(secret, time.Minute)
+	var gotUserID int64
+	h := OptionalAuth(s)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, _ := UserID(r.Context())
+		gotUserID = id
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/coupons/available", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 without token, got %d", rec.Code)
+	}
+	if gotUserID != 0 {
+		t.Fatalf("want userID 0, got %d", gotUserID)
+	}
+}
+
+func TestOptionalAuthWithTokenAttachesUser(t *testing.T) {
+	s, _ := jwt.NewSigner(secret, time.Minute)
+	tok, err := s.Generate("u@example.com", "42", "ROLE_CUSTOMER")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotUserID int64
+	h := OptionalAuth(s)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, _ := UserID(r.Context())
+		gotUserID = id
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/coupons/available", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 with token, got %d", rec.Code)
+	}
+	if gotUserID != 42 {
+		t.Fatalf("want userID 42, got %d", gotUserID)
+	}
+}
+

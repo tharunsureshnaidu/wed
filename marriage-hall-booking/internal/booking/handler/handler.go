@@ -48,6 +48,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 			middleware.RequireRole(domain.RoleHallOwner, domain.RoleAdmin))
 	}
 	mux.Handle("GET /api/v1/bookings/owner", owner(h.ownerBookings))
+	mux.Handle("POST /api/v1/bookings/{id}/status", owner(h.status))
+	mux.Handle("PUT /api/v1/bookings/{id}/status", owner(h.status))
+	mux.Handle("PATCH /api/v1/bookings/{id}/status", owner(h.status))
 	mux.Handle("POST /api/v1/bookings/{id}/confirm", owner(h.confirm))
 	mux.Handle("POST /api/v1/bookings/{id}/reject", owner(h.reject))
 	h.registerQuote(mux)

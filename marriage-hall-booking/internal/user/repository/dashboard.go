@@ -40,18 +40,24 @@ type PendingActions struct {
 }
 
 type UpcomingBooking struct {
-	ID         string     `json:"id"`
-	Status     string     `json:"status"`
-	StartDate  *time.Time `json:"startDate"`
-	EndDate    *time.Time `json:"endDate"`
-	EventType  *string    `json:"eventType"`
-	GuestCount *int       `json:"guestCount"`
-	Total      float64    `json:"totalAmount"`
-	Paid       float64    `json:"paidAmount"`
-	FacilityID string     `json:"facilityId"`
-	Facility   string     `json:"facilityName"`
-	City       *string    `json:"city"`
-	CoverImage *string    `json:"coverImage"`
+	ID              string     `json:"id"`
+	UserID          int64      `json:"userId"`
+	TargetType      string     `json:"targetType"`
+	TargetID        string     `json:"targetId"`
+	StartDate       *time.Time `json:"startDate"`
+	EndDate         *time.Time `json:"endDate"`
+	StartTime       *string    `json:"startTime"`
+	EndTime         *string    `json:"endTime"`
+	EventType       *string    `json:"eventType"`
+	GuestCount      *int       `json:"guestCount"`
+	Total           float64    `json:"totalAmount"`
+	Paid            float64    `json:"paidAmount"`
+	Status          string     `json:"status"`
+	RejectionReason *string    `json:"rejectionReason"`
+	FacilityID      string     `json:"facilityId"`
+	Facility        string     `json:"facilityName"`
+	City            *string    `json:"city"`
+	CoverImage      *string    `json:"coverImage"`
 }
 
 type NearbyVenue struct {
@@ -131,25 +137,35 @@ func (r *Repo) Dashboard(ctx context.Context, userID int64, lat, lng *float64) (
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT b.id::text, b.status, b.check_in, b.check_out, b.event_type,
-		       b.guest_count, b.total_amount, b.paid_amount,
+		SELECT b.id::text, b.user_id, b.target_type, b.target_id::text,
+		       b.check_in, b.check_out,
+		       to_char(b.start_time, 'HH24:MI'), to_char(b.end_time, 'HH24:MI'),
+		       b.event_type, b.guest_count, b.total_amount, b.paid_amount,
+		       b.status,
+		       CASE WHEN b.status = 'REJECTED' THEN COALESCE(b.rejection_reason, (
+		           SELECT reason FROM booking_status_history
+		            WHERE booking_id = b.id AND to_status = 'REJECTED'
+		            ORDER BY id DESC LIMIT 1
+		       )) ELSE NULL END AS rejection_reason,
 		       f.id::text, f.name, f.city,
 		       (SELECT url FROM facility_images WHERE facility_id = f.id
 		         ORDER BY sort_order LIMIT 1)
 		  FROM bookings b JOIN facilities f ON f.id = b.target_id
 		 WHERE b.user_id = $1 AND b.is_deleted = FALSE
-		   AND b.status IN ('PENDING','CONFIRMED')
-		   AND b.check_out >= CURRENT_DATE
+		   AND b.status IN ('PENDING', 'CONFIRMED', 'REJECTED')
+		   AND (b.check_out >= CURRENT_DATE OR b.status = 'REJECTED')
 		 ORDER BY b.check_in
-		 LIMIT 5`, userID)
+		 LIMIT 10`, userID)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var u UpcomingBooking
-		if err := rows.Scan(&u.ID, &u.Status, &u.StartDate, &u.EndDate, &u.EventType,
-			&u.GuestCount, &u.Total, &u.Paid, &u.FacilityID, &u.Facility,
-			&u.City, &u.CoverImage); err != nil {
+		if err := rows.Scan(&u.ID, &u.UserID, &u.TargetType, &u.TargetID,
+			&u.StartDate, &u.EndDate, &u.StartTime, &u.EndTime,
+			&u.EventType, &u.GuestCount, &u.Total, &u.Paid,
+			&u.Status, &u.RejectionReason,
+			&u.FacilityID, &u.Facility, &u.City, &u.CoverImage); err != nil {
 			rows.Close()
 			return nil, err
 		}

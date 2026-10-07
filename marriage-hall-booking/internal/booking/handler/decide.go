@@ -10,32 +10,79 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 )
 
-// decideReq carries the owner's reason. Optional on a confirm, and worth
-// asking for on a reject: "the venue said no" with no explanation is the
-// message the customer is left with otherwise.
+// decideReq carries the owner's decision (type: "confirm" | "reject") and reason.
 type decideReq struct {
-	Reason string `json:"reason"`
+	Type            string `json:"type"`                      // "confirm" or "reject"
+	Action          string `json:"action,omitempty"`          // alias for type
+	Status          string `json:"status,omitempty"`          // alias for type
+	Reason          string `json:"reason,omitempty"`
+	RejectionReason string `json:"rejectionReason,omitempty"` // alias for reason
 }
 
-func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) { h.decide(w, r, true) }
-func (h *Handler) reject(w http.ResponseWriter, r *http.Request)  { h.decide(w, r, false) }
+// status is POST/PUT/PATCH /api/v1/bookings/{id}/status - single unified endpoint
+// to confirm or reject a booking based on the "type" field in the body.
+func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
+	var req decideReq
+	if !httpx.Decode(w, r, &req) {
+		return
+	}
+	confirm, ok := parseDecisionType(req.Type, req.Action, req.Status)
+	if !ok {
+		response.Error(w, http.StatusBadRequest,
+			"type must be 'confirm' or 'reject'", "VALIDATION_ERROR")
+		return
+	}
+	reason := req.Reason
+	if reason == "" && req.RejectionReason != "" {
+		reason = req.RejectionReason
+	}
+	h.decide(w, r, confirm, reason)
+}
 
-func (h *Handler) decide(w http.ResponseWriter, r *http.Request, confirm bool) {
+func parseDecisionType(typeVal, actionVal, statusVal string) (bool, bool) {
+	candidates := []string{typeVal, actionVal, statusVal}
+	for _, c := range candidates {
+		switch strings.ToLower(strings.TrimSpace(c)) {
+		case "confirm", "confirmed":
+			return true, true
+		case "reject", "rejected":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {
+	var req decideReq
+	if r.ContentLength > 0 && !httpx.Decode(w, r, &req) {
+		return
+	}
+	h.decide(w, r, true, req.Reason)
+}
+
+func (h *Handler) reject(w http.ResponseWriter, r *http.Request) {
+	var req decideReq
+	if r.ContentLength > 0 && !httpx.Decode(w, r, &req) {
+		return
+	}
+	reason := req.Reason
+	if reason == "" && req.RejectionReason != "" {
+		reason = req.RejectionReason
+	}
+	h.decide(w, r, false, reason)
+}
+
+func (h *Handler) decide(w http.ResponseWriter, r *http.Request, confirm bool, reason string) {
 	id := r.PathValue("id")
 	if !httpx.ValidUUID(id) {
 		response.Error(w, http.StatusBadRequest, "Invalid booking id", "VALIDATION_ERROR")
-		return
-	}
-	var req decideReq
-	// A body is optional: confirming needs nothing more than the decision.
-	if r.ContentLength > 0 && !httpx.Decode(w, r, &req) {
 		return
 	}
 
 	actorID, _ := middleware.UserID(r.Context())
 	b, err := h.svc.Decide(r.Context(), id, actorID,
 		middleware.HasRole(r.Context(), domain.RoleAdmin),
-		confirm, strings.TrimSpace(req.Reason))
+		confirm, strings.TrimSpace(reason))
 	if err != nil {
 		httpx.Fail(w, err)
 		return

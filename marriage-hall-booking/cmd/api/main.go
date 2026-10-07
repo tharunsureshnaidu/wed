@@ -38,6 +38,9 @@ import (
 	privacypolicyrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/privacypolicy/repository"
 	privacypolicysvc "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/privacypolicy/service"
 	quotehandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/quote/handler"
+	recommendationhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/recommendation/handler"
+	recommendationrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/recommendation/repository"
+	recommendationsvc "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/recommendation/service"
 	reviewhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/review/handler"
 	searchhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/search/handler"
 	supporthandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/support/handler"
@@ -269,6 +272,7 @@ func main() {
 	reviews.RegisterAdmin(mux)
 	searchhandler.New(db, rdb, signer).Register(mux)
 	supporthandler.New(db, signer).Register(mux)
+	recommendationhandler.New(recommendationsvc.New(recommendationrepo.New(db))).Register(mux)
 
 	// App feedback. The ops notification is a hook so this package never
 	// imports notification, and it fires after the insert commits.

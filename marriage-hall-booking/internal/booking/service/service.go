@@ -362,6 +362,7 @@ func (s *Service) Get(ctx context.Context, id string, userID int64, isAdmin bool
 		logger.Error("bookings: enrich detail", "bookingId", id, logger.Err(err))
 	}
 	// A booking is readable by the customer who made it, the facility owner, or an admin.
+	isOwnerOrAdmin := isAdmin
 	if b.UserID != userID && !isAdmin {
 		var owner int64
 		if err := s.db.QueryRow(ctx,
@@ -371,6 +372,10 @@ func (s *Service) Get(ctx context.Context, id string, userID int64, isAdmin bool
 		if owner != userID {
 			return nil, apperr.Forbidden("NOT_BOOKING_OWNER", "You cannot view this booking")
 		}
+		isOwnerOrAdmin = true
+	}
+	if isOwnerOrAdmin {
+		_ = s.repo.EnrichUsers(ctx, []*repository.Booking{b})
 	}
 	return b, nil
 }
