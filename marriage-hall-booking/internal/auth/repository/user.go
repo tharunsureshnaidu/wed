@@ -16,13 +16,13 @@ type Repo struct{ db *pgxpool.Pool }
 
 func New(db *pgxpool.Pool) *Repo { return &Repo{db: db} }
 
-const userCols = `u.id, u.full_name, u.email, u.phone_number, u.password_hash,
+const userCols = `u.id, u.full_name, u.email, u.phone_number, u.address, u.password_hash,
 	u.is_email_verified, u.is_phone_verified, u.status, u.failed_login_attempts,
 	u.account_locked_until, u.last_login_at, u.is_deleted`
 
 func scanUser(row pgx.Row) (*domain.User, error) {
 	var u domain.User
-	err := row.Scan(&u.ID, &u.FullName, &u.Email, &u.PhoneNumber, &u.PasswordHash,
+	err := row.Scan(&u.ID, &u.FullName, &u.Email, &u.PhoneNumber, &u.Address, &u.PasswordHash,
 		&u.IsEmailVerified, &u.IsPhoneVerified, &u.Status, &u.FailedLoginAttempts,
 		&u.AccountLockedUntil, &u.LastLoginAt, &u.IsDeleted)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -94,9 +94,9 @@ func (r *Repo) CreateUser(ctx context.Context, u *domain.User, roleName string) 
 
 	var id int64
 	err = tx.QueryRow(ctx,
-		`INSERT INTO users (full_name, email, phone_number, password_hash, status)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		u.FullName, u.Email, u.PhoneNumber, u.PasswordHash, u.Status).Scan(&id)
+		`INSERT INTO users (full_name, email, phone_number, address, password_hash, status)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		u.FullName, u.Email, u.PhoneNumber, u.Address, u.PasswordHash, u.Status).Scan(&id)
 	if err != nil {
 		return 0, err
 	}

@@ -59,6 +59,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	}
 
 	// Public reads.
+	mux.HandleFunc("GET /api/v1/venues", h.listVenues)
+	mux.HandleFunc("GET /api/v1/venues/{id}", h.get)
 	mux.HandleFunc("GET /api/v1/facilities", h.list)
 	// Side-by-side comparison. Public, like the other facility reads: comparing
 	// venues is what a visitor does before signing up. The literal path beats
@@ -380,6 +382,45 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request)      { h.listWithType(w, r, "") }
 func (h *Handler) listHalls(w http.ResponseWriter, r *http.Request) { h.listWithType(w, r, TypeHall) }
+
+func (h *Handler) listVenues(w http.ResponseWriter, r *http.Request) {
+	rawType := strings.TrimSpace(r.URL.Query().Get("type"))
+	var dbType string
+	if rawType != "" {
+		upper := strings.ToUpper(rawType)
+		if upper != "HALL" && upper != "HOTEL" {
+			response.Error(w, http.StatusBadRequest, "Invalid type. Supported types are HALL and HOTEL.", "VALIDATION_ERROR")
+			return
+		}
+		dbType = venuetype.Stored(upper)
+	}
+
+	page, size := httpx.Page(r)
+	items, total, err := h.repo.List(r.Context(), repository.ListFilter{
+		Type:   dbType,
+		Search: r.URL.Query().Get("search"),
+		City:   r.URL.Query().Get("city"),
+		Page:   page,
+		Size:   size,
+	})
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	if here := parseUserLocation(r); here.OK {
+		for i := range items {
+			items[i].DistanceKm = here.distanceFrom(items[i].Lat, items[i].Lng)
+		}
+	}
+
+	venues := make([]repository.VenueResponse, len(items))
+	for i, item := range items {
+		venues[i] = item.ToVenueResponse()
+	}
+
+	response.OK(w, "Venues retrieved successfully", httpx.NewPaged(venues, page, size, total))
+}
 
 func (h *Handler) listWithType(w http.ResponseWriter, r *http.Request, forced string) {
 	page, size := httpx.Page(r)
