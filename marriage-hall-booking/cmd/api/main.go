@@ -119,9 +119,17 @@ func main() {
 	otpSvc := authservice.NewOtpService(authRepo, cfg.LogOtpCodes)
 	tokenSvc := authservice.NewTokenService(authRepo, signer, cfg.JWTRefreshExpiry, revoker)
 	authSvc := authservice.NewAuthService(authRepo, otpSvc, tokenSvc, cfg.ResetPasswordURL)
-	authSvc.OnUserCreated = func(ctx context.Context, userID int64, first string, last *string) error {
+	authSvc.OnUserCreated = func(ctx context.Context, userID int64, first string, last *string, addr *authservice.Address) error {
 		if err := profiles.EnsureProfile(ctx, userID, first, last); err != nil {
 			return err
+		}
+		if addr != nil {
+			if err := profiles.AddAddress(ctx, userID, userrepo.Address{
+				Street: addr.Street, City: addr.City, State: addr.State,
+				ZipCode: addr.ZipCode, Country: addr.Country,
+			}); err != nil {
+				return err
+			}
 		}
 		publisher.Publish(ctx, events.TopicUserRegistered, strconv.FormatInt(userID, 10),
 			map[string]any{"userId": userID, "firstName": first})
@@ -133,10 +141,10 @@ func main() {
 	//
 	// ON CONFLICT DO NOTHING because user_id is unique: a retried registration
 	// must not fail on a row that already exists.
-	authSvc.OnVendorCreated = func(ctx context.Context, userID int64, businessName string) error {
+	authSvc.OnVendorCreated = func(ctx context.Context, userID int64, businessName string, businessAddress *string) error {
 		_, err := db.Exec(ctx,
-			`INSERT INTO vendors (user_id, business_name)
-			 VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`, userID, businessName)
+			`INSERT INTO vendors (user_id, business_name, business_address)
+			 VALUES ($1, $2, $3) ON CONFLICT (user_id) DO NOTHING`, userID, businessName, businessAddress)
 		return err
 	}
 

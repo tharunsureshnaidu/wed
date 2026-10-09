@@ -88,6 +88,7 @@ surfaced when a cleanup failed.
 | Endpoint | Correct fields |
 |---|---|
 | `POST /auth/register` | `fullName`, `email`, `phoneNumber`, `password` — **not** `name` |
+| `POST /auth/register`, `/register/vendor` | optional `address: {street, city, state, zipCode, country}`, each part optional — saved to `addresses`; a vendor's also seeds `vendors.business_address` |
 | `POST /auth/register/verify-email` | `target`, `otpCode` — **not** `identifier`/`otp` |
 | `POST /auth/login` | `identifier`, `password` |
 | `POST /bookings/halls` | `hallId`, `startDate`, `endDate`, `startTime`, `endTime`, `guestCount`, `roomCount` (optional), `eventType`, `idempotentKey` |
@@ -255,6 +256,25 @@ Rate button that 403s: a `CONFIRMED`/`COMPLETED` stay, and reviews are unique
 per **(user, facility)** — not per booking, so a second booking at the same
 venue is not a second chance to review it.
 
+## Venue search
+
+`/search/venues`, its autocomplete/suggestions, and `/halls` / `/facilities`
+`?search=` all match through **`pkg/venuesearch`**. Never write a fresh
+`name ILIKE '%q%'` for venue text: that was the old match, and `palce` or
+`grnd palace` returned 0 results.
+
+- **Fuzzy on name + city, substring only on description.** `word_similarity`
+  over `name||' '||city` at **0.4**, measured on live data: real typos score
+  0.43-0.83, the closest unrelated venue 0.33. A trigram score over a paragraph
+  matches nearly anything, so descriptions stay `ILIKE`.
+- **Search text with no explicit `sort` ranks best match first**; an explicit
+  sort still wins.
+- **Postgres, not Elasticsearch, deliberately.** 52 live venues; ES would mean a
+  JVM service, a sync pipeline for every facility write, and drift handling, for
+  what pg_trgm does in one file. Revisit past ~50k venues: the per-row score has
+  no index (see the `ponytail:` note in the package).
+- Not handled: synonyms and renames (`banglore` -> Bengaluru scores 0.11).
+
 ## Search history
 
 `GET /api/v1/search/recent` (and `/recently-viewed`) were already built and
@@ -341,7 +361,9 @@ and each fails *silently* — the run stays green while testing nothing:
   (alias)` replayed the token the request before it had already burnt. Replay is
   the theft signal, so the API revoked every session for that user and 14
   assertions failed across Bookings, Quotes and Refunds. The API was correct
-  throughout; the collection was replaying.
+  throughout; the collection was replaying. The alias
+  (`POST /auth/login/refresh`) is now in `SKIP_ROUTES`: the route is still
+  served, but the collection refreshes once.
 
 ## My reviews and app feedback
 

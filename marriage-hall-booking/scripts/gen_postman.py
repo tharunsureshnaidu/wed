@@ -78,10 +78,16 @@ BODIES = {
     "POST /api/v1/auth/register": {
         "fullName": "Priya Sharma", "email": "{{customerEmail}}",
         "phoneNumber": "{{customerPhone}}", "password": "SecurePass@123",
+        # Optional, and so is every part of it.
+        "address": {"street": "12 MG Road", "city": "Bengaluru", "state": "Karnataka",
+                    "zipCode": "560001", "country": "India"},
     },
     "POST /api/v1/auth/register/vendor": {
         "fullName": "Rajesh Kumar", "email": "{{ownerEmail}}",
         "phoneNumber": "{{ownerPhone}}", "password": "SecurePass@123",
+        # Also seeds the vendor's business_address.
+        "address": {"street": "45 Brigade Road", "city": "Bengaluru", "state": "Karnataka",
+                    "zipCode": "560025", "country": "India"},
     },
     "POST /api/v1/auth/register/verify-email": {
         "target": "{{customerEmail}}", "otpCode": "{{otp}}",
@@ -96,7 +102,6 @@ BODIES = {
         "target": "{{customerEmail}}", "otpType": "EMAIL_VERIFICATION",
     },
     "POST /api/v1/auth/refresh": {"refreshToken": "{{refreshToken}}"},
-    "POST /api/v1/auth/login/refresh": {"refreshToken": "{{refreshToken}}"},
     "POST /api/v1/auth/logout": {"refreshToken": "{{refreshToken}}"},
     "POST /api/v1/auth/forgot-password": {"identifier": "{{customerEmail}}"},
     "POST /api/v1/auth/reset-password": {
@@ -493,7 +498,7 @@ NO_AUTH = {
     "POST /api/v1/auth/register", "POST /api/v1/auth/register/vendor",
     "POST /api/v1/auth/register/verify-email", "POST /api/v1/auth/register/verify-phone",
     "POST /api/v1/auth/login", "POST /api/v1/auth/otp/resend",
-    "POST /api/v1/auth/refresh", "POST /api/v1/auth/login/refresh",
+    "POST /api/v1/auth/refresh",
     "POST /api/v1/auth/logout", "POST /api/v1/auth/forgot-password",
     "POST /api/v1/auth/reset-password", "POST /api/v1/payments/webhook",
     "GET /health",
@@ -597,7 +602,6 @@ REQUEST_ORDER = [
     "POST /api/v1/auth/login",
     "GET /api/v1/auth/me",
     "POST /api/v1/auth/refresh",
-    "POST /api/v1/auth/login/refresh",
     "POST /api/v1/auth/forgot-password",
     "POST /api/v1/auth/reset-password",
 
@@ -785,7 +789,6 @@ NAMES = {
     "POST /api/v1/auth/login": "Login",
     "GET /api/v1/auth/me": "Me (from token)",
     "POST /api/v1/auth/refresh": "Refresh token",
-    "POST /api/v1/auth/login/refresh": "Refresh token (alias)",
     "POST /api/v1/auth/forgot-password": "Forgot password",
     "POST /api/v1/auth/reset-password": "Reset password",
     "POST /api/v1/auth/logout": "Logout",
@@ -955,7 +958,13 @@ def folder_for(module, method, path):
 
 # Not API endpoints: served files and the health probe's static handler have no
 # JSON envelope, so including them makes the collection's shared test fail.
-SKIP_ROUTES = {"GET /uploads/"}
+SKIP_ROUTES = {
+    "GET /uploads/",
+    # Same handler as POST /api/v1/auth/refresh under the old spec path. Still
+    # served for deployed clients, but a second refresh in the run only adds a
+    # chance to replay a rotated token, which revokes every session.
+    "POST /api/v1/auth/login/refresh",
+}
 
 
 def collect_routes():
@@ -1082,10 +1091,15 @@ DESCRIPTIONS = {
     "POST /api/v1/auth/register": "Step 1 of the customer signup. Creates the account in "
         "PENDING_VERIFICATION and sends an email OTP. No tokens yet - verify first.\n\n"
         "With LOG_OTP_CODES=true the code is written to logs/app.log instead of being "
-        "emailed; `make otp` prints the most recent ones.",
+        "emailed; `make otp` prints the most recent ones.\n\n"
+        "`address` is optional, and so is each part of it. Blank parts are dropped, and "
+        "an address with nothing left saves no row. When given, it appears in "
+        "GET /api/v1/users/me under `addresses`.",
     "POST /api/v1/auth/register/vendor": "Same as register, but the account also gets "
         "ROLE_HALL_OWNER. Use this one if you intend to list a property - a plain customer "
-        "cannot create facilities.",
+        "cannot create facilities.\n\n"
+        "The optional `address` is saved as for a customer and also seeds the vendor's "
+        "`businessAddress` on one line; PUT /api/v1/vendors/me changes it later.",
     "POST /api/v1/auth/register/verify-email": "Step 2, and where you actually get tokens - "
         "no separate login call is needed straight after. Captures accessToken, refreshToken "
         "and userId into collection variables; a vendor signup also fills ownerToken.",
@@ -1458,23 +1472,6 @@ if (d) {
   // Also the environment scope: the runner seeds these with --env-var, and an
   // environment variable shadows a collection one, so a collection-only write
   // would never be seen by {{refreshToken}}.
-  pm.environment.set("accessToken", d.accessToken);
-  pm.environment.set("refreshToken", d.refreshToken);
-}""",
-    # The alias is the same endpoint under an older path. Refresh tokens ROTATE,
-    # so by the time this runs the token the runner seeded is already burnt, and
-    # replaying one is the theft signal - the API revokes every session for that
-    # user and the rest of the run 401s. The API is right; the collection was
-    # replaying.
-    #
-    # Writing to BOTH scopes is what actually fixes it: postman_run.py seeds
-    # refreshToken with --env-var, and an environment variable SHADOWS a
-    # collection variable, so pm.collectionVariables.set alone is invisible to
-    # {{refreshToken}}.
-    "POST /api/v1/auth/login/refresh": """const d = pm.response.json().data;
-if (d) {
-  pm.collectionVariables.set("accessToken", d.accessToken);
-  pm.collectionVariables.set("refreshToken", d.refreshToken);
   pm.environment.set("accessToken", d.accessToken);
   pm.environment.set("refreshToken", d.refreshToken);
 }""",

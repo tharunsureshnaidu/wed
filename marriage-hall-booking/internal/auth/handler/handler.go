@@ -47,10 +47,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // --- request bodies, field names identical to the Java DTOs ---
 
 type registerReq struct {
-	FullName    string  `json:"fullName"`
-	Email       *string `json:"email"`
-	PhoneNumber *string `json:"phoneNumber"`
-	Password    string  `json:"password"`
+	FullName    string           `json:"fullName"`
+	Email       *string          `json:"email"`
+	PhoneNumber *string          `json:"phoneNumber"`
+	Password    string           `json:"password"`
+	Address     *service.Address `json:"address"` // optional, every part optional
 }
 
 type loginReq struct {
@@ -107,6 +108,15 @@ func (h *Handler) doRegister(w http.ResponseWriter, r *http.Request, vendor bool
 	if empty(req.Email) && empty(req.PhoneNumber) {
 		e = append(e, "Either email or phone number is required")
 	}
+	req.Address = cleanAddress(req.Address)
+	if a := req.Address; a != nil {
+		// The addresses table's column widths.
+		e.MaxLength("Street", a.Street, 255)
+		e.MaxLength("City", a.City, 100)
+		e.MaxLength("State", a.State, 100)
+		e.MaxLength("Zip code", a.ZipCode, 20)
+		e.MaxLength("Country", a.Country, 100)
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -115,6 +125,7 @@ func (h *Handler) doRegister(w http.ResponseWriter, r *http.Request, vendor bool
 	in := service.RegisterInput{
 		FullName: req.FullName, Email: req.Email,
 		PhoneNumber: req.PhoneNumber, Password: req.Password,
+		Address: req.Address,
 	}
 	var err error
 	if vendor {
@@ -326,3 +337,24 @@ func ip(r *http.Request) string {
 }
 
 func empty(s *string) bool { return s == nil || strings.TrimSpace(*s) == "" }
+
+// cleanAddress trims each part and drops the blank ones. An address with no
+// part left is nil, so `"address": {}` saves no empty row.
+func cleanAddress(a *service.Address) *service.Address {
+	if a == nil {
+		return nil
+	}
+	kept := false
+	for _, p := range []**string{&a.Street, &a.City, &a.State, &a.ZipCode, &a.Country} {
+		if empty(*p) {
+			*p = nil
+			continue
+		}
+		t := strings.TrimSpace(**p)
+		*p, kept = &t, true
+	}
+	if !kept {
+		return nil
+	}
+	return a
+}

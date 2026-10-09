@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking (Go)",
-    "description": "211 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 1 hour; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
+    "description": "210 endpoints, generated from the routes registered in the Go source by scripts/gen_postman.py.\n\nGetting started:\n1. Start the API: `make start`\n2. Auth > Create Auth Register Vendor  (creates a venue owner)\n3. There is no mail service, so read the OTP from the log:\n   `make otp`  ->  set it as the `otp` collection variable\n4. Auth > Create Auth Register Verify Email\n   This stores accessToken / ownerToken automatically.\n5. Facilities > Create Facilities  (stores hallId)\n\nTokens and ids are captured by test scripts, so most requests work without copying anything by hand. Access tokens last 1 hour; run Auth > Create Auth Refresh when you get a 401.\n\nThe payment webhook needs an HMAC signature over the raw body, keyed with PAYMENT_WEBHOOK_SECRET from .env - see README.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -95,7 +95,7 @@
       "description": "Liveness check. No auth, no setup - run it first to confirm the API is up."
     },
     {
-      "name": "Auth (11)",
+      "name": "Auth (10)",
       "item": [
         {
           "name": "Register (customer)",
@@ -119,13 +119,13 @@
                 "register"
               ]
             },
-            "description": "Step 1 of the customer signup. Creates the account in PENDING_VERIFICATION and sends an email OTP. No tokens yet - verify first.\n\nWith LOG_OTP_CODES=true the code is written to logs/app.log instead of being emailed; `make otp` prints the most recent ones.",
+            "description": "Step 1 of the customer signup. Creates the account in PENDING_VERIFICATION and sends an email OTP. No tokens yet - verify first.\n\nWith LOG_OTP_CODES=true the code is written to logs/app.log instead of being emailed; `make otp` prints the most recent ones.\n\n`address` is optional, and so is each part of it. Blank parts are dropped, and an address with nothing left saves no row. When given, it appears in GET /api/v1/users/me under `addresses`.",
             "auth": {
               "type": "noauth"
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"fullName\": \"Priya Sharma\",\n  \"email\": \"{{customerEmail}}\",\n  \"phoneNumber\": \"{{customerPhone}}\",\n  \"password\": \"SecurePass@123\"\n}",
+              "raw": "{\n  \"fullName\": \"Priya Sharma\",\n  \"email\": \"{{customerEmail}}\",\n  \"phoneNumber\": \"{{customerPhone}}\",\n  \"password\": \"SecurePass@123\",\n  \"address\": {\n    \"street\": \"12 MG Road\",\n    \"city\": \"Bengaluru\",\n    \"state\": \"Karnataka\",\n    \"zipCode\": \"560001\",\n    \"country\": \"India\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -189,13 +189,13 @@
                 "vendor"
               ]
             },
-            "description": "Same as register, but the account also gets ROLE_HALL_OWNER. Use this one if you intend to list a property - a plain customer cannot create facilities.",
+            "description": "Same as register, but the account also gets ROLE_HALL_OWNER. Use this one if you intend to list a property - a plain customer cannot create facilities.\n\nThe optional `address` is saved as for a customer and also seeds the vendor's `businessAddress` on one line; PUT /api/v1/vendors/me changes it later.",
             "auth": {
               "type": "noauth"
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"fullName\": \"Rajesh Kumar\",\n  \"email\": \"{{ownerEmail}}\",\n  \"phoneNumber\": \"{{ownerPhone}}\",\n  \"password\": \"SecurePass@123\"\n}",
+              "raw": "{\n  \"fullName\": \"Rajesh Kumar\",\n  \"email\": \"{{ownerEmail}}\",\n  \"phoneNumber\": \"{{ownerPhone}}\",\n  \"password\": \"SecurePass@123\",\n  \"address\": {\n    \"street\": \"45 Brigade Road\",\n    \"city\": \"Bengaluru\",\n    \"state\": \"Karnataka\",\n    \"zipCode\": \"560025\",\n    \"country\": \"India\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -656,84 +656,6 @@
                   "  // Also the environment scope: the runner seeds these with --env-var, and an",
                   "  // environment variable shadows a collection one, so a collection-only write",
                   "  // would never be seen by {{refreshToken}}.",
-                  "  pm.environment.set(\"accessToken\", d.accessToken);",
-                  "  pm.environment.set(\"refreshToken\", d.refreshToken);",
-                  "}",
-                  "",
-                  "// A create returns 201 and a Location header; an upsert returns 200. Asserted",
-                  "// so the distinction cannot silently regress - the envelope check below passes",
-                  "// either way, which is how every create sat at 200 unnoticed.",
-                  "if (pm.response.code === 201) {",
-                  "    pm.test(\"201 carries a Location header\", function () {",
-                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
-                  "    });",
-                  "}",
-                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "if (ct.indexOf(\"text/html\") !== -1) {",
-                  "    pm.test(\"renders a page\", function () {",
-                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
-                  "    });",
-                  "} else {",
-                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
-                  "        const b = pm.response.json();",
-                  "        pm.expect(b).to.have.property(\"success\");",
-                  "        pm.expect(b).to.have.property(\"message\");",
-                  "        pm.expect(b).to.have.property(\"timestamp\");",
-                  "    });",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Refresh token (alias)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login/refresh",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "login",
-                "refresh"
-              ]
-            },
-            "description": "Creates or acts on a auth record.",
-            "auth": {
-              "type": "noauth"
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const d = pm.response.json().data;",
-                  "if (d) {",
-                  "  pm.collectionVariables.set(\"accessToken\", d.accessToken);",
-                  "  pm.collectionVariables.set(\"refreshToken\", d.refreshToken);",
                   "  pm.environment.set(\"accessToken\", d.accessToken);",
                   "  pm.environment.set(\"refreshToken\", d.refreshToken);",
                   "}",
