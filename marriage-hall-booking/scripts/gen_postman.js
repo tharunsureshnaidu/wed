@@ -18,6 +18,11 @@ const BODIES = {
   "POST /api/v1/help/messages": {
     message: "I cannot see the invoice for my booking last week.",
   },
+  "POST /api/v1/users/me/favourites": {
+    entityId: "{{hallId}}",
+    type: "HALL",
+    favorite: true,
+  },
   "POST /api/v1/admin/privacy-policy": {
     title: "Privacy Policy",
     content: "We collect only what a booking needs: your name, contact and stay dates.",
@@ -487,6 +492,7 @@ const QUERIES = {
   "GET /api/v1/admin/analytics/decisions": "entity=&from=&until=",
   "GET /api/v1/users/me/dashboard": "lat=12.9716&lng=77.5946",
   "GET /api/v1/facilities": "type=HALL&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
+  "GET /api/v1/venues": "type=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls": "search=&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls/my-halls": "page=0&size=20",
   "GET /api/v1/hotels/my-hotels": "page=0&size=20",
@@ -631,6 +637,7 @@ const NO_AUTH = new Set([
   "GET /api/v1/facilities/{id}/events",
   "GET /api/v1/facilities/{id}/faqs",
   "GET /api/v1/amenities",
+  "GET /api/v1/venues",
   "GET /api/v1/halls",
   "GET /api/v1/hotels/{id}",
   "GET /api/v1/halls/{id}",
@@ -776,6 +783,7 @@ const REQUEST_ORDER = [
 
   "GET /api/v1/users/me",
   "PUT /api/v1/users/me",
+  "POST /api/v1/users/me/favourites",
   "POST /api/v1/users/me/favourites/{facilityId}",
   "GET /api/v1/users/me/favourites",
   "DELETE /api/v1/users/me/favourites/{facilityId}",
@@ -793,6 +801,7 @@ const REQUEST_ORDER = [
   "GET /api/v1/facilities/compare",
   "POST /api/v1/venues/compare",
   "GET /api/v1/venues/compare",
+  "GET /api/v1/venues",
   "GET /api/v1/halls",
   "GET /api/v1/halls/{id}",
   "GET /api/v1/hotels/{id}",
@@ -968,6 +977,7 @@ const NAMES = {
   "GET /api/v1/users/me": "Get my profile",
   "PUT /api/v1/users/me": "Update my profile",
   "DELETE /api/v1/users/me": "Delete my account",
+  "POST /api/v1/users/me/favourites": "Toggle favourite",
   "POST /api/v1/users/me/favourites/{facilityId}": "Add favourite",
   "DELETE /api/v1/users/me/favourites/{facilityId}": "Remove favourite",
   "GET /api/v1/users/me/favourites": "List favourites",
@@ -991,6 +1001,7 @@ const NAMES = {
   "GET /api/v1/facilities/compare": "Compare 2 venues (GET query)",
   "POST /api/v1/venues/compare": "Compare venues (POST alias)",
   "GET /api/v1/venues/compare": "Compare venues (GET alias)",
+  "GET /api/v1/venues": "List venues (public)",
   "GET /api/v1/halls": "List halls (public)",
   "GET /api/v1/halls/{id}": "Get hall",
   "GET /api/v1/hotels/{id}": "Get hotel",
@@ -1232,9 +1243,49 @@ if (d) pm.collectionVariables.set("imageId", d.id);`,
   "POST /api/v1/facilities/{id}/videos": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("videoId", d.id);`,
   "POST /api/v1/bookings/halls": `const d = pm.response.json().data;
-if (d) pm.collectionVariables.set("bookingId", d.id);`,
+if (d) {
+  pm.collectionVariables.set("bookingId", d.id);
+  pm.environment.set("bookingId", d.id);
+  pm.collectionVariables.set("hallBookingId", d.id);
+  pm.environment.set("hallBookingId", d.id);
+}`,
   "POST /api/v1/bookings/hotels": `const d = pm.response.json().data;
-if (d) pm.collectionVariables.set("bookingId", d.id);`,
+if (d) {
+  pm.collectionVariables.set("hotelBookingId", d.id);
+  pm.environment.set("hotelBookingId", d.id);
+}`,
+  "POST /api/v1/facilities/compare": `if (pm.response.code === 200) {
+    pm.test("Comparison contains venues", function () {
+        const b = pm.response.json();
+        pm.expect(b.success).to.be.true;
+        pm.expect(b.data).to.have.property("venues");
+        pm.expect(b.data.venues.length).to.be.at.least(2);
+    });
+}`,
+  "POST /api/v1/venues/compare": `if (pm.response.code === 200) {
+    pm.test("Comparison contains venues", function () {
+        const b = pm.response.json();
+        pm.expect(b.success).to.be.true;
+        pm.expect(b.data).to.have.property("venues");
+        pm.expect(b.data.venues.length).to.be.at.least(2);
+    });
+}`,
+  "GET /api/v1/facilities/compare": `if (pm.response.code === 200) {
+    pm.test("Comparison contains venues", function () {
+        const b = pm.response.json();
+        pm.expect(b.success).to.be.true;
+        pm.expect(b.data).to.have.property("venues");
+        pm.expect(b.data.venues.length).to.be.at.least(2);
+    });
+}`,
+  "GET /api/v1/venues/compare": `if (pm.response.code === 200) {
+    pm.test("Comparison contains venues", function () {
+        const b = pm.response.json();
+        pm.expect(b.success).to.be.true;
+        pm.expect(b.data).to.have.property("venues");
+        pm.expect(b.data.venues.length).to.be.at.least(2);
+    });
+}`,
   "POST /api/v1/payments/create": `const d = pm.response.json().data;
 if (d) {
   pm.collectionVariables.set("paymentId", d.id);
@@ -1306,7 +1357,10 @@ function pathVar(p, name) {
     if (p.startsWith("/api/v1/halls") || p.includes("/halls/")) return "hallId";
     if (p.startsWith("/api/v1/hotels") || p.includes("/hotels/")) return "hotelId";
     if (p.startsWith("/api/v1/quotes")) return "quoteId";
-    if (p.startsWith("/api/v1/bookings")) return "bookingId";
+    if (p.startsWith("/api/v1/bookings")) {
+      if (p.includes("/reject")) return "hotelBookingId";
+      return "bookingId";
+    }
     if (p.startsWith("/api/v1/reviews")) return "reviewId";
     if (p.startsWith("/api/v1/admin/users")) return "userId";
     if (p.startsWith("/api/v1/admin/facilities") || p.startsWith("/api/v1/facilities")) return "facilityId";
@@ -1555,10 +1609,6 @@ function main() {
                 "if (d) {",
                 "  pm.collectionVariables.set('adminToken', d.accessToken);",
                 "  pm.environment.set('adminToken', d.accessToken);",
-                "  pm.collectionVariables.set('accessToken', d.accessToken);",
-                "  pm.environment.set('accessToken', d.accessToken);",
-                "  pm.collectionVariables.set('userId', d.user.id);",
-                "  pm.environment.set('userId', d.user.id);",
                 "  console.log('adminToken saved successfully!');",
                 "}",
                 "",
@@ -1645,16 +1695,83 @@ function main() {
           auth: { type: "noauth" }
         };
 
-        const testScript = tc.expectedStatus === 200 ? COMMON_TEST : [
-          `pm.test("Status code is ${tc.expectedStatus}", function () {`,
-          `    pm.response.to.have.status(${tc.expectedStatus});`,
-          `});`,
-          `pm.test("returns error envelope", function () {`,
-          `    const b = pm.response.json();`,
-          `    pm.expect(b.success).to.be.false;`,
-          `    pm.expect(b.errorCode).to.eql("VALIDATION_ERROR");`,
-          `});`
-        ].join("\n");
+        let testScript = "";
+        if (tc.expectedStatus === 400) {
+          testScript = [
+            `pm.test("Status code is 400", function () {`,
+            `    pm.response.to.have.status(400);`,
+            `});`,
+            `pm.test("returns error envelope", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.false;`,
+            `    pm.expect(b.errorCode).to.eql("VALIDATION_ERROR");`,
+            `});`
+          ].join("\n");
+        } else if (tc.name.includes("ALL")) {
+          testScript = [
+            `pm.test("Status code is 200", function () {`,
+            `    pm.response.to.have.status(200);`,
+            `});`,
+            `pm.test("returns recommendations list", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.true;`,
+            `    pm.expect(b.data).to.have.property("items");`,
+            `    pm.expect(b.data.items).to.be.an("array");`,
+            `});`,
+            COMMON_TEST
+          ].join("\n");
+        } else if (tc.name.includes("HALL only")) {
+          testScript = [
+            `pm.test("Status code is 200", function () {`,
+            `    pm.response.to.have.status(200);`,
+            `});`,
+            `pm.test("all items are HALL", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.true;`,
+            `    pm.expect(b.data.items.every(x => x.type === "HALL")).to.be.true;`,
+            `});`,
+            COMMON_TEST
+          ].join("\n");
+        } else if (tc.name.includes("HOTEL only")) {
+          testScript = [
+            `pm.test("Status code is 200", function () {`,
+            `    pm.response.to.have.status(200);`,
+            `});`,
+            `pm.test("all items are HOTEL", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.true;`,
+            `    pm.expect(b.data.items.every(x => x.type === "HOTEL")).to.be.true;`,
+            `});`,
+            COMMON_TEST
+          ].join("\n");
+        } else if (tc.name.includes("Radius Filter")) {
+          testScript = [
+            `pm.test("Status code is 200", function () {`,
+            `    pm.response.to.have.status(200);`,
+            `});`,
+            `pm.test("all items are within 5 km", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.true;`,
+            `    pm.expect(b.data.items.every(x => x.distanceKm <= 5)).to.be.true;`,
+            `});`,
+            COMMON_TEST
+          ].join("\n");
+        } else if (tc.name.includes("Pagination")) {
+          testScript = [
+            `pm.test("Status code is 200", function () {`,
+            `    pm.response.to.have.status(200);`,
+            `});`,
+            `pm.test("pagination metadata is correct", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.true;`,
+            `    pm.expect(b.data.pagination.page).to.eql(1);`,
+            `    pm.expect(b.data.pagination.size).to.eql(20);`,
+            `});`,
+            COMMON_TEST
+          ].join("\n");
+        } else {
+          testScript = COMMON_TEST;
+        }
 
         sub.push({
           name: tc.name,
@@ -1689,6 +1806,13 @@ function main() {
         "Creates a HOTEL facility so hotelId is captured for hotel booking and room types testing.";
       sub.splice(1, 0, hotel);
 
+      const captureHall2 = `const d = pm.response.json().data;
+if (d) {
+  pm.collectionVariables.set("facilityId", d.id);
+  pm.collectionVariables.set("hallId2", d.id);
+  pm.environment.set("hallId2", d.id);
+  console.log("hallId2 captured:", d.id);
+}`;
       const hall2 = {
         name: "Create second hall (Kumar Royal Garden - for compare)",
         request: buildRequest(folder, "POST", "/api/v1/facilities"),
@@ -1698,7 +1822,7 @@ function main() {
             listen: "test",
             script: {
               type: "text/javascript",
-              exec: (CAPTURE["POST /api/v1/facilities"] + "\n\n" + COMMON_TEST).split("\n"),
+              exec: (captureHall2 + "\n\n" + COMMON_TEST).split("\n"),
             },
           },
         ],
@@ -1791,10 +1915,48 @@ function main() {
       }
     }
 
+const FOLDER_DESC = {
+  Health: "Liveness check. No auth, no setup - run it first to confirm the API is up.",
+  Auth: "User authentication, registration, OTP verification, and JWT session handling.",
+  "User Profile": "Customer personal profile, favourites, and booking activity dashboard.",
+  Vendors: "Vendor onboarding, business details, KYC verification, and properties management.",
+  "Facilities (unified)": "Unified venue listings (marriage halls and hotels) creation, browsing, and FAQs.",
+  "Compare Venues": "Side-by-side venue comparison (2-3 halls or hotels) with capacity, pricing, and amenities matrix.",
+  Recommendations: "Location-based recommendation engine for venues ranking by proximity, rating, and filters.",
+  "Marriage Halls": "Hall-specific listing details, capacities, and vendor management.",
+  Hotels: "Hotel-specific listing details and vendor properties.",
+  "Room Types": "Bookable room inventory, pricing per night, and capacity tiers for hotels.",
+  "Hall Packages": "Priced packages (catering, decor) attached to marriage halls.",
+  "Add-on Services": "Individual add-on services and amenities for halls.",
+  "Token Advance Rules": "Token advance and deposit payment rules to hold dates.",
+  Amenities: "Venue amenities catalogue, attachment, and detachment.",
+  "Facility Policies": "Cancellation policies and refund percentage tiers.",
+  "Facility Pricing Rules": "Seasonal and peak date-range price overrides.",
+  "Facility Media": "Photo and video galleries, cover image setting, and media upload.",
+  Favourites: "Customer saved wishlist of favorite halls and hotels.",
+  Bookings: "Hall and hotel reservations, quotes, hold windows, and owner decision workflow.",
+  Payments: "Payment creation, checkout sessions, and webhook processing.",
+  Refunds: "Payment refunds according to cancellation policy tiers.",
+  "Quotes & Negotiation": "Interactive price quote negotiation, counters, messages, and booking conversion.",
+  Reviews: "Customer verified reviews, ratings distribution, and summaries.",
+  Notifications: "In-app notification feed, read state tracking, and push device registration.",
+  Coupons: "Discount coupons, validation, and geo-targeted promo cards.",
+  Support: "Public platform support contact channels.",
+  "Help Center": "Customer support messages, inquiry submission, and admin message handling.",
+  Feedback: "Customer app feedback, ratings, and issue reporting.",
+  "Privacy Policy": "Public privacy policy reading and admin version publishing.",
+  Search: "Advanced multi-criteria search, autocomplete, trending searches, and geolocation.",
+  Admin: "Platform administration, KYC approvals, user moderation, review approval, and analytics.",
+  "Cleanup (destructive)": "Deletes and cancellations kept last to maintain test isolation and idempotency.",
+};
+
     const folderItem = {
       name: `${folder} (${sub.length})`,
       item: sub,
     };
+    if (FOLDER_DESC[folder]) {
+      folderItem.description = FOLDER_DESC[folder];
+    }
     items.push(folderItem);
   }
 
@@ -1859,6 +2021,8 @@ function main() {
       { key: "videoId", value: "" },
       { key: "videoId2", value: "" },
       { key: "bookingId", value: "" },
+      { key: "hallBookingId", value: "", description: "Captured from POST /bookings/halls" },
+      { key: "hotelBookingId", value: "", description: "Captured from POST /bookings/hotels" },
       { key: "faqId", value: "" },
       { key: "feedbackId", value: "" },
       { key: "messageId", value: "", description: "Help Center message UUID" },
@@ -1889,7 +2053,7 @@ function main() {
 
   for (const outPath of outPaths) {
     fs.writeFileSync(outPath, JSON.stringify(collection, null, 2) + "\n", "utf8");
-    console.log(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
+    console.error(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
   }
 }
 

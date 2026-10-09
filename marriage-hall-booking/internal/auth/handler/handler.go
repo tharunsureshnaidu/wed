@@ -51,6 +51,32 @@ type registerReq struct {
 	Email       *string `json:"email"`
 	PhoneNumber *string `json:"phoneNumber"`
 	Password    string  `json:"password"`
+	Address     string  `json:"address,omitempty"`
+}
+
+func (r *registerReq) UnmarshalJSON(data []byte) error {
+	type Alias registerReq
+	aux := &struct {
+		Name    *string `json:"name"`
+		Phone   *string `json:"phone"`
+		Address *string `json:"address"`
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if r.FullName == "" && aux.Name != nil {
+		r.FullName = *aux.Name
+	}
+	if r.PhoneNumber == nil && aux.Phone != nil {
+		r.PhoneNumber = aux.Phone
+	}
+	if aux.Address != nil {
+		r.Address = *aux.Address
+	}
+	return nil
 }
 
 type loginReq struct {
@@ -107,26 +133,41 @@ func (h *Handler) doRegister(w http.ResponseWriter, r *http.Request, vendor bool
 	if empty(req.Email) && empty(req.PhoneNumber) {
 		e = append(e, "Either email or phone number is required")
 	}
+	addr := strings.TrimSpace(req.Address)
+	if addr != "" {
+		e.MaxLength("Address", &addr, 500)
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
 	}
 
-	in := service.RegisterInput{
-		FullName: req.FullName, Email: req.Email,
-		PhoneNumber: req.PhoneNumber, Password: req.Password,
+	var addrPtr *string
+	if addr != "" {
+		addrPtr = &addr
 	}
-	var err error
+
+	in := service.RegisterInput{
+		FullName:    req.FullName,
+		Email:       req.Email,
+		PhoneNumber: req.PhoneNumber,
+		Address:     addrPtr,
+		Password:    req.Password,
+	}
+	var (
+		userView *service.UserView
+		err      error
+	)
 	if vendor {
-		err = h.svc.RegisterVendor(r.Context(), in, ip(r))
+		userView, err = h.svc.RegisterVendorUser(r.Context(), in, ip(r))
 	} else {
-		err = h.svc.Register(r.Context(), in, ip(r))
+		userView, err = h.svc.RegisterUser(r.Context(), in, ip(r))
 	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	response.OK(w, "Registration successful. Please verify OTP.", nil)
+	response.OK(w, "Registration successful. Please verify OTP.", userView)
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {

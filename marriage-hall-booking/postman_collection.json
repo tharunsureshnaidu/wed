@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking Platform API",
-    "description": "Comprehensive API testing collection (224 endpoints) for Marriage Hall & Hotel Booking.\n\nIncludes complete coverage for Authentication, Public Catalog, Side-by-side Compare, Bookings, Payments, Quotes, Reviews, Help Center, Admin Moderation, and Push Notifications.",
+    "description": "Comprehensive API testing collection (227 endpoints) for Marriage Hall & Hotel Booking.\n\nIncludes complete coverage for Authentication, Public Catalog, Side-by-side Compare, Bookings, Payments, Quotes, Reviews, Help Center, Admin Moderation, and Push Notifications.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -83,7 +83,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Liveness check. No auth, no setup - run it first to confirm the API is up."
     },
     {
       "name": "Auth (12)",
@@ -563,10 +564,6 @@
                   "if (d) {",
                   "  pm.collectionVariables.set('adminToken', d.accessToken);",
                   "  pm.environment.set('adminToken', d.accessToken);",
-                  "  pm.collectionVariables.set('accessToken', d.accessToken);",
-                  "  pm.environment.set('accessToken', d.accessToken);",
-                  "  pm.collectionVariables.set('userId', d.user.id);",
-                  "  pm.environment.set('userId', d.user.id);",
                   "  console.log('adminToken saved successfully!');",
                   "}",
                   "",
@@ -933,7 +930,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "User authentication, registration, OTP verification, and JWT session handling."
     },
     {
       "name": "User Profile (3)",
@@ -1146,7 +1144,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Customer personal profile, favourites, and booking activity dashboard."
     },
     {
       "name": "Vendors (6)",
@@ -1563,10 +1562,11 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Vendor onboarding, business details, KYC verification, and properties management."
     },
     {
-      "name": "Facilities (unified) (11)",
+      "name": "Facilities (unified) (13)",
       "item": [
         {
           "name": "Create facility (hall or hotel)",
@@ -1792,15 +1792,9 @@
                   "const d = pm.response.json().data;",
                   "if (d) {",
                   "  pm.collectionVariables.set(\"facilityId\", d.id);",
-                  "  if (d.type === \"HALL\" || d.type === \"MARRIAGE_HALL\") {",
-                  "    if (!pm.collectionVariables.get(\"hallId\")) {",
-                  "      pm.collectionVariables.set(\"hallId\", d.id);",
-                  "    } else {",
-                  "      pm.collectionVariables.set(\"hallId2\", d.id);",
-                  "    }",
-                  "  } else {",
-                  "    pm.collectionVariables.set(\"hotelId\", d.id);",
-                  "  }",
+                  "  pm.collectionVariables.set(\"hallId2\", d.id);",
+                  "  pm.environment.set(\"hallId2\", d.id);",
+                  "  console.log(\"hallId2 captured:\", d.id);",
                   "}",
                   "",
                   "if (pm.response.code === 201) {",
@@ -1845,6 +1839,87 @@
                 {
                   "key": "type",
                   "value": "HALL"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                },
+                {
+                  "key": "city",
+                  "value": ""
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "lat",
+                  "value": "12.9716"
+                },
+                {
+                  "key": "lng",
+                  "value": "77.5946"
+                }
+              ]
+            },
+            "description": "Lists facilities (unified) data. See response for shape.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List venues (public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/venues?type=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "venues"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": ""
                 },
                 {
                   "key": "search",
@@ -2325,6 +2400,71 @@
           ]
         },
         {
+          "name": "GET Venues",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/venues/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "venues",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}"
+                }
+              ]
+            },
+            "description": "Fetches facilities (unified) data. See response for shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "DELETE Facilities Faqs",
           "request": {
             "method": "DELETE",
@@ -2395,7 +2535,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Unified venue listings (marriage halls and hotels) creation, browsing, and FAQs."
     },
     {
       "name": "Compare Venues (4)",
@@ -2443,6 +2584,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.test(\"Comparison contains venues\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b.success).to.be.true;",
+                  "        pm.expect(b.data).to.have.property(\"venues\");",
+                  "        pm.expect(b.data.venues.length).to.be.at.least(2);",
+                  "    });",
+                  "}",
+                  "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -2513,6 +2663,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.test(\"Comparison contains venues\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b.success).to.be.true;",
+                  "        pm.expect(b.data).to.have.property(\"venues\");",
+                  "        pm.expect(b.data.venues.length).to.be.at.least(2);",
+                  "    });",
+                  "}",
+                  "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -2579,6 +2738,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.test(\"Comparison contains venues\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b.success).to.be.true;",
+                  "        pm.expect(b.data).to.have.property(\"venues\");",
+                  "        pm.expect(b.data.venues.length).to.be.at.least(2);",
+                  "    });",
+                  "}",
+                  "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -2649,6 +2817,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.test(\"Comparison contains venues\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b.success).to.be.true;",
+                  "        pm.expect(b.data).to.have.property(\"venues\");",
+                  "        pm.expect(b.data.venues.length).to.be.at.least(2);",
+                  "    });",
+                  "}",
+                  "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -2672,7 +2849,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Side-by-side venue comparison (2-3 halls or hotels) with capacity, pricing, and amenities matrix."
     },
     {
       "name": "Recommendations (8)",
@@ -2724,6 +2902,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"returns recommendations list\", function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.success).to.be.true;",
+                  "    pm.expect(b.data).to.have.property(\"items\");",
+                  "    pm.expect(b.data.items).to.be.an(\"array\");",
+                  "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -2794,6 +2981,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"returns recommendations list\", function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.success).to.be.true;",
+                  "    pm.expect(b.data).to.have.property(\"items\");",
+                  "    pm.expect(b.data.items).to.be.an(\"array\");",
+                  "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -2864,6 +3060,14 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"all items are HOTEL\", function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.success).to.be.true;",
+                  "    pm.expect(b.data.items.every(x => x.type === \"HOTEL\")).to.be.true;",
+                  "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -2934,6 +3138,14 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"all items are within 5 km\", function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.success).to.be.true;",
+                  "    pm.expect(b.data.items.every(x => x.distanceKm <= 5)).to.be.true;",
+                  "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -3012,6 +3224,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"pagination metadata is correct\", function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.success).to.be.true;",
+                  "    pm.expect(b.data.pagination.page).to.eql(1);",
+                  "    pm.expect(b.data.pagination.size).to.eql(20);",
+                  "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
@@ -3217,7 +3438,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Location-based recommendation engine for venues ranking by proximity, rating, and filters."
     },
     {
       "name": "Marriage Halls (4)",
@@ -3501,7 +3723,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Hall-specific listing details, capacities, and vendor management."
     },
     {
       "name": "Hotels (3)",
@@ -3712,7 +3935,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Hotel-specific listing details and vendor properties."
     },
     {
       "name": "Room Types (2)",
@@ -3859,7 +4083,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Bookable room inventory, pricing per night, and capacity tiers for hotels."
     },
     {
       "name": "Hall Packages (2)",
@@ -4006,7 +4231,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Priced packages (catering, decor) attached to marriage halls."
     },
     {
       "name": "Add-on Services (2)",
@@ -4153,7 +4379,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Individual add-on services and amenities for halls."
     },
     {
       "name": "Token Advance Rules (2)",
@@ -4297,7 +4524,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Token advance and deposit payment rules to hold dates."
     },
     {
       "name": "Amenities (2)",
@@ -4427,7 +4655,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Venue amenities catalogue, attachment, and detachment."
     },
     {
       "name": "Facility Policies (6)",
@@ -4872,7 +5101,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Cancellation policies and refund percentage tiers."
     },
     {
       "name": "Facility Pricing Rules (3)",
@@ -5104,7 +5334,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Seasonal and peak date-range price overrides."
     },
     {
       "name": "Facility Media (9)",
@@ -5795,11 +6026,86 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Photo and video galleries, cover image setting, and media upload."
     },
     {
-      "name": "Favourites (9)",
+      "name": "Favourites (10)",
       "item": [
+        {
+          "name": "Toggle favourite",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/favourites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "me",
+                "favourites"
+              ]
+            },
+            "description": "Creates or acts on a favourite record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entityId\": \"{{hallId}}\",\n  \"type\": \"HALL\",\n  \"favorite\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "Add favourite",
           "request": {
@@ -6388,7 +6694,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Customer saved wishlist of favorite halls and hotels."
     },
     {
       "name": "Bookings (11)",
@@ -6444,7 +6751,12 @@
                 "type": "text/javascript",
                 "exec": [
                   "const d = pm.response.json().data;",
-                  "if (d) pm.collectionVariables.set(\"bookingId\", d.id);",
+                  "if (d) {",
+                  "  pm.collectionVariables.set(\"bookingId\", d.id);",
+                  "  pm.environment.set(\"bookingId\", d.id);",
+                  "  pm.collectionVariables.set(\"hallBookingId\", d.id);",
+                  "  pm.environment.set(\"hallBookingId\", d.id);",
+                  "}",
                   "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -6520,7 +6832,10 @@
                 "type": "text/javascript",
                 "exec": [
                   "const d = pm.response.json().data;",
-                  "if (d) pm.collectionVariables.set(\"bookingId\", d.id);",
+                  "if (d) {",
+                  "  pm.collectionVariables.set(\"hotelBookingId\", d.id);",
+                  "  pm.environment.set(\"hotelBookingId\", d.id);",
+                  "}",
                   "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -7096,7 +7411,7 @@
               "variable": [
                 {
                   "key": "id",
-                  "value": "{{bookingId}}"
+                  "value": "{{hotelBookingId}}"
                 }
               ]
             },
@@ -7224,7 +7539,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Hall and hotel reservations, quotes, hold windows, and owner decision workflow."
     },
     {
       "name": "Payments (2)",
@@ -7379,7 +7695,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Payment creation, checkout sessions, and webhook processing."
     },
     {
       "name": "Refunds (1)",
@@ -7459,7 +7776,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Payment refunds according to cancellation policy tiers."
     },
     {
       "name": "Quotes & Negotiation (15)",
@@ -8569,7 +8887,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Interactive price quote negotiation, counters, messages, and booking conversion."
     },
     {
       "name": "Reviews (4)",
@@ -8837,7 +9156,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Customer verified reviews, ratings distribution, and summaries."
     },
     {
       "name": "Notifications (11)",
@@ -9568,7 +9888,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "In-app notification feed, read state tracking, and push device registration."
     },
     {
       "name": "Coupons (11)",
@@ -10336,7 +10657,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Discount coupons, validation, and geo-targeted promo cards."
     },
     {
       "name": "Support (1)",
@@ -10392,7 +10714,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Public platform support contact channels."
     },
     {
       "name": "Help Center (3)",
@@ -10624,7 +10947,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Customer support messages, inquiry submission, and admin message handling."
     },
     {
       "name": "Feedback (3)",
@@ -10837,7 +11161,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Customer app feedback, ratings, and issue reporting."
     },
     {
       "name": "Privacy Policy (8)",
@@ -11350,7 +11675,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Public privacy policy reading and admin version publishing."
     },
     {
       "name": "Search (10)",
@@ -11987,7 +12313,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Advanced multi-criteria search, autocomplete, trending searches, and geolocation."
     },
     {
       "name": "Admin (36)",
@@ -14544,7 +14871,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Platform administration, KYC approvals, user moderation, review approval, and analytics."
     },
     {
       "name": "Cleanup (destructive) (19)",
@@ -15813,7 +16141,8 @@
             }
           ]
         }
-      ]
+      ],
+      "description": "Deletes and cancellations kept last to maintain test isolation and idempotency."
     }
   ],
   "variable": [
@@ -15925,6 +16254,16 @@
     {
       "key": "bookingId",
       "value": ""
+    },
+    {
+      "key": "hallBookingId",
+      "value": "",
+      "description": "Captured from POST /bookings/halls"
+    },
+    {
+      "key": "hotelBookingId",
+      "value": "",
+      "description": "Captured from POST /bookings/hotels"
     },
     {
       "key": "faqId",

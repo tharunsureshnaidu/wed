@@ -150,7 +150,19 @@ func (r *Repo) SoftDelete(ctx context.Context, userID int64) error {
 
 // --- favourites ---
 
+func (r *Repo) GetFacilityStoredType(ctx context.Context, facilityID string) (string, error) {
+	var storedType string
+	err := r.db.QueryRow(ctx,
+		`SELECT type FROM facilities WHERE id = $1 AND is_deleted = FALSE`,
+		facilityID).Scan(&storedType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return storedType, err
+}
+
 func (r *Repo) AddFavourite(ctx context.Context, userID int64, facilityID string) error {
+	_ = r.EnsureProfile(ctx, userID, "User", nil)
 	_, err := r.db.Exec(ctx,
 		`INSERT INTO favourite_facilities (user_profile_id, facility_id) VALUES ($1, $2)
 		 ON CONFLICT (user_profile_id, facility_id) DO NOTHING`, userID, facilityID)
@@ -161,6 +173,21 @@ func (r *Repo) RemoveFavourite(ctx context.Context, userID int64, facilityID str
 	_, err := r.db.Exec(ctx,
 		`DELETE FROM favourite_facilities WHERE user_profile_id = $1 AND facility_id = $2`,
 		userID, facilityID)
+	return err
+}
+
+func (r *Repo) RemoveFavouriteTyped(ctx context.Context, userID int64, facilityID string, storedType string) error {
+	_, err := r.db.Exec(ctx,
+		`DELETE FROM favourite_facilities
+		  WHERE user_profile_id = $1
+		    AND facility_id = $2
+		    AND EXISTS (
+		        SELECT 1 FROM facilities
+		         WHERE id = $2
+		           AND type = $3
+		           AND is_deleted = FALSE
+		    )`,
+		userID, facilityID, storedType)
 	return err
 }
 
