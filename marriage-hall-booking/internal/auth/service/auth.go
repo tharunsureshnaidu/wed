@@ -67,8 +67,10 @@ type AuthResult struct {
 type UserView struct {
 	ID          int64    `json:"id"`
 	FullName    string   `json:"fullName"`
+	Name        string   `json:"name,omitempty"`
 	Email       *string  `json:"email"`
 	PhoneNumber *string  `json:"phoneNumber"`
+	Address     *string  `json:"address"`
 	Status      string   `json:"status"`
 	Roles       []string `json:"roles"`
 }
@@ -77,8 +79,11 @@ type RegisterInput struct {
 	FullName    string
 	Email       *string
 	PhoneNumber *string
+	Address     *string // one line, stored in users.address
 	Password    string
-	Address     *Address // optional; nil means none was given
+	// AddressParts is the structured form, saved to the addresses table; its
+	// joined line fills users.address when Address is nil. Nil means none given.
+	AddressParts *Address
 }
 
 // Address is the optional signup address, in the shape of the addresses table.
@@ -110,52 +115,81 @@ func (a *Address) Line() *string {
 }
 
 func (s *AuthService) Register(ctx context.Context, in RegisterInput, ip string) error {
-	return s.createAccount(ctx, in, ip, domain.RoleCustomer)
+	_, err := s.createAccount(ctx, in, ip, domain.RoleCustomer)
+	return err
 }
 
 func (s *AuthService) RegisterVendor(ctx context.Context, in RegisterInput, ip string) error {
-	return s.createAccount(ctx, in, ip, domain.RoleHallOwner)
+	_, err := s.createAccount(ctx, in, ip, domain.RoleHallOwner)
+	return err
 }
 
-func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, role string) error {
+func (s *AuthService) RegisterUser(ctx context.Context, in RegisterInput, ip string) (*UserView, error) {
+	u, err := s.createAccount(ctx, in, ip, domain.RoleCustomer)
+	if err != nil {
+		return nil, err
+	}
+	v := view(u)
+	return &v, nil
+}
+
+func (s *AuthService) RegisterVendorUser(ctx context.Context, in RegisterInput, ip string) (*UserView, error) {
+	u, err := s.createAccount(ctx, in, ip, domain.RoleHallOwner)
+	if err != nil {
+		return nil, err
+	}
+	v := view(u)
+	return &v, nil
+}
+
+func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, role string) (*domain.User, error) {
 	if in.Email != nil {
 		exists, err := s.repo.ExistsByEmail(ctx, *in.Email)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if exists {
-			return apperr.Conflict("EMAIL_EXISTS", "Email already exists")
+			return nil, apperr.Conflict("EMAIL_EXISTS", "Email already exists")
 		}
 	}
 	if in.PhoneNumber != nil {
 		exists, err := s.repo.ExistsByPhone(ctx, *in.PhoneNumber)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if exists {
-			return apperr.Conflict("PHONE_EXISTS", "Phone number already exists")
+			return nil, apperr.Conflict("PHONE_EXISTS", "Phone number already exists")
 		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcryptCost)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	id, err := s.repo.CreateUser(ctx, &domain.User{
+	line := in.Address
+	if line == nil {
+		line = in.AddressParts.Line()
+	}
+	u := &domain.User{
 		FullName:     in.FullName,
 		Email:        in.Email,
 		PhoneNumber:  in.PhoneNumber,
+		Address:      line,
 		PasswordHash: string(hash),
 		Status:       domain.StatusPendingVerification,
-	}, role)
-	if err != nil {
-		return err
+		Roles:        []string{role},
 	}
+
+	id, err := s.repo.CreateUser(ctx, u, role)
+	if err != nil {
+		return nil, err
+	}
+	u.ID = id
 
 	if s.OnUserCreated != nil {
 		first, last := splitName(in.FullName)
-		if err := s.OnUserCreated(ctx, id, first, last, in.Address); err != nil {
+		if err := s.OnUserCreated(ctx, id, first, last, in.AddressParts); err != nil {
 			logger.Error("create profile", "userId", id, logger.Err(err))
 		}
 	}
@@ -168,7 +202,7 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 	// Best-effort like the profile above: a failed insert must not roll back a
 	// created account. The user can still call PUT /vendors/me themselves.
 	if role == domain.RoleHallOwner && s.OnVendorCreated != nil {
-		if err := s.OnVendorCreated(ctx, id, in.FullName, in.Address.Line()); err != nil {
+		if err := s.OnVendorCreated(ctx, id, in.FullName, line); err != nil {
 			logger.Error("create vendor business", "userId", id, logger.Err(err))
 		}
 	}
@@ -185,7 +219,7 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 			logger.Warn("phone OTP not sent", "userId", id, logger.Err(err))
 		}
 	}
-	return nil
+	return u, nil
 }
 
 // Login checks the password before any account-state check, so that lock,
@@ -395,8 +429,14 @@ func view(u *domain.User) UserView {
 		roles = []string{}
 	}
 	return UserView{
-		ID: u.ID, FullName: u.FullName, Email: u.Email,
-		PhoneNumber: u.PhoneNumber, Status: string(u.Status), Roles: roles,
+		ID:          u.ID,
+		FullName:    u.FullName,
+		Name:        u.FullName,
+		Email:       u.Email,
+		PhoneNumber: u.PhoneNumber,
+		Address:     u.Address,
+		Status:      string(u.Status),
+		Roles:       roles,
 	}
 }
 

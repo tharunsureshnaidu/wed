@@ -1,7 +1,8 @@
 # Postman
 
-`postman_collection.json` — 125 requests across 15 folders, covering every
-endpoint the API serves.
+`postman_collection.json` — 224 requests across 32 folders, covering every
+endpoint the API serves (Authentication, Public Catalog, Recommendations, Compare Venues,
+Bookings, Quotes & Negotiation, Reviews, Help Center, Feedback, Privacy Policy, Admin, etc.).
 
 It is **generated** from the routes registered in the Go code:
 
@@ -10,7 +11,7 @@ make postman     # regenerate after adding or renaming a route
 ```
 
 A hand-maintained collection goes stale the first time a route changes; this one
-cannot, because `scripts/gen_postman.py` reads the `mux.Handle` calls directly.
+cannot, because `scripts/gen_postman.js` and `scripts/gen_postman.py` read the `mux.Handle` calls directly.
 
 ## Import
 

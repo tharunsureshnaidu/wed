@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuesearch"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 	"math"
@@ -217,6 +218,98 @@ func (f Facility) coordinates() *coordinate {
 		return nil
 	}
 	return &coordinate{Latitude: *f.Lat, Longitude: *f.Lng}
+}
+
+// VenueResponse is the unified public representation of a venue (Hall or Hotel).
+// Private details such as ownerPhoneNumber, ownerId, and vendorId are excluded.
+type VenueResponse struct {
+	ID               string                 `json:"id"`
+	Type             string                 `json:"type"`
+	Name             string                 `json:"name"`
+	Description      *string                `json:"description"`
+	City             *string                `json:"city"`
+	FullAddress      *string                `json:"fullAddress"`
+	State            *string                `json:"state"`
+	Zipcode          *string                `json:"zipcode"`
+	Country          *string                `json:"country"`
+	Lat              *float64               `json:"lat"`
+	Lng              *float64               `json:"lng"`
+	Status           string                 `json:"status"`
+	Verified         bool                   `json:"verified"`
+	Featured         bool                   `json:"featured"`
+	IsVerified       bool                   `json:"isVerified"`
+	IsFeatured       bool                   `json:"isFeatured"`
+	AvgRating        float64                `json:"avgRating"`
+	ReviewCount      int                    `json:"reviewCount"`
+	StartingPrice    *float64               `json:"startingPrice"`
+	DiscountPercent  *float64               `json:"discountPercent"`
+	DiscountLabel    *string                `json:"discountLabel"`
+	DiscountedPrice  *float64               `json:"discountedPrice"`
+	HasDiscount      bool                   `json:"hasDiscount"`
+	StarRating       *int                   `json:"starRating"`
+	CheckInTime      *string                `json:"checkInTime"`
+	CheckOutTime     *string                `json:"checkOutTime"`
+	CapacityPax      *int                   `json:"capacityPax"`
+	AreaSqft         *int                   `json:"areaSqft"`
+	BasePricePerDay  *float64               `json:"basePricePerDay"`
+	SeatingCapacity  *int                   `json:"seatingCapacity"`
+	FloatingCapacity *int                   `json:"floatingCapacity"`
+	MinBookingSize   *int                   `json:"minBookingSize"`
+	EventCodes       []string               `json:"eventCodes"`
+	DistanceKm       *float64               `json:"distanceKm,omitempty"`
+	Amenities        []Amenity              `json:"amenities"`
+	Images           []Image                `json:"images"`
+	Events           []eventtypes.EventType `json:"events"`
+}
+
+func (f Facility) ToVenueResponse() VenueResponse {
+	amenities := f.Amenities
+	if amenities == nil {
+		amenities = []Amenity{}
+	}
+	images := f.Images
+	if images == nil {
+		images = []Image{}
+	}
+	return VenueResponse{
+		ID:               f.ID,
+		Type:             venuetype.API(f.Type),
+		Name:             f.Name,
+		Description:      f.Description,
+		City:             f.City,
+		FullAddress:      f.FullAddress,
+		State:            f.State,
+		Zipcode:          f.Zipcode,
+		Country:          f.Country,
+		Lat:              f.Lat,
+		Lng:              f.Lng,
+		Status:           f.Status,
+		Verified:         f.IsVerified,
+		Featured:         f.IsFeatured,
+		IsVerified:       f.IsVerified,
+		IsFeatured:       f.IsFeatured,
+		AvgRating:        f.AvgRating,
+		ReviewCount:      f.ReviewCount,
+		StartingPrice:    f.StartingPrice,
+		DiscountPercent:  f.DiscountPercent,
+		DiscountLabel:    f.DiscountLabel,
+		DiscountedPrice:  f.DiscountedPrice,
+		HasDiscount:      f.HasDiscount,
+		StarRating:       f.StarRating,
+		CheckInTime:      f.CheckInTime,
+		CheckOutTime:     f.CheckOutTime,
+		CapacityPax:      f.CapacityPax,
+		AreaSqft:         f.AreaSqft,
+		BasePricePerDay:  f.BasePricePerDay,
+		SeatingCapacity:  f.SeatingCapacity,
+		FloatingCapacity: f.FloatingCapacity,
+		MinBookingSize:   f.MinBookingSize,
+		EventCodes:       f.EventCodes,
+		DistanceKm:       f.DistanceKm,
+		Amenities:        amenities,
+		Images:           images,
+		Events:           eventtypes.Views(f.EventCodes),
+	}
 }
 
 // Review is the subset of a review the facility detail page shows.
@@ -498,6 +591,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 		AND ($1 = '' OR f.type = $1)
 		AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		AND ($3 = 0 OR f.owner_id = $3)
+		AND ($3 <> 0 OR COALESCE(f.status, 'APPROVED') NOT IN ('BLOCKED', 'REJECTED'))
 		AND ` + venuesearch.MatchSQL("$4")
 
 	// Search text puts the best match first, as on /search/venues.
@@ -511,7 +605,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 		return nil, 0, err
 	}
 
-	args = append(args, f.Size, f.Page*f.Size)
+	args = append(args, f.Size, httpx.Offset(f.Page, f.Size))
 	rows, err := r.db.Query(ctx,
 		`SELECT `+facilityCols+facilityFrom+clause+
 			` ORDER BY `+order+` LIMIT $5 OFFSET $6`, args...)

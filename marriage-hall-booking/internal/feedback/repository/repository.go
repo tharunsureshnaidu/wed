@@ -11,6 +11,7 @@ import (
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/feedback/domain"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/feedback/dto"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 )
 
 var ErrNotFound = errors.New("feedback not found")
@@ -127,11 +128,7 @@ func (r *pgxRepository) List(ctx context.Context, filter dto.FeedbackFilter) ([]
 	if size <= 0 {
 		size = 20
 	}
-	page := filter.Page
-	if page < 0 {
-		page = 0
-	}
-	offset := page * size
+	offset := httpx.Offset(filter.Page, size)
 
 	listSQL := fmt.Sprintf(`
 		SELECT f.id::text, f.user_id, u.full_name, u.email,
@@ -173,10 +170,7 @@ func (r *pgxRepository) ListByUserID(ctx context.Context, userID int64, page, si
 	if size <= 0 {
 		size = 20
 	}
-	if page < 0 {
-		page = 0
-	}
-	offset := page * size
+	offset := httpx.Offset(page, size)
 
 	var total int64
 	countSQL := `SELECT COUNT(*) FROM app_feedback WHERE user_id = $1 AND is_deleted = FALSE`

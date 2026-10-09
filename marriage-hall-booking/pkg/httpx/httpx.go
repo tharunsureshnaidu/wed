@@ -60,6 +60,17 @@ func Page(r *http.Request) (page, size int) {
 	return page, size
 }
 
+// Offset returns the SQL OFFSET for a given page and size.
+// Both 1-based indexing (where page 1 is the first page) and 0-based indexing
+// (where page 0 is also the first page) are supported so that passing page=1
+// does not skip past the first page of results.
+func Offset(page, size int) int {
+	if page <= 1 {
+		return 0
+	}
+	return (page - 1) * size
+}
+
 type Paged struct {
 	Content       any   `json:"content"`
 	Page          int   `json:"page"`

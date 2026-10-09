@@ -64,8 +64,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/coupons/{id}", owner(func(w http.ResponseWriter, r *http.Request) { h.save(w, r, false) }))
 	mux.Handle("DELETE /api/v1/coupons/{id}", owner(func(w http.ResponseWriter, r *http.Request) { h.remove(w, r, false) }))
 
-	// Coupon cards for signed-in users on app screen (filtered by location <= 50 km or no location)
-	mux.Handle("GET /api/v1/coupons/available", auth(http.HandlerFunc(h.listAvailable)))
+	// Coupon cards for app screen (public endpoint: no token required; optional auth when signed in)
+	mux.Handle("GET /api/v1/coupons/available", middleware.OptionalAuth(h.signer)(http.HandlerFunc(h.listAvailable)))
 
 	// Any signed-in customer can check a code before booking.
 	mux.Handle("POST /api/v1/coupons/validate", auth(http.HandlerFunc(h.validateCode)))
@@ -703,11 +703,7 @@ func optCoord(r *http.Request, key string) *float64 {
 // 2. User has NO location (lat/lng is null) OR Facility has NO location: ALWAYS INCLUDED.
 // 3. Platform-wide coupons (facilityId is null): ALWAYS INCLUDED.
 func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.UserID(r.Context())
-	if !ok {
-		response.Error(w, http.StatusUnauthorized, "Authentication required", "UNAUTHORIZED")
-		return
-	}
+	userID, _ := middleware.UserID(r.Context())
 
 	// The live location the app sent wins over the saved profile one. Only 54
 	// of 559 profiles have coordinates, so without this the radius filter does

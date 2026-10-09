@@ -59,7 +59,7 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
 		  JOIN facilities f ON f.id = r.facility_id
 		 WHERE r.user_id = $1 AND r.is_deleted = FALSE
 		 ORDER BY r.created_at DESC
-		 LIMIT $2 OFFSET $3`, userID, size, page*size)
+		 LIMIT $2 OFFSET $3`, userID, size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
 		return

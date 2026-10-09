@@ -225,7 +225,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	args = append(args, size, page*size)
+	args = append(args, size, httpx.Offset(page, size))
 	rows, err := h.db.Query(r.Context(),
 		`SELECT f.id, f.name, f.type, f.city, f.description, COALESCE(f.avg_rating,0),
 		        COALESCE(f.review_count,0), f.base_price_per_day, f.capacity_pax,

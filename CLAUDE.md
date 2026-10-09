@@ -88,7 +88,7 @@ surfaced when a cleanup failed.
 | Endpoint | Correct fields |
 |---|---|
 | `POST /auth/register` | `fullName`, `email`, `phoneNumber`, `password` — **not** `name` |
-| `POST /auth/register`, `/register/vendor` | optional `address: {street, city, state, zipCode, country}`, each part optional — saved to `addresses`; a vendor's also seeds `vendors.business_address` |
+| `POST /auth/register`, `/register/vendor` | optional `address`: a string (→ `users.address`) **or** `{street, city, state, zipCode, country}`, each part optional (→ `addresses`, and its joined line → `users.address`); a vendor's also seeds `vendors.business_address` |
 | `POST /auth/register/verify-email` | `target`, `otpCode` — **not** `identifier`/`otp` |
 | `POST /auth/login` | `identifier`, `password` |
 | `POST /bookings/halls` | `hallId`, `startDate`, `endDate`, `startTime`, `endTime`, `guestCount`, `roomCount` (optional), `eventType`, `idempotentKey` |

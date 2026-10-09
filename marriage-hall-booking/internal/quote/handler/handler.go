@@ -620,7 +620,7 @@ func (h *Handler) listQuotes(w http.ResponseWriter, r *http.Request, where strin
 		        q.start_time, q.end_time, q.guest_count, q.status, q.quoted_amount
 		 FROM quotes q JOIN facilities f ON f.id = q.facility_id
 		 WHERE `+where+` AND ($2 = '' OR q.status = $2)
-		 ORDER BY q.created_at DESC LIMIT $3 OFFSET $4`, userID, status, size, page*size)
+		 ORDER BY q.created_at DESC LIMIT $3 OFFSET $4`, userID, status, size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
 		return

@@ -41,6 +41,7 @@ type User struct {
 	FullName            string
 	Email               *string
 	PhoneNumber         *string
+	Address             *string
 	PasswordHash        string
 	IsEmailVerified     bool
 	IsPhoneVerified     bool

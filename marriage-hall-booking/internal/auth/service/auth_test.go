@@ -13,6 +13,7 @@ import (
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/migrations"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
@@ -33,6 +34,9 @@ func setup(t *testing.T) (*AuthService, *repository.Repo, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	if err := database.Migrate(ctx, pool, migrations.FS, "."); err != nil {
+		t.Fatal(err)
+	}
 
 	repo := repository.New(pool)
 	signer, err := jwt.NewSigner(testSecret, 15*time.Minute)
@@ -146,7 +150,7 @@ func TestRegisterRejectsDuplicateEmail(t *testing.T) {
 func TestLoginBlockedUntilVerified(t *testing.T) {
 	svc, _, pool := setup(t)
 	email := uniqueEmail(t, pool)
-	if err := svc.Register(context.Background(), RegisterInput{
+	if err := svc.RegisterVendor(context.Background(), RegisterInput{
 		FullName: "A", Email: str(email), Password: "Passw0rd!!",
 	}, "127.0.0.1"); err != nil {
 		t.Fatal(err)
@@ -388,7 +392,7 @@ func TestRegisterVendorCreatesTheVendorBusiness(t *testing.T) {
 
 	if err := svc.RegisterVendor(ctx, RegisterInput{
 		FullName: "Tharun Venues", Email: str(email), Password: "Passw0rd!!",
-		Address: &Address{Street: str("12 MG Road"), City: str("Bengaluru"), ZipCode: str("560001")},
+		AddressParts: &Address{Street: str("12 MG Road"), City: str("Bengaluru"), ZipCode: str("560001")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
@@ -460,5 +464,103 @@ func TestRegisterVendorSurvivesAFailingHook(t *testing.T) {
 	}
 	if !exists {
 		t.Fatal("the account was rolled back because the vendor hook failed")
+	}
+}
+
+func TestRegisterWithAddressPersistsAddress(t *testing.T) {
+	svc, repo, pool := setup(t)
+	email := uniqueEmail(t, pool)
+	ctx := context.Background()
+	address := "Bangalore, Karnataka"
+
+	userView, err := svc.RegisterUser(ctx, RegisterInput{
+		FullName: "John Doe",
+		Email:    str(email),
+		Password: "Passw0rd!!",
+		Address:  &address,
+	}, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("RegisterUser failed: %v", err)
+	}
+	if userView.Address == nil || *userView.Address != address {
+		t.Fatalf("expected userView.Address %q, got %v", address, userView.Address)
+	}
+
+	u, err := repo.FindByIdentifier(ctx, email)
+	if err != nil {
+		t.Fatalf("FindByIdentifier failed: %v", err)
+	}
+	if u.Address == nil || *u.Address != address {
+		t.Fatalf("expected db address %q, got %v", address, u.Address)
+	}
+
+	me, err := svc.Me(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("Me failed: %v", err)
+	}
+	if me.Address == nil || *me.Address != address {
+		t.Fatalf("expected me.Address %q, got %v", address, me.Address)
+	}
+}
+
+func TestRegisterWithoutAddressPersistsNull(t *testing.T) {
+	svc, repo, pool := setup(t)
+	email := uniqueEmail(t, pool)
+	ctx := context.Background()
+
+	userView, err := svc.RegisterUser(ctx, RegisterInput{
+		FullName: "Jane Doe",
+		Email:    str(email),
+		Password: "Passw0rd!!",
+	}, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("RegisterUser failed: %v", err)
+	}
+	if userView.Address != nil {
+		t.Fatalf("expected userView.Address nil, got %q", *userView.Address)
+	}
+
+	u, err := repo.FindByIdentifier(ctx, email)
+	if err != nil {
+		t.Fatalf("FindByIdentifier failed: %v", err)
+	}
+	if u.Address != nil {
+		t.Fatalf("expected db address nil, got %q", *u.Address)
+	}
+
+	me, err := svc.Me(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("Me failed: %v", err)
+	}
+	if me.Address != nil {
+		t.Fatalf("expected me.Address nil, got %q", *me.Address)
+	}
+}
+
+func TestRegisterWithEmptyAddressPersistsNull(t *testing.T) {
+	svc, repo, pool := setup(t)
+	email := uniqueEmail(t, pool)
+	ctx := context.Background()
+	emptyAddr := ""
+
+	userView, err := svc.RegisterUser(ctx, RegisterInput{
+		FullName: "Empty Address User",
+		Email:    str(email),
+		Password: "Passw0rd!!",
+		Address:  &emptyAddr,
+	}, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("RegisterUser failed: %v", err)
+	}
+	if userView.Address == nil || *userView.Address != "" {
+		t.Fatalf("expected userView.Address empty string, got %v", userView.Address)
+	}
+
+	u, err := repo.FindByIdentifier(ctx, email)
+	if err != nil {
+		t.Fatalf("FindByIdentifier failed: %v", err)
+	}
+	if u.Address == nil || *u.Address != "" {
+		t.Fatalf("expected db address empty string, got %v", u.Address)
 	}
 }

@@ -38,6 +38,7 @@ func Spool(r io.Reader, ext string, limit int64) (string, int64, error) {
 
 	n, err := io.Copy(f, io.LimitReader(r, limit))
 	if err != nil {
+		_ = f.Close()
 		os.Remove(path) // never leave a truncated file for the worker to upload
 		return "", 0, err
 	}
@@ -69,5 +70,5 @@ func InSpool(path string) bool {
 		return false
 	}
 	rel, err := filepath.Rel(SpoolDir, filepath.Clean(path))
-	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, "../")
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !strings.HasPrefix(rel, "../")
 }
