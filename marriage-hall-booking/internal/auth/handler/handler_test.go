@@ -76,7 +76,6 @@ type apiResponse struct {
 type userData struct {
 	ID          int64   `json:"id"`
 	FullName    string  `json:"fullName"`
-	Name        string  `json:"name"`
 	Email       *string `json:"email"`
 	PhoneNumber *string `json:"phoneNumber"`
 	Address     *string `json:"address"`
@@ -116,6 +115,9 @@ func TestRegisterHandlerWithAddress(t *testing.T) {
 
 	if strings.Contains(string(resp.Data), `"phone":`) {
 		t.Fatalf("expected response not to contain duplicate 'phone' field, got %s", string(resp.Data))
+	}
+	if strings.Contains(string(resp.Data), `"name":`) {
+		t.Fatalf("expected response not to contain duplicate 'name' field, got %s", string(resp.Data))
 	}
 
 	var u userData
@@ -167,6 +169,9 @@ func TestRegisterHandlerWithoutAddress(t *testing.T) {
 	if strings.Contains(string(resp.Data), `"phone":`) {
 		t.Fatalf("expected response not to contain duplicate 'phone' field, got %s", string(resp.Data))
 	}
+	if strings.Contains(string(resp.Data), `"name":`) {
+		t.Fatalf("expected response not to contain duplicate 'name' field, got %s", string(resp.Data))
+	}
 
 	var u userData
 	if err := json.Unmarshal(resp.Data, &u); err != nil {
@@ -212,6 +217,9 @@ func TestRegisterHandlerWithEmptyAddress(t *testing.T) {
 	if strings.Contains(string(resp.Data), `"phone":`) {
 		t.Fatalf("expected response not to contain duplicate 'phone' field, got %s", string(resp.Data))
 	}
+	if strings.Contains(string(resp.Data), `"name":`) {
+		t.Fatalf("expected response not to contain duplicate 'name' field, got %s", string(resp.Data))
+	}
 
 	var u userData
 	if err := json.Unmarshal(resp.Data, &u); err != nil {
@@ -249,6 +257,9 @@ func TestRegisterHandlerWithNullAddress(t *testing.T) {
 
 	if strings.Contains(string(resp.Data), `"phone":`) {
 		t.Fatalf("expected response not to contain duplicate 'phone' field, got %s", string(resp.Data))
+	}
+	if strings.Contains(string(resp.Data), `"name":`) {
+		t.Fatalf("expected response not to contain duplicate 'name' field, got %s", string(resp.Data))
 	}
 
 	var u userData

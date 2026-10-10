@@ -413,13 +413,19 @@ func (h *Handler) listVenues(w http.ResponseWriter, r *http.Request) {
 		dbType = venuetype.Stored(upper)
 	}
 
+	eventType := strings.TrimSpace(r.URL.Query().Get("eventType"))
+	if eventType == "" {
+		eventType = strings.TrimSpace(r.URL.Query().Get("event_type"))
+	}
+
 	page, size := httpx.Page(r)
 	items, total, err := h.repo.List(r.Context(), repository.ListFilter{
-		Type:   dbType,
-		Search: r.URL.Query().Get("search"),
-		City:   r.URL.Query().Get("city"),
-		Page:   page,
-		Size:   size,
+		Type:      dbType,
+		EventType: eventType,
+		Search:    r.URL.Query().Get("search"),
+		City:      r.URL.Query().Get("city"),
+		Page:      page,
+		Size:      size,
 	})
 	if err != nil {
 		httpx.Fail(w, err)
@@ -446,8 +452,12 @@ func (h *Handler) listWithType(w http.ResponseWriter, r *http.Request, forced st
 	if t == "" {
 		t = venuetype.Stored(r.URL.Query().Get("type"))
 	}
+	eventType := strings.TrimSpace(r.URL.Query().Get("eventType"))
+	if eventType == "" {
+		eventType = strings.TrimSpace(r.URL.Query().Get("event_type"))
+	}
 	items, total, err := h.repo.List(r.Context(), repository.ListFilter{
-		Type: t, Search: r.URL.Query().Get("search"), City: r.URL.Query().Get("city"),
+		Type: t, EventType: eventType, Search: r.URL.Query().Get("search"), City: r.URL.Query().Get("city"),
 		Page: page, Size: size,
 	})
 	if err != nil {

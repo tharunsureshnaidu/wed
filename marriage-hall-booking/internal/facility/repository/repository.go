@@ -361,7 +361,7 @@ type Image struct {
 	SortOrder int    `json:"sortOrder"`
 }
 
-const facilityCols = `f.id, f.owner_id, u.phone_number, f.vendor_id, f.name, f.description,
+const FacilityCols = `f.id, f.owner_id, u.phone_number, f.vendor_id, f.name, f.description,
 	f.type, f.city, f.full_address, f.state, f.zipcode, f.country, f.lat, f.lng,
 	f.status, f.is_verified, f.is_featured, COALESCE(f.avg_rating,0), COALESCE(f.review_count,0),
 	f.star_rating, f.check_in_time, f.check_out_time, f.capacity_pax, f.area_sqft,
@@ -374,6 +374,8 @@ const facilityCols = `f.id, f.owner_id, u.phone_number, f.vendor_id, f.name, f.d
 	     THEN f.discount_percent END,
 	CASE WHEN f.discount_valid_until IS NULL OR f.discount_valid_until > CURRENT_TIMESTAMP
 	     THEN f.discount_label END`
+
+const facilityCols = FacilityCols
 
 // applyDiscount derives the struck-through price.
 //
@@ -393,10 +395,11 @@ func (f *Facility) applyDiscount() {
 	f.DiscountedPrice = &d
 }
 
-// facilityFrom joins the owner so ownerPhoneNumber comes back in the same read.
-const facilityFrom = ` FROM facilities f JOIN users u ON u.id = f.owner_id`
+// FacilityFrom joins the owner so ownerPhoneNumber comes back in the same read.
+const FacilityFrom = ` FROM facilities f JOIN users u ON u.id = f.owner_id`
+const facilityFrom = FacilityFrom
 
-func scanFacility(row pgx.Row) (*Facility, error) {
+func ScanFacility(row pgx.Row) (*Facility, error) {
 	var f Facility
 	err := row.Scan(&f.ID, &f.OwnerID, &f.OwnerPhoneNumber, &f.VendorID, &f.Name, &f.Description,
 		&f.Type, &f.City, &f.FullAddress, &f.State, &f.Zipcode, &f.Country, &f.Lat, &f.Lng,
@@ -412,6 +415,10 @@ func scanFacility(row pgx.Row) (*Facility, error) {
 	f.Verified, f.Featured = f.IsVerified, f.IsFeatured
 	f.Amenities, f.Images = []Amenity{}, []Image{}
 	return &f, err
+}
+
+func scanFacility(row pgx.Row) (*Facility, error) {
+	return ScanFacility(row)
 }
 
 type CreateInput struct {
@@ -572,12 +579,13 @@ func (r *Repo) SoftDelete(ctx context.Context, id string) error {
 }
 
 type ListFilter struct {
-	Type    string
-	Search  string
-	City    string
-	OwnerID int64 // 0 means any owner
-	Page    int
-	Size    int
+	Type      string
+	EventType string
+	Search    string
+	City      string
+	OwnerID   int64 // 0 means any owner
+	Page      int
+	Size      int
 }
 
 func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error) {
@@ -585,14 +593,23 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	// building the WHERE clause dynamically - every value stays a bound parameter,
 	// so no caller input can reach the SQL text.
 	f.Search = strings.TrimSpace(f.Search)
-	args := []any{f.Type, f.City, f.OwnerID, f.Search}
+	args := []any{f.Type, f.City, f.OwnerID, f.Search, strings.ToUpper(strings.TrimSpace(f.EventType))}
 	// Columns are qualified with f. because facilityFrom joins users.
 	clause := ` WHERE f.is_deleted = FALSE
 		AND ($1 = '' OR f.type = $1)
 		AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		AND ($3 = 0 OR f.owner_id = $3)
 		AND ($3 <> 0 OR ` + venuetype.LiveSQL("f") + `)
-		AND ` + venuesearch.MatchSQL("$4")
+		AND ` + venuesearch.MatchSQL("$4") + `
+		AND ($5 = '' OR EXISTS (
+		      SELECT 1 FROM facility_events fe
+		       WHERE fe.facility_id = f.id AND fe.event_code = $5)
+		    OR NOT EXISTS (
+		      SELECT 1 FROM facility_events fe WHERE fe.facility_id = f.id))`
+
+	// eventType was parsed and passed down but never reached this WHERE, so
+	// ?eventType= returned every venue. A venue with no declared events still
+	// matches - silence means "not stated", as on /search/venues and booking.
 
 	// Search text puts the best match first, as on /search/venues.
 	order := "f.is_featured DESC, f.created_at DESC"
@@ -608,7 +625,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	args = append(args, f.Size, httpx.Offset(f.Page, f.Size))
 	rows, err := r.db.Query(ctx,
 		`SELECT `+facilityCols+facilityFrom+clause+
-			` ORDER BY `+order+` LIMIT $5 OFFSET $6`, args...)
+			` ORDER BY `+order+` LIMIT $6 OFFSET $7`, args...)
 	if err != nil {
 		return nil, 0, err
 	}
