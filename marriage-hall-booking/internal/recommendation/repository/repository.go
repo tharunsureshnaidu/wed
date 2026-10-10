@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/recommendation/dto"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
@@ -57,10 +58,7 @@ func (r *Repo) GetRecommendations(ctx context.Context, params dto.Recommendation
 	}
 
 	// 2. Fetch paginated results ordered by rating DESC, then distance ASC
-	offset := 0
-	if params.Page > 1 {
-		offset = (params.Page - 1) * params.Size
-	}
+	offset := httpx.Offset(params.Page, params.Size)
 
 	selectQuery := `
 		SELECT f.id::text,

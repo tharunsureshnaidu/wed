@@ -575,6 +575,10 @@ func (h *Handler) listVendors(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, v)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Vendors retrieved successfully", httpx.NewPaged(out, page, size, total))
 }
 
@@ -646,7 +650,7 @@ func (h *Handler) setKyc(w http.ResponseWriter, r *http.Request, status, reason 
 func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
 	page, size := httpx.Page(r)
 	rows, err := h.db.Query(r.Context(),
-		`SELECT id, name, type, status, owner_id, COALESCE(city,'')
+		`SELECT id, name, type, status, owner_id, COALESCE(city,''), count(*) OVER ()
 		 FROM facilities WHERE is_deleted = FALSE
 		   AND ($1 = '' OR type = $1)
 		   AND ($2 = '' OR name ILIKE '%'||$2||'%')
@@ -667,16 +671,21 @@ func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
 		City    string `json:"city"`
 	}
 	out := []row{}
+	var total int64 // the page length was reported before, so totalPages was always 1
 	for rows.Next() {
 		var f row
-		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.Status, &f.OwnerID, &f.City); err != nil {
+		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.Status, &f.OwnerID, &f.City, &total); err != nil {
 			httpx.Fail(w, err)
 			return
 		}
 		f.Type = venuetype.API(f.Type)
 		out = append(out, f)
 	}
-	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(out, page, size, int64(len(out))))
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(out, page, size, total))
 }
 
 func (h *Handler) approveFacility(w http.ResponseWriter, r *http.Request) {
@@ -711,6 +720,13 @@ func (h *Handler) approveFacility(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	actor, _ := middleware.UserID(r.Context())
+	audit.Record(r.Context(), h.db, audit.Decision{
+		Actor: actor, Action: "SET_FACILITY_STATUS_" + status,
+		Entity: audit.EntityFacility, EntityID: id,
+		Status: status, IP: httpx.IP(r),
+		Extra: map[string]any{"name": name, "ownerId": ownerID},
+	})
 	h.notifyStatus(r.Context(), StatusChange{
 		Entity: "facility", EntityID: id, UserID: ownerID,
 		Status: status, Name: name,

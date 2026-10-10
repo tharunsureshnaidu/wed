@@ -100,8 +100,8 @@ func TestValidationErrors(t *testing.T) {
 			wantMsg:    "Invalid radiusKm",
 		},
 		{
-			name:       "Invalid page 0",
-			query:      "?lat=12.9716&lng=77.5946&type=ALL&page=0",
+			name:       "Invalid page -1",
+			query:      "?lat=12.9716&lng=77.5946&type=ALL&page=-1",
 			wantStatus: http.StatusBadRequest,
 			wantMsg:    "Invalid page number",
 		},

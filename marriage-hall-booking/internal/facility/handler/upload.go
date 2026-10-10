@@ -236,12 +236,6 @@ func baseURLOf(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// ServeUploads registers the static handler for saved files.
-func ServeUploads(mux *http.ServeMux) {
-	fs := http.FileServer(http.Dir(uploadDir))
-	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", fs))
-}
-
 // decodeFormNumbers fills the numeric and boolean fields from a plain HTML
 // form, where every value arrives as a string and so cannot be unmarshalled
 // straight into an int or a float.

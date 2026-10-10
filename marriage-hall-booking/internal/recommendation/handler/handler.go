@@ -71,11 +71,11 @@ func (h *Handler) GetRecommendations(w http.ResponseWriter, r *http.Request) {
 		radiusKm = rVal
 	}
 
-	// 5. Validate page (optional, default 1)
-	page := 1
+	// 5. Validate page (optional, 0-based like every other list, default 0)
+	page := 0
 	if pageStr := q.Get("page"); pageStr != "" {
 		pVal, err := strconv.Atoi(pageStr)
-		if err != nil || pVal < 1 {
+		if err != nil || pVal < 0 {
 			response.Error(w, http.StatusBadRequest, "Invalid page number", "VALIDATION_ERROR")
 			return
 		}
