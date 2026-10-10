@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
@@ -370,17 +370,10 @@ func fail(w http.ResponseWriter, err error) {
 	response.Error(w, http.StatusInternalServerError, "Something went wrong", "INTERNAL_ERROR")
 }
 
-func ip(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		hops := strings.Split(xff, ",")
-		return strings.TrimSpace(hops[len(hops)-1])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// ip is the caller's address for login_attempts, OTP and refresh-token rows.
+// It used to trust the last X-Forwarded-For hop unconditionally, so with no
+// proxy in front a client wrote whatever address it liked into the audit trail.
+func ip(r *http.Request) string { return httpx.ClientIP(r) }
 
 func empty(s *string) bool { return s == nil || strings.TrimSpace(*s) == "" }
 

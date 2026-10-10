@@ -222,7 +222,7 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 	return u, nil
 }
 
-// Login checks the password before any account-state check, so that lock,
+// Login checks the password before any account state except the lock, so
 // suspension and verification states are only learnable by someone who already
 // proved they know the password.
 func (s *AuthService) Login(ctx context.Context, identifier, password, ip, device string) (*AuthResult, error) {
@@ -236,45 +236,65 @@ func (s *AuthService) Login(ctx context.Context, identifier, password, ip, devic
 		return nil, err
 	}
 
+	// A lock is refused before the password is looked at, with the same 401 as
+	// a wrong one. Checked after the password, it never slowed guessing - it
+	// only told a distributed guesser, by a 423, exactly which guess was right.
+	// The decoy compare keeps this path as slow as a real one.
+	if u.AccountLockedUntil != nil && u.AccountLockedUntil.After(time.Now()) {
+		bcrypt.CompareHashAndPassword(decoyHash, []byte(password))
+		s.recordFailure(ctx, identifier, ip, "Account locked")
+		return nil, apperr.Unauthorized("INVALID_CREDENTIALS", invalidCredentials)
+	}
+
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
 		s.recordFailure(ctx, identifier, ip, "Invalid password")
 		return nil, apperr.Unauthorized("INVALID_CREDENTIALS", invalidCredentials)
 	}
 
 	if u.AccountLockedUntil != nil {
-		if u.AccountLockedUntil.After(time.Now()) {
-			return nil, apperr.New(423, "ACCOUNT_LOCKED", "Account is locked")
-		}
 		// Lock elapsed - clear it so the counter starts fresh.
 		if err := s.repo.ClearExpiredLock(ctx, u.ID); err != nil {
 			return nil, err
 		}
 	}
-	if u.IsDeleted {
-		return nil, apperr.Forbidden("ACCOUNT_DELETED", "Account has been deleted")
-	}
-	if u.Status == domain.StatusSuspended {
-		return nil, apperr.Forbidden("ACCOUNT_SUSPENDED", "Account is suspended")
-	}
-	// Verification gates vendors, not customers. A customer who signed up and
-	// has not yet opened the OTP mail should still be able to browse and book;
-	// locking them out of an account they just created is the surest way to
-	// lose them. A vendor is different: their listing carries a contact that
-	// real customers will rely on, so the contact is confirmed before they can
-	// publish one.
-	//
-	// The status is left as PENDING_VERIFICATION rather than flipped to ACTIVE,
-	// so "never verified" stays visible to ops and can gate a future action.
-	if u.Status == domain.StatusPendingVerification &&
-		u.HasRole(domain.RoleHallOwner) && !u.IsVerified() {
-		return nil, apperr.Forbidden("UNVERIFIED_ACCOUNT",
-			"Verify your email or phone to access your vendor account")
+	if err := canSignIn(u); err != nil {
+		return nil, err
 	}
 
 	if err := s.repo.RecordSuccessfulAttempt(ctx, identifier, ip); err != nil {
 		return nil, err
 	}
 	return s.issue(ctx, u, ip, device)
+}
+
+// canSignIn is the one account-state gate for issuing a session from a
+// password or a refresh token. Login and Refresh used to carry their own copies
+// and drifted: an INACTIVE user could log in, then was signed out at the first
+// refresh - the worst of both behaviours.
+//
+// Verification gates vendors, not customers. A customer who signed up and has
+// not yet opened the OTP mail should still be able to browse and book; locking
+// them out of an account they just created is the surest way to lose them. A
+// vendor's listing carries a contact real customers will rely on, so it is
+// confirmed first. The status is left as PENDING_VERIFICATION rather than
+// flipped to ACTIVE, so "never verified" stays visible to ops.
+func canSignIn(u *domain.User) error {
+	switch {
+	case u.IsDeleted:
+		return apperr.Forbidden("ACCOUNT_DELETED", "Account has been deleted")
+	case u.Status == domain.StatusSuspended:
+		return apperr.Forbidden("ACCOUNT_SUSPENDED", "Account is suspended")
+	case u.Status == domain.StatusPendingVerification:
+		if u.HasRole(domain.RoleHallOwner) && !u.IsVerified() {
+			return apperr.Forbidden("UNVERIFIED_ACCOUNT",
+				"Verify your email or phone to access your vendor account")
+		}
+		return nil
+	case u.Status == domain.StatusActive:
+		return nil
+	default: // INACTIVE, or a status added later: closed until someone opens it
+		return apperr.Forbidden("USER_INACTIVE", "User account is inactive or disabled")
+	}
 }
 
 func (s *AuthService) recordFailure(ctx context.Context, identifier, ip, reason string) {
@@ -334,13 +354,8 @@ func (s *AuthService) Refresh(ctx context.Context, raw, ip, device string) (*Aut
 	if err != nil {
 		return nil, err
 	}
-	// Mirrors the login gate exactly. Allowing an unverified customer to log in
-	// but not to refresh would sign them out an hour later with no explanation
-	// - the worst of both behaviours.
-	pendingOnly := u.Status == domain.StatusPendingVerification &&
-		!u.HasRole(domain.RoleHallOwner)
-	if (u.Status != domain.StatusActive && !pendingOnly) || u.IsDeleted {
-		return nil, apperr.Forbidden("USER_INACTIVE", "User account is inactive or disabled")
+	if err := canSignIn(u); err != nil {
+		return nil, err
 	}
 	return s.issue(ctx, u, ip, device)
 }
@@ -369,9 +384,15 @@ func (s *AuthService) ForgotPassword(ctx context.Context, identifier, ip string)
 		logger.Warn("password reset token not issued", "identifier", identifier, logger.Err(err))
 		return nil
 	}
-	logger.Warn("password reset link logged instead of emailed",
-		"identifier", identifier,
-		"link", fmt.Sprintf("%s?identifier=%s&token=%s", s.resetURL, url.QueryEscape(identifier), token))
+	link := fmt.Sprintf("%s?identifier=%s&token=%s", s.resetURL, url.QueryEscape(identifier), token)
+	// The link is a password reset for this account: anyone who can read the
+	// log could take it over. Logged only under the same dev switch as OTPs.
+	if s.otp.LogCodes {
+		logger.Warn("password reset link logged (LOG_OTP_CODES=true)", "identifier", identifier, "link", link)
+	}
+	s.otp.deliver(ctx, identifier, "Reset your password",
+		fmt.Sprintf("Use this link to reset your password. It expires in %d minutes and works once. "+
+			"If you did not ask for it, ignore this message.\n\n%s", int(otpExpiry.Minutes()), link))
 	return nil
 }
 

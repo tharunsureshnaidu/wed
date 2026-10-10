@@ -186,10 +186,43 @@ func TestAccountLocksAfterFiveFailures(t *testing.T) {
 	for i := 0; i < maxFailedAttempts; i++ {
 		svc.Login(context.Background(), email, "wrong", "127.0.0.1", "t")
 	}
-	// The correct password must now be refused.
+	// The correct password must now be refused - with the same answer as a
+	// wrong one, or the lock tells a guesser which guess was right.
 	_, err := svc.Login(context.Background(), email, "Passw0rd!!", "127.0.0.1", "t")
-	if got := code(t, err); got != "ACCOUNT_LOCKED" {
-		t.Fatalf("want ACCOUNT_LOCKED, got %q", got)
+	_, errWrong := svc.Login(context.Background(), email, "wrong", "127.0.0.1", "t")
+	if got := code(t, err); got != "INVALID_CREDENTIALS" {
+		t.Fatalf("want INVALID_CREDENTIALS, got %q", got)
+	}
+	if err.Error() != errWrong.Error() {
+		t.Fatalf("locked account answers differ for right and wrong password: %q vs %q", err, errWrong)
+	}
+}
+
+// Login and Refresh share this gate; each row is a state that once drifted.
+func TestCanSignIn(t *testing.T) {
+	owner := []string{domain.RoleHallOwner}
+	cases := []struct {
+		name string
+		u    domain.User
+		want string // "" = allowed
+	}{
+		{"active", domain.User{Status: domain.StatusActive}, ""},
+		{"unverified customer", domain.User{Status: domain.StatusPendingVerification}, ""},
+		{"unverified vendor", domain.User{Status: domain.StatusPendingVerification, Roles: owner}, "UNVERIFIED_ACCOUNT"},
+		{"phone-verified vendor", domain.User{Status: domain.StatusPendingVerification, Roles: owner, IsPhoneVerified: true}, ""},
+		{"inactive", domain.User{Status: domain.StatusInactive}, "USER_INACTIVE"},
+		{"suspended", domain.User{Status: domain.StatusSuspended}, "ACCOUNT_SUSPENDED"},
+		{"deleted", domain.User{Status: domain.StatusActive, IsDeleted: true}, "ACCOUNT_DELETED"},
+	}
+	for _, c := range cases {
+		err := canSignIn(&c.u)
+		got := ""
+		if err != nil {
+			got = code(t, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,6 +55,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/notify"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 )
 
@@ -120,6 +122,21 @@ func main() {
 	middleware.SetRevoker(revoker)
 
 	otpSvc := authservice.NewOtpService(authRepo, cfg.LogOtpCodes)
+	// Codes and reset links go straight to the provider, by email when the
+	// target is an address and by SMS otherwise. A sender with no credentials
+	// is skipped rather than called: its log-only fallback prints the body,
+	// and the code is logged only under LOG_OTP_CODES.
+	otpSenders := notify.FromEnv(nil)
+	otpSvc.Send = func(ctx context.Context, target, subject, body string) error {
+		s := otpSenders[notify.SMS]
+		if strings.Contains(target, "@") {
+			s = otpSenders[notify.Email]
+		}
+		if !s.Live() {
+			return nil
+		}
+		return s.Send(ctx, notify.Message{To: target, Subject: subject, Body: body})
+	}
 	tokenSvc := authservice.NewTokenService(authRepo, signer, cfg.JWTRefreshExpiry, revoker)
 	authSvc := authservice.NewAuthService(authRepo, otpSvc, tokenSvc, cfg.ResetPasswordURL)
 	authSvc.OnUserCreated = func(ctx context.Context, userID int64, first string, last *string, addr *authservice.Address) error {
