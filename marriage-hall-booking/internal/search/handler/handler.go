@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -134,10 +135,30 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, size := httpx.Page(r)
 
-	minCap, _ := strconv.Atoi(q.Get("minCapacity"))
-	maxCap, _ := strconv.Atoi(q.Get("maxCapacity"))
-	minBudget, _ := strconv.ParseFloat(q.Get("minBudget"), 64)
-	maxBudget, _ := strconv.ParseFloat(q.Get("maxBudget"), 64)
+	// An unparseable filter used to be dropped silently, so "minBudget=50k"
+	// searched with no budget at all and looked like a working filter.
+	var bad []string
+	num := func(name string, whole bool) float64 {
+		v := q.Get(name)
+		if v == "" {
+			return 0
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) || (whole && f != math.Trunc(f)) {
+			bad = append(bad, name)
+			return 0
+		}
+		return f
+	}
+	minCap := int(num("minCapacity", true))
+	maxCap := int(num("maxCapacity", true))
+	minBudget := num("minBudget", false)
+	maxBudget := num("maxBudget", false)
+	if len(bad) > 0 {
+		response.Error(w, http.StatusBadRequest,
+			strings.Join(bad, ", ")+" must be a non-negative number", "VALIDATION_ERROR")
+		return
+	}
 
 	// An inverted range can only ever match nothing. Answering "no venues"
 	// reads as "none available" and sends the user off changing the wrong
@@ -188,7 +209,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	where := `
-		WHERE f.is_deleted = FALSE AND f.status <> 'BLOCKED'
+		WHERE ` + venuetype.LiveSQL("f") + `
 		  AND ` + venuesearch.MatchSQL("$1") + `
 		  AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		  AND ($3 = '' OR f.type = $3)
@@ -248,6 +269,10 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 		v.Type = venuetype.API(v.Type)
 		out = append(out, v)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 
 	took := time.Since(started).Milliseconds()
 	searchID := h.recordSearch(r, text, q.Get("city"), len(out), took)
@@ -292,7 +317,7 @@ func (h *Handler) suggestions(w http.ResponseWriter, r *http.Request) {
 
 // names returns matching venue names and cities - what a type-ahead needs.
 // Same match as the search itself, typos included, best match first; and it
-// skips BLOCKED venues, which the search would never return.
+// skips venues that are not live, which the search would never return.
 func (h *Handler) names(w http.ResponseWriter, r *http.Request, limit int, msg string) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
@@ -303,13 +328,13 @@ func (h *Handler) names(w http.ResponseWriter, r *http.Request, limit int, msg s
 		`SELECT name FROM (
 		    SELECT f.name, 1 AS kind, max(word_similarity($1, f.name)) AS score
 		      FROM facilities f
-		      WHERE f.is_deleted = FALSE AND f.status <> 'BLOCKED'
+		      WHERE `+venuetype.LiveSQL("f")+`
 		        AND `+venuesearch.Like("$1", "f.name")+`
 		      GROUP BY f.name
 		    UNION ALL
 		    SELECT f.city, 2, max(word_similarity($1, f.city))
 		      FROM facilities f
-		      WHERE f.is_deleted = FALSE AND f.status <> 'BLOCKED'
+		      WHERE `+venuetype.LiveSQL("f")+`
 		        AND `+venuesearch.Like("$1", "f.city")+`
 		      GROUP BY f.city
 		 ) s ORDER BY kind, score DESC, name LIMIT $2`, q, limit)
@@ -326,6 +351,10 @@ func (h *Handler) names(w http.ResponseWriter, r *http.Request, limit int, msg s
 			return
 		}
 		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, msg, out)
 }
@@ -349,7 +378,7 @@ func (h *Handler) similar(w http.ResponseWriter, r *http.Request) {
 		        COALESCE(f.review_count,0), f.base_price_per_day, f.capacity_pax,
 		        COALESCE(f.is_featured,FALSE)
 		 FROM facilities f, src
-		 WHERE f.id <> $1 AND f.is_deleted = FALSE AND f.status <> 'BLOCKED'
+		 WHERE f.id <> $1 AND `+venuetype.LiveSQL("f")+`
 		   AND f.type = src.type
 		 ORDER BY (LOWER(f.city) = LOWER(src.city)) DESC,
 		          abs(COALESCE(f.capacity_pax,0) - COALESCE(src.capacity_pax,0)),
@@ -370,6 +399,10 @@ func (h *Handler) similar(w http.ResponseWriter, r *http.Request) {
 		}
 		v.Type = venuetype.API(v.Type)
 		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, "Similar venues fetched", searchResult{
 		Content: out, Page: 0, Size: limit, Total: int64(len(out)),
@@ -442,6 +475,10 @@ func (h *Handler) trending(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, s)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Trending searches fetched", out)
 }
 
@@ -455,7 +492,7 @@ func (h *Handler) popularCities(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(),
 		`SELECT city FROM (
 		    SELECT f.city, count(*) * 10 AS score FROM facilities f
-		      WHERE f.is_deleted = FALSE AND f.city IS NOT NULL AND f.city <> ''
+		      WHERE `+venuetype.LiveSQL("f")+` AND f.city IS NOT NULL AND f.city <> ''
 		      GROUP BY f.city
 		    UNION ALL
 		    SELECT e.city, count(*) AS score FROM search_events e
@@ -476,6 +513,10 @@ func (h *Handler) popularCities(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, "Popular cities fetched", out)
 }
