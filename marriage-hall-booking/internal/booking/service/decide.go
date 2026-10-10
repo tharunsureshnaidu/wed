@@ -58,7 +58,9 @@ func (s *Service) Decide(ctx context.Context, bookingID string, actorID int64, i
 
 	// Only a PENDING booking can be decided. An already-confirmed one is a
 	// no-op the owner should be told about rather than silently re-confirmed,
-	// and a cancelled one must never come back to life.
+	// and a cancelled one must never come back to life. A rejection gives its
+	// dates back inside SetStatus's transaction, so a failed release can no
+	// longer leave a REJECTED booking blocking the venue.
 	if err := s.repo.SetStatus(ctx, bookingID, to, reason, from...); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, apperr.Conflict("INVALID_STATE",
@@ -67,21 +69,13 @@ func (s *Service) Decide(ctx context.Context, bookingID string, actorID int64, i
 		return nil, err
 	}
 
-	// A rejected booking must give its dates back, or the venue stays blocked
-	// by a booking it just turned down.
-	if !confirm {
-		if err := s.repo.ReleaseInventory(ctx, bookingID); err != nil {
-			return nil, err
-		}
-	}
-
 	b, err = s.repo.Get(ctx, bookingID)
 	if err != nil {
 		return nil, err
 	}
 	_ = s.repo.EnrichUsers(ctx, []*repository.Booking{b})
 	if s.OnBookingDecided != nil {
-		s.OnBookingDecided(ctx, b, confirm, reason)
+		s.OnBookingDecided(ctx, b, confirm, reason, actorID)
 	}
 	return b, nil
 }

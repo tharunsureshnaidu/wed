@@ -83,7 +83,11 @@ func TestLiveDatabaseIntegration(t *testing.T) {
 	}
 	t.Logf("=== TYPE=ALL: Found %d (total %d) ===", len(itemsAll), countAll)
 	for i, it := range itemsAll {
-		t.Logf("[%d] %s (%s) - Rating: %.1f, Dist: %.2f km", i+1, it.Name, it.Type, it.Rating, it.DistanceKm)
+		var dist float64
+		if it.DistanceKm != nil {
+			dist = *it.DistanceKm
+		}
+		t.Logf("[%d] %s (%s) - Rating: %.1f, Dist: %.2f km", i+1, it.Name, it.Type, it.AvgRating, dist)
 	}
 
 	// 2. Test HALL
@@ -100,7 +104,11 @@ func TestLiveDatabaseIntegration(t *testing.T) {
 	}
 	t.Logf("=== TYPE=HALL: Found %d (total %d) ===", len(itemsHall), countHall)
 	for i, it := range itemsHall {
-		t.Logf("[%d] %s (%s) - Rating: %.1f, Dist: %.2f km", i+1, it.Name, it.Type, it.Rating, it.DistanceKm)
+		var dist float64
+		if it.DistanceKm != nil {
+			dist = *it.DistanceKm
+		}
+		t.Logf("[%d] %s (%s) - Rating: %.1f, Dist: %.2f km", i+1, it.Name, it.Type, it.AvgRating, dist)
 		if it.Type != "HALL" {
 			t.Errorf("Expected HALL, got %s", it.Type)
 		}
@@ -120,9 +128,42 @@ func TestLiveDatabaseIntegration(t *testing.T) {
 	}
 	t.Logf("=== TYPE=HOTEL: Found %d (total %d) ===", len(itemsHotel), countHotel)
 	for i, it := range itemsHotel {
-		t.Logf("[%d] %s (%s) - Rating: %.1f, Dist: %.2f km", i+1, it.Name, it.Type, it.Rating, it.DistanceKm)
+		var dist float64
+		if it.DistanceKm != nil {
+			dist = *it.DistanceKm
+		}
+		t.Logf("[%d] %s (%s) - Rating: %.1f, Dist: %.2f km", i+1, it.Name, it.Type, it.AvgRating, dist)
 		if it.Type != "HOTEL" {
 			t.Errorf("Expected HOTEL, got %s", it.Type)
+		}
+	}
+
+	// 4. Test with eventType = "WEDDING"
+	itemsWed, countWed, err := repo.GetRecommendations(ctx, dto.RecommendationParams{
+		Lat:       12.9716,
+		Lng:       77.5946,
+		Type:      "ALL",
+		RadiusKm:  50,
+		EventType: "WEDDING",
+		Page:      1,
+		Size:      10,
+	})
+	if err != nil {
+		t.Fatalf("GetRecommendations WEDDING error: %v", err)
+	}
+	t.Logf("=== EVENT_TYPE=WEDDING: Found %d (total %d) ===", len(itemsWed), countWed)
+	for _, it := range itemsWed {
+		if len(it.EventCodes) > 0 {
+			hasWedding := false
+			for _, c := range it.EventCodes {
+				if c == "WEDDING" {
+					hasWedding = true
+					break
+				}
+			}
+			if !hasWedding {
+				t.Errorf("Venue %s has events %v but neither empty nor contains WEDDING", it.Name, it.EventCodes)
+			}
 		}
 	}
 }

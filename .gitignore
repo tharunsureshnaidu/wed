@@ -1,0 +1,7 @@
+# Build output and tool caches, at any depth. A 28MB api.exe and a whole Kafka
+# distribution (72MB jar, broker logs) have both been committed by accident.
+*.exe
+__pycache__/
+*.pyc
+kafka_*/
+.claude/worktrees/

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -41,7 +42,7 @@ type Booking struct {
 	User       *BookingUser `json:"user,omitempty"`
 	TargetType string       `json:"targetType"`
 	TargetID   string       `json:"targetId"`
-	CheckIn    time.Time `json:"checkIn"`
+	CheckIn    time.Time    `json:"checkIn"`
 	// StartDate/EndDate are checkIn/checkOut under the names the booking screen
 	// uses; both spellings are returned so neither client has to translate.
 	StartDate  time.Time `json:"startDate"`
@@ -60,16 +61,16 @@ type Booking struct {
 	// already reviewed this venue. Reviews are unique per (user, facility),
 	// not per booking, so a second booking at the same hall is not a second
 	// chance to review it.
-	CanReview      bool       `json:"canReview"`
-	HasReviewed    bool       `json:"hasReviewed"`
-	MyRating       *int       `json:"myRating"`
-	MyReviewID     *string    `json:"myReviewId"`
-	EventType      *string    `json:"eventType"`
-	SlotType       *string    `json:"slotType,omitempty"`
-	TotalAmount    float64    `json:"totalAmount"`
-	DiscountAmount float64    `json:"discountAmount"`
-	CouponCode     *string    `json:"couponCode"`
-	PaidAmount     float64    `json:"paidAmount"`
+	CanReview       bool       `json:"canReview"`
+	HasReviewed     bool       `json:"hasReviewed"`
+	MyRating        *int       `json:"myRating"`
+	MyReviewID      *string    `json:"myReviewId"`
+	EventType       *string    `json:"eventType"`
+	SlotType        *string    `json:"slotType,omitempty"`
+	TotalAmount     float64    `json:"totalAmount"`
+	DiscountAmount  float64    `json:"discountAmount"`
+	CouponCode      *string    `json:"couponCode"`
+	PaidAmount      float64    `json:"paidAmount"`
 	Status          string     `json:"status"`
 	RejectionReason *string    `json:"rejectionReason"`
 	IdempotentKey   *string    `json:"idempotentKey,omitempty"`
@@ -235,6 +236,28 @@ func (r *Repo) CreateHallBooking(ctx context.Context, in HallBookingInput) (*Boo
 		end = in.EventDate
 	}
 	for d := in.EventDate; !d.After(end); d = d.AddDate(0, 0, 1) {
+		// FULL_DAY overlaps both halves, but the unique index is per slot, so
+		// FULL_DAY and EVENING on one date were two rows and both succeeded.
+		// Serialise every claim on (hall, date) - an advisory lock, because
+		// there may be no row yet to lock - then refuse a FULL_DAY against any
+		// booked half, and a half against a booked FULL_DAY. Dates are claimed
+		// in ascending order, so two multi-day bookings cannot deadlock.
+		if _, err := tx.Exec(ctx,
+			`SELECT pg_advisory_xact_lock(hashtext($1::text || '/' || $2::date::text))`,
+			in.FacilityID, d); err != nil {
+			return nil, err
+		}
+		var clash bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM hall_availability
+			  WHERE facility_id = $1 AND date = $2 AND status = 'BOOKED'
+			    AND (slot_type = 'FULL_DAY' OR $3 = 'FULL_DAY'))`,
+			in.FacilityID, d, in.SlotType).Scan(&clash); err != nil {
+			return nil, err
+		}
+		if clash {
+			return nil, ErrSlotTaken
+		}
 		tag, err := tx.Exec(ctx,
 			`INSERT INTO hall_availability (facility_id, date, slot_type, status, booking_id)
 			 VALUES ($1, $2, $3, 'BOOKED', $4)
@@ -301,6 +324,10 @@ type HotelBookingInput struct {
 	GuestPhone    *string
 	HoldFor       time.Duration
 	Rooms         []RoomLine
+	// DiscountAmount, CouponID and CouponCode as for a hall booking.
+	DiscountAmount float64
+	CouponID       string
+	CouponCode     string
 }
 
 type RoomLine struct {
@@ -329,10 +356,13 @@ func (r *Repo) CreateHotelBooking(ctx context.Context, in HotelBookingInput) (*B
 
 	err = tx.QueryRow(ctx,
 		`INSERT INTO bookings (user_id, target_type, target_id, check_in, check_out,
-		    total_amount, idempotent_key, expires_at, guest_name, guest_email, guest_phone)
-		 VALUES ($1,'HOTEL',$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10) RETURNING id`,
+		    total_amount, idempotent_key, expires_at, guest_name, guest_email, guest_phone,
+		    discount_amount, coupon_id, coupon_code)
+		 VALUES ($1,'HOTEL',$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,
+		         $11, NULLIF($12,'')::uuid, NULLIF($13,'')) RETURNING id`,
 		in.UserID, in.FacilityID, in.CheckIn, in.CheckOut, in.TotalAmount,
-		in.IdempotentKey, expiresAt, in.GuestName, in.GuestEmail, in.GuestPhone).Scan(&bookingID)
+		in.IdempotentKey, expiresAt, in.GuestName, in.GuestEmail, in.GuestPhone,
+		in.DiscountAmount, in.CouponID, in.CouponCode).Scan(&bookingID)
 	if err != nil {
 		if isUnique(err, "idx_bookings_idempotent") {
 			return nil, ErrDuplicateKey
@@ -340,8 +370,13 @@ func (r *Repo) CreateHotelBooking(ctx context.Context, in HotelBookingInput) (*B
 		return nil, err
 	}
 
+	// Lock room types in one global order. In request order, [A,B] racing
+	// [B,A] deadlocked and one of them got a 500.
+	rooms := append([]RoomLine(nil), in.Rooms...)
+	sort.Slice(rooms, func(i, j int) bool { return rooms[i].RoomTypeID < rooms[j].RoomTypeID })
+
 	// Nights are [check_in, check_out) - the checkout day itself is not occupied.
-	for _, room := range in.Rooms {
+	for _, room := range rooms {
 		for d := in.CheckIn; d.Before(in.CheckOut); d = d.AddDate(0, 0, 1) {
 			// Materialise the night from the room type's default capacity if it
 			// has never been touched, then claim against it.
@@ -377,6 +412,15 @@ func (r *Repo) CreateHotelBooking(ctx context.Context, in HotelBookingInput) (*B
 		`INSERT INTO booking_status_history (booking_id, to_status, reason)
 		 VALUES ($1, 'PENDING', 'Booking created')`, bookingID); err != nil {
 		return nil, err
+	}
+	if in.CouponID != "" {
+		ok, err := coupon.Redeem(ctx, tx, in.CouponID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrCouponUnavailable
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -424,11 +468,17 @@ func (r *Repo) SetStatus(ctx context.Context, id, to, reason string, from ...str
 		 VALUES ($1, $2, $3, $4)`, id, current, to, reason); err != nil {
 		return err
 	}
-	// A booking that ends without being used gives its coupon use back. The
-	// FOR UPDATE and the from-status guard above make this run once per
-	// booking, however often a cancel is retried.
+	// A booking that ends without being used gives back its dates or rooms and
+	// its coupon use. The FOR UPDATE and the from-status guard above make this
+	// run exactly once per booking, however often a cancel is retried - which
+	// is why the release lives here and nowhere else. Released separately, a
+	// repeated cancel decremented a hotel's booked_rooms on every call, and
+	// the sweeper could free the slot of a booking paid a moment later.
 	if (to == "CANCELLED" || to == "EXPIRED" || to == "REJECTED") &&
 		(current == "PENDING" || current == "CONFIRMED") {
+		if err := releaseInventory(ctx, tx, id); err != nil {
+			return err
+		}
 		if err := coupon.Release(ctx, tx, id); err != nil {
 			return err
 		}
@@ -436,15 +486,9 @@ func (r *Repo) SetStatus(ctx context.Context, id, to, reason string, from ...str
 	return tx.Commit(ctx)
 }
 
-// ReleaseInventory frees whatever a booking was holding. Used when a booking is
-// cancelled or expires unpaid.
-func (r *Repo) ReleaseInventory(ctx context.Context, id string) error {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
+// releaseInventory frees whatever a booking was holding. Only SetStatus calls
+// it, inside the transaction that ends the booking.
+func releaseInventory(ctx context.Context, tx pgx.Tx, id string) error {
 	b, err := scan(tx.QueryRow(ctx, `SELECT `+cols+` FROM bookings WHERE id = $1`, id))
 	if err != nil {
 		return err
@@ -477,6 +521,10 @@ func (r *Repo) ReleaseInventory(ctx context.Context, id string) error {
 			lines = append(lines, l)
 		}
 		rows.Close()
+		// A truncated read here would commit a partial release.
+		if err := rows.Err(); err != nil {
+			return err
+		}
 
 		for _, l := range lines {
 			for d := b.CheckIn; d.Before(b.CheckOut); d = d.AddDate(0, 0, 1) {
@@ -492,7 +540,7 @@ func (r *Repo) ReleaseInventory(ctx context.Context, id string) error {
 			}
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (r *Repo) ListForUser(ctx context.Context, userID int64, page, size int) ([]Booking, int64, error) {
@@ -597,9 +645,7 @@ func (r *Repo) ExpireHolds(ctx context.Context) ([]string, error) {
 
 	var expired []string
 	for _, id := range ids {
-		if err := r.ReleaseInventory(ctx, id); err != nil {
-			return expired, err
-		}
+		// SetStatus releases the inventory itself, under its status guard.
 		if err := r.SetStatus(ctx, id, "EXPIRED", "Payment window elapsed", "PENDING"); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue // someone paid for it in the meantime
@@ -656,7 +702,7 @@ func (r *Repo) Enrich(ctx context.Context, userID int64, bookings []*Booking) er
 		  FROM facilities f
 		  LEFT JOIN reviews rv
 		         ON rv.facility_id = f.id AND rv.user_id = $2 AND rv.is_deleted = FALSE
-		 WHERE f.id::text = ANY($1)`, ids, userID)
+		 WHERE f.id = ANY($1::uuid[])`, ids, userID)
 	if err != nil {
 		return err
 	}
@@ -788,4 +834,3 @@ func (r *Repo) EnrichUsers(ctx context.Context, bookings []*Booking) error {
 	}
 	return nil
 }
-

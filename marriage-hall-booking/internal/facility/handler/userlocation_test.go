@@ -23,6 +23,8 @@ func TestParseUserLocation(t *testing.T) {
 		{"lat=12.97&lng=181", false, "longitude out of range"},
 		{"lat=0&lng=0", false, "Null Island is an uninitialised object, not a position"},
 		{"lat=-33.86&lng=151.21", true, "southern and eastern hemispheres"},
+		{"lat=NaN&lng=77.5946", false, "NaN passes every out-of-range test"},
+		{"lat=12.97&lng=Inf", false, "infinity"},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest("GET", "/?"+c.query, nil)

@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking Platform API",
-    "description": "Comprehensive API testing collection (227 endpoints) for Marriage Hall & Hotel Booking.\n\nIncludes complete coverage for Authentication, Public Catalog, Side-by-side Compare, Bookings, Payments, Quotes, Reviews, Help Center, Admin Moderation, and Push Notifications.",
+    "description": "Comprehensive API testing collection (232 endpoints) for Marriage Hall & Hotel Booking.\n\nIncludes complete coverage for Authentication, Public Catalog, Side-by-side Compare, Bookings, Payments, Quotes, Reviews, Help Center, Admin Moderation, and Push Notifications.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -32,7 +32,7 @@
   ],
   "item": [
     {
-      "name": "Health (1)",
+      "name": "Health (3)",
       "item": [
         {
           "name": "Health check",
@@ -82,12 +82,110 @@
               }
             }
           ]
+        },
+        {
+          "name": "Liveness probe",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/livez",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "livez"
+              ]
+            },
+            "description": "Lists health data. See response for shape.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Readiness probe",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/readyz",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "readyz"
+              ]
+            },
+            "description": "Lists health data. See response for shape.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ],
       "description": "Liveness check. No auth, no setup - run it first to confirm the API is up."
     },
     {
-      "name": "Auth (12)",
+      "name": "Auth (11)",
       "item": [
         {
           "name": "Register (customer)",
@@ -117,7 +215,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"fullName\": \"Priya Sharma\",\n  \"email\": \"{{customerEmail}}\",\n  \"phoneNumber\": \"{{customerPhone}}\",\n  \"password\": \"SecurePass@123\"\n}",
+              "raw": "{\n  \"fullName\": \"Priya Sharma\",\n  \"email\": \"{{customerEmail}}\",\n  \"phoneNumber\": \"{{customerPhone}}\",\n  \"password\": \"SecurePass@123\",\n  \"address\": {\n    \"street\": \"12 MG Road\",\n    \"city\": \"Bengaluru\",\n    \"state\": \"Karnataka\",\n    \"zipCode\": \"560001\",\n    \"country\": \"India\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -184,7 +282,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"fullName\": \"Rajesh Kumar\",\n  \"email\": \"{{ownerEmail}}\",\n  \"phoneNumber\": \"{{ownerPhone}}\",\n  \"password\": \"SecurePass@123\"\n}",
+              "raw": "{\n  \"fullName\": \"Rajesh Kumar\",\n  \"email\": \"{{ownerEmail}}\",\n  \"phoneNumber\": \"{{ownerPhone}}\",\n  \"password\": \"SecurePass@123\",\n  \"address\": {\n    \"street\": \"45 Brigade Road\",\n    \"city\": \"Bengaluru\",\n    \"state\": \"Karnataka\",\n    \"zipCode\": \"560025\",\n    \"country\": \"India\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -668,81 +766,6 @@
                 "api",
                 "v1",
                 "auth",
-                "refresh"
-              ]
-            },
-            "description": "Creates or acts on a auth record.",
-            "auth": {
-              "type": "noauth"
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const d = pm.response.json().data;",
-                  "if (d) {",
-                  "  pm.collectionVariables.set(\"accessToken\", d.accessToken);",
-                  "  pm.collectionVariables.set(\"refreshToken\", d.refreshToken);",
-                  "  pm.environment.set(\"accessToken\", d.accessToken);",
-                  "  pm.environment.set(\"refreshToken\", d.refreshToken);",
-                  "}",
-                  "",
-                  "if (pm.response.code === 201) {",
-                  "    pm.test(\"201 carries a Location header\", function () {",
-                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
-                  "    });",
-                  "}",
-                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "if (ct.indexOf(\"text/html\") !== -1) {",
-                  "    pm.test(\"renders a page\", function () {",
-                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
-                  "    });",
-                  "} else {",
-                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
-                  "        const b = pm.response.json();",
-                  "        pm.expect(b).to.have.property(\"success\");",
-                  "        pm.expect(b).to.have.property(\"message\");",
-                  "        pm.expect(b).to.have.property(\"timestamp\");",
-                  "    });",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Refresh token (alias)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login/refresh",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "login",
                 "refresh"
               ]
             },
@@ -1566,7 +1589,7 @@
       "description": "Vendor onboarding, business details, KYC verification, and properties management."
     },
     {
-      "name": "Facilities (unified) (13)",
+      "name": "Facilities (unified) (16)",
       "item": [
         {
           "name": "Create facility (hall or hotel)",
@@ -1907,7 +1930,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/venues?type=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
+              "raw": "{{baseUrl}}/api/v1/venues?type=&eventType=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -1919,6 +1942,10 @@
               "query": [
                 {
                   "key": "type",
+                  "value": ""
+                },
+                {
+                  "key": "eventType",
                   "value": ""
                 },
                 {
@@ -2534,6 +2561,225 @@
               }
             }
           ]
+        },
+        {
+          "name": "List venues - filter by eventType=WEDDING & type=HOTEL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/venues?type=HOTEL&eventType=WEDDING&search=&city=&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "venues"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "HOTEL"
+                },
+                {
+                  "key": "eventType",
+                  "value": "WEDDING"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                },
+                {
+                  "key": "city",
+                  "value": ""
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Filters hotels by WEDDING. Returns hotels supporting WEDDING plus hotels with no configured events.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List venues - filter by eventType=WEDDING & type=HALL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/venues?type=HALL&eventType=WEDDING&search=&city=&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "venues"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "HALL"
+                },
+                {
+                  "key": "eventType",
+                  "value": "WEDDING"
+                },
+                {
+                  "key": "search",
+                  "value": ""
+                },
+                {
+                  "key": "city",
+                  "value": ""
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Filters halls by WEDDING. Returns halls supporting WEDDING plus halls with no configured events.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List venues - filter by eventType=BIRTHDAY",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/venues?eventType=BIRTHDAY&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "venues"
+              ],
+              "query": [
+                {
+                  "key": "eventType",
+                  "value": "BIRTHDAY"
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Filters all venues by BIRTHDAY. Venues configured exclusively for other events are excluded.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ],
       "description": "Unified venue listings (marriage halls and hotels) creation, browsing, and FAQs."
@@ -2853,7 +3099,7 @@
       "description": "Side-by-side venue comparison (2-3 halls or hotels) with capacity, pricing, and amenities matrix."
     },
     {
-      "name": "Recommendations (8)",
+      "name": "Recommendations (9)",
       "item": [
         {
           "name": "Test 1 - Recommendations (ALL: Hall + Hotel)",
@@ -2905,11 +3151,18 @@
                   "pm.test(\"Status code is 200\", function () {",
                   "    pm.response.to.have.status(200);",
                   "});",
-                  "pm.test(\"returns recommendations list\", function () {",
+                  "pm.test(\"returns recommendations list with venue format\", function () {",
                   "    const b = pm.response.json();",
                   "    pm.expect(b.success).to.be.true;",
-                  "    pm.expect(b.data).to.have.property(\"items\");",
-                  "    pm.expect(b.data.items).to.be.an(\"array\");",
+                  "    pm.expect(b.data).to.have.property(\"content\");",
+                  "    pm.expect(b.data.content).to.be.an(\"array\");",
+                  "    if (b.data.content.length > 0) {",
+                  "        const v = b.data.content[0];",
+                  "        pm.expect(v).to.have.property(\"id\");",
+                  "        pm.expect(v).to.have.property(\"name\");",
+                  "        pm.expect(v).to.have.property(\"type\");",
+                  "        pm.expect(v).to.have.property(\"distanceKm\");",
+                  "    }",
                   "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -2984,11 +3237,18 @@
                   "pm.test(\"Status code is 200\", function () {",
                   "    pm.response.to.have.status(200);",
                   "});",
-                  "pm.test(\"returns recommendations list\", function () {",
+                  "pm.test(\"returns recommendations list with venue format\", function () {",
                   "    const b = pm.response.json();",
                   "    pm.expect(b.success).to.be.true;",
-                  "    pm.expect(b.data).to.have.property(\"items\");",
-                  "    pm.expect(b.data.items).to.be.an(\"array\");",
+                  "    pm.expect(b.data).to.have.property(\"content\");",
+                  "    pm.expect(b.data.content).to.be.an(\"array\");",
+                  "    if (b.data.content.length > 0) {",
+                  "        const v = b.data.content[0];",
+                  "        pm.expect(v).to.have.property(\"id\");",
+                  "        pm.expect(v).to.have.property(\"name\");",
+                  "        pm.expect(v).to.have.property(\"type\");",
+                  "        pm.expect(v).to.have.property(\"distanceKm\");",
+                  "    }",
                   "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -3066,7 +3326,7 @@
                   "pm.test(\"all items are HOTEL\", function () {",
                   "    const b = pm.response.json();",
                   "    pm.expect(b.success).to.be.true;",
-                  "    pm.expect(b.data.items.every(x => x.type === \"HOTEL\")).to.be.true;",
+                  "    pm.expect(b.data.content.every(x => x.type === \"HOTEL\")).to.be.true;",
                   "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -3144,7 +3404,7 @@
                   "pm.test(\"all items are within 5 km\", function () {",
                   "    const b = pm.response.json();",
                   "    pm.expect(b.success).to.be.true;",
-                  "    pm.expect(b.data.items.every(x => x.distanceKm <= 5)).to.be.true;",
+                  "    pm.expect(b.data.content.every(x => x.distanceKm <= 5)).to.be.true;",
                   "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -3230,8 +3490,8 @@
                   "pm.test(\"pagination metadata is correct\", function () {",
                   "    const b = pm.response.json();",
                   "    pm.expect(b.success).to.be.true;",
-                  "    pm.expect(b.data.pagination.page).to.eql(1);",
-                  "    pm.expect(b.data.pagination.size).to.eql(20);",
+                  "    pm.expect(b.data.page).to.eql(1);",
+                  "    pm.expect(b.data.size).to.eql(20);",
                   "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -3415,6 +3675,89 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Test 9 - Event Type Filter (eventType=WEDDING)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/recommendations?lat=12.9716&lng=77.5946&type=ALL&radiusKm=50&eventType=WEDDING",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "public",
+                "recommendations"
+              ],
+              "query": [
+                {
+                  "key": "lat",
+                  "value": "12.9716"
+                },
+                {
+                  "key": "lng",
+                  "value": "77.5946"
+                },
+                {
+                  "key": "type",
+                  "value": "ALL"
+                },
+                {
+                  "key": "radiusKm",
+                  "value": "50"
+                },
+                {
+                  "key": "eventType",
+                  "value": "WEDDING"
+                }
+              ]
+            },
+            "description": "Filters recommendations for WEDDING event type (or venues without configured events).",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"returns recommendations matching event type filter\", function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.success).to.be.true;",
+                  "    pm.expect(b.data).to.have.property(\"content\");",
+                  "    pm.expect(b.data.content).to.be.an(\"array\");",
+                  "});",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
                   "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",

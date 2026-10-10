@@ -15,7 +15,10 @@ type reqIDKey struct{}
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-Id")
-		if id == "" {
+		// A client-supplied id goes verbatim into every log line for this
+		// request, so anything beyond a short token - a newline above all -
+		// would let a caller forge log entries. Replace it rather than reject.
+		if !validRequestID(id) {
 			b := make([]byte, 8)
 			rand.Read(b)
 			id = hex.EncodeToString(b)
@@ -23,6 +26,19 @@ func RequestID(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-Id", id)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), reqIDKey{}, id)))
 	})
+}
+
+// validRequestID accepts 1-64 characters of [A-Za-z0-9_-].
+func validRequestID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func RequestIDOf(ctx context.Context) string {
@@ -63,7 +79,7 @@ func CORS(allowed []string) func(http.Handler) http.Handler {
 				h.Set("Access-Control-Allow-Origin", origin)
 				h.Set("Access-Control-Allow-Credentials", "true")
 				h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-Id")
-				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				h.Set("Vary", "Origin")
 			}
 			if r.Method == http.MethodOptions {
