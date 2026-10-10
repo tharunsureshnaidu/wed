@@ -1,12 +1,17 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/config"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 )
 
@@ -47,3 +52,46 @@ func TestListVenuesTypeValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestListVenuesWithEventType(t *testing.T) {
+	mux := http.NewServeMux()
+	signer, _ := jwt.NewSigner("Zzzzz7xT2sQf6bR8mZ0nY5cJ1hW4eD2xPqRsNmLkJhGfEdCbA9Z8Y7W6V5U4T3", 24*time.Hour)
+
+	_ = os.Chdir("../../../")
+	cfg := config.Load()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pool, err := database.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		t.Skipf("Skipping live database test: unable to connect: %v", err)
+	}
+	defer pool.Close()
+
+	repo := repository.New(pool)
+	h := New(repo, signer, nil)
+	h.Register(mux)
+
+	// Verify route handles request successfully with eventType parameter
+	req := httptest.NewRequest("GET", "/api/v1/venues?type=HOTEL&eventType=WEDDING&page=0&size=10", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var body struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Content []repository.VenueResponse `json:"content"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !body.Success {
+		t.Errorf("expected success true, got false")
+	}
+}
+

@@ -492,7 +492,7 @@ const QUERIES = {
   "GET /api/v1/admin/analytics/decisions": "entity=&from=&until=",
   "GET /api/v1/users/me/dashboard": "lat=12.9716&lng=77.5946",
   "GET /api/v1/facilities": "type=HALL&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
-  "GET /api/v1/venues": "type=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
+  "GET /api/v1/venues": "type=&eventType=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls": "search=&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls/my-halls": "page=0&size=20",
   "GET /api/v1/hotels/my-hotels": "page=0&size=20",
@@ -1674,6 +1674,12 @@ function main() {
           desc: "Public access test without sending any Authorization header.",
           expectedStatus: 200,
         },
+        {
+          name: "Test 9 - Event Type Filter (eventType=WEDDING)",
+          query: "lat=12.9716&lng=77.5946&type=ALL&radiusKm=50&eventType=WEDDING",
+          desc: "Filters recommendations for WEDDING event type (or venues without configured events).",
+          expectedStatus: 200,
+        },
       ];
 
       for (const tc of testCases) {
@@ -1712,11 +1718,18 @@ function main() {
             `pm.test("Status code is 200", function () {`,
             `    pm.response.to.have.status(200);`,
             `});`,
-            `pm.test("returns recommendations list", function () {`,
+            `pm.test("returns recommendations list with venue format", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data).to.have.property("items");`,
-            `    pm.expect(b.data.items).to.be.an("array");`,
+            `    pm.expect(b.data).to.have.property("content");`,
+            `    pm.expect(b.data.content).to.be.an("array");`,
+            `    if (b.data.content.length > 0) {`,
+            `        const v = b.data.content[0];`,
+            `        pm.expect(v).to.have.property("id");`,
+            `        pm.expect(v).to.have.property("name");`,
+            `        pm.expect(v).to.have.property("type");`,
+            `        pm.expect(v).to.have.property("distanceKm");`,
+            `    }`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1728,7 +1741,7 @@ function main() {
             `pm.test("all items are HALL", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.type === "HALL")).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.type === "HALL")).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1740,7 +1753,7 @@ function main() {
             `pm.test("all items are HOTEL", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.type === "HOTEL")).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.type === "HOTEL")).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1752,7 +1765,7 @@ function main() {
             `pm.test("all items are within 5 km", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.distanceKm <= 5)).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.distanceKm <= 5)).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1764,8 +1777,21 @@ function main() {
             `pm.test("pagination metadata is correct", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.pagination.page).to.eql(1);`,
-            `    pm.expect(b.data.pagination.size).to.eql(20);`,
+            `    pm.expect(b.data.page).to.eql(1);`,
+            `    pm.expect(b.data.size).to.eql(20);`,
+            `});`,
+            COMMON_TEST
+          ].join("\n");
+        } else if (tc.name.includes("Event Type Filter")) {
+          testScript = [
+            `pm.test("Status code is 200", function () {`,
+            `    pm.response.to.have.status(200);`,
+            `});`,
+            `pm.test("returns recommendations matching event type filter", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.true;`,
+            `    pm.expect(b.data).to.have.property("content");`,
+            `    pm.expect(b.data.content).to.be.an("array");`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1831,6 +1857,54 @@ if (d) {
       hall2.request.description =
         "Creates a second HALL facility so hallId2 is captured for side-by-side venue comparison.";
       sub.splice(2, 0, hall2);
+
+      // Event filtering test requests
+      const venueEventTests = [
+        {
+          name: "List venues - filter by eventType=WEDDING & type=HOTEL",
+          query: "type=HOTEL&eventType=WEDDING&search=&city=&page=0&size=20",
+          desc: "Filters hotels by WEDDING. Returns hotels supporting WEDDING plus hotels with no configured events.",
+        },
+        {
+          name: "List venues - filter by eventType=WEDDING & type=HALL",
+          query: "type=HALL&eventType=WEDDING&search=&city=&page=0&size=20",
+          desc: "Filters halls by WEDDING. Returns halls supporting WEDDING plus halls with no configured events.",
+        },
+        {
+          name: "List venues - filter by eventType=BIRTHDAY",
+          query: "eventType=BIRTHDAY&page=0&size=20",
+          desc: "Filters all venues by BIRTHDAY. Venues configured exclusively for other events are excluded.",
+        },
+      ];
+      for (const vet of venueEventTests) {
+        const segs = ["api", "v1", "venues"];
+        const queryParams = vet.query.split("&").map((p) => {
+          const idx = p.indexOf("=");
+          return idx >= 0 ? { key: p.slice(0, idx), value: p.slice(idx + 1) } : { key: p, value: "" };
+        });
+        sub.push({
+          name: vet.name,
+          request: {
+            method: "GET",
+            header: [],
+            url: {
+              raw: "{{baseUrl}}/api/v1/venues?" + vet.query,
+              host: ["{{baseUrl}}"],
+              path: segs,
+              query: queryParams,
+            },
+            description: vet.desc,
+            auth: { type: "noauth" },
+          },
+          response: [],
+          event: [
+            {
+              listen: "test",
+              script: { type: "text/javascript", exec: COMMON_TEST.split("\n") },
+            },
+          ],
+        });
+      }
     }
 
     // Add multipart media uploads

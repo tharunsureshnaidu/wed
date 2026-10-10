@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	facilityrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/recommendation/dto"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/recommendation/repository"
 )
@@ -21,7 +22,7 @@ func New(repo repository.Repository) Service {
 }
 
 func (s *serviceImpl) GetRecommendations(ctx context.Context, params dto.RecommendationParams) (*dto.RecommendationData, string, error) {
-	items, total, err := s.repo.GetRecommendations(ctx, params)
+	venues, total, err := s.repo.GetRecommendations(ctx, params)
 	if err != nil {
 		return nil, "", err
 	}
@@ -31,19 +32,19 @@ func (s *serviceImpl) GetRecommendations(ctx context.Context, params dto.Recomme
 		totalPages = int((total + int64(params.Size) - 1) / int64(params.Size))
 	}
 
-	pagination := dto.Pagination{
-		Page:       params.Page,
-		Size:       params.Size,
-		TotalItems: total,
-		TotalPages: totalPages,
+	if venues == nil {
+		venues = []facilityrepo.VenueResponse{}
 	}
 
 	data := &dto.RecommendationData{
-		Items:      items,
-		Pagination: pagination,
+		Content:       venues,
+		Page:          params.Page,
+		Size:          params.Size,
+		TotalElements: total,
+		TotalPages:    totalPages,
 	}
 
-	if len(items) == 0 {
+	if total == 0 || len(venues) == 0 {
 		return data, "No recommendations found in this area", nil
 	}
 

@@ -64,7 +64,6 @@ type AuthResult struct {
 type UserView struct {
 	ID          int64    `json:"id"`
 	FullName    string   `json:"fullName"`
-	Name        string   `json:"name,omitempty"`
 	Email       *string  `json:"email"`
 	PhoneNumber *string  `json:"phoneNumber"`
 	Address     *string  `json:"address"`
@@ -393,7 +392,6 @@ func view(u *domain.User) UserView {
 	return UserView{
 		ID:          u.ID,
 		FullName:    u.FullName,
-		Name:        u.FullName,
 		Email:       u.Email,
 		PhoneNumber: u.PhoneNumber,
 		Address:     u.Address,
