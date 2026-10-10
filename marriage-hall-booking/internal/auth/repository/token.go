@@ -56,11 +56,16 @@ func (r *Repo) CreateOtp(ctx context.Context, o *domain.Otp, ip string) error {
 	return tx.Commit(ctx)
 }
 
-func (r *Repo) BumpOtpAttempt(ctx context.Context, id int64, verified bool) error {
-	_, err := r.db.Exec(ctx,
+// BumpOtpAttempt spends one attempt on an OTP and reports whether one was left.
+// Conditional in the UPDATE itself: read-compare-bump in separate statements let
+// N parallel guesses all see attempt_count 0, and let one correct code be
+// consumed twice.
+func (r *Repo) BumpOtpAttempt(ctx context.Context, id int64, verified bool, maxAttempts int) (bool, error) {
+	tag, err := r.db.Exec(ctx,
 		`UPDATE otp_verification SET attempt_count = attempt_count + 1, verified = $2,
-		    updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id, verified)
-	return err
+		    updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND attempt_count < $3 AND verified = FALSE`, id, verified, maxAttempts)
+	return tag.RowsAffected() == 1, err
 }
 
 // --- Refresh tokens ---

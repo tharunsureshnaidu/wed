@@ -177,6 +177,10 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, u)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Users retrieved successfully", httpx.NewPaged(out, page, size, total))
 }
 
@@ -368,6 +372,11 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusNotFound, "User not found", "USER_NOT_FOUND")
 		return
 	}
+	// Closing an account ends the sessions already open, as blocking does.
+	// Refresh is refused by the status itself; the access token needs this.
+	if req.Status != nil && (*req.Status == "SUSPENDED" || *req.Status == "INACTIVE") {
+		middleware.RevokeAccessTokens(r.Context(), id)
+	}
 	response.OK(w, "User updated successfully", nil)
 }
 
@@ -403,6 +412,7 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	middleware.RevokeAccessTokens(r.Context(), id)
 	response.OK(w, "User deleted successfully", nil)
 }
 
