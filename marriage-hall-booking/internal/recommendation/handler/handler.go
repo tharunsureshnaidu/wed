@@ -93,13 +93,19 @@ func (h *Handler) GetRecommendations(w http.ResponseWriter, r *http.Request) {
 		size = sVal
 	}
 
+	eventType := strings.ToUpper(strings.TrimSpace(q.Get("eventType")))
+	if eventType == "" {
+		eventType = strings.ToUpper(strings.TrimSpace(q.Get("event_type")))
+	}
+
 	params := dto.RecommendationParams{
-		Lat:      lat,
-		Lng:      lng,
-		Type:     rawType,
-		RadiusKm: radiusKm,
-		Page:     page,
-		Size:     size,
+		Lat:       lat,
+		Lng:       lng,
+		Type:      rawType,
+		RadiusKm:  radiusKm,
+		EventType: eventType,
+		Page:      page,
+		Size:      size,
 	}
 
 	data, msg, err := h.svc.GetRecommendations(r.Context(), params)

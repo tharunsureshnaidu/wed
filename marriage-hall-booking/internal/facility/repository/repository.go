@@ -361,7 +361,7 @@ type Image struct {
 	SortOrder int    `json:"sortOrder"`
 }
 
-const facilityCols = `f.id, f.owner_id, u.phone_number, f.vendor_id, f.name, f.description,
+const FacilityCols = `f.id, f.owner_id, u.phone_number, f.vendor_id, f.name, f.description,
 	f.type, f.city, f.full_address, f.state, f.zipcode, f.country, f.lat, f.lng,
 	f.status, f.is_verified, f.is_featured, COALESCE(f.avg_rating,0), COALESCE(f.review_count,0),
 	f.star_rating, f.check_in_time, f.check_out_time, f.capacity_pax, f.area_sqft,
@@ -374,6 +374,8 @@ const facilityCols = `f.id, f.owner_id, u.phone_number, f.vendor_id, f.name, f.d
 	     THEN f.discount_percent END,
 	CASE WHEN f.discount_valid_until IS NULL OR f.discount_valid_until > CURRENT_TIMESTAMP
 	     THEN f.discount_label END`
+
+const facilityCols = FacilityCols
 
 // applyDiscount derives the struck-through price.
 //
@@ -393,10 +395,11 @@ func (f *Facility) applyDiscount() {
 	f.DiscountedPrice = &d
 }
 
-// facilityFrom joins the owner so ownerPhoneNumber comes back in the same read.
-const facilityFrom = ` FROM facilities f JOIN users u ON u.id = f.owner_id`
+// FacilityFrom joins the owner so ownerPhoneNumber comes back in the same read.
+const FacilityFrom = ` FROM facilities f JOIN users u ON u.id = f.owner_id`
+const facilityFrom = FacilityFrom
 
-func scanFacility(row pgx.Row) (*Facility, error) {
+func ScanFacility(row pgx.Row) (*Facility, error) {
 	var f Facility
 	err := row.Scan(&f.ID, &f.OwnerID, &f.OwnerPhoneNumber, &f.VendorID, &f.Name, &f.Description,
 		&f.Type, &f.City, &f.FullAddress, &f.State, &f.Zipcode, &f.Country, &f.Lat, &f.Lng,
@@ -412,6 +415,10 @@ func scanFacility(row pgx.Row) (*Facility, error) {
 	f.Verified, f.Featured = f.IsVerified, f.IsFeatured
 	f.Amenities, f.Images = []Amenity{}, []Image{}
 	return &f, err
+}
+
+func scanFacility(row pgx.Row) (*Facility, error) {
+	return ScanFacility(row)
 }
 
 type CreateInput struct {
@@ -572,12 +579,13 @@ func (r *Repo) SoftDelete(ctx context.Context, id string) error {
 }
 
 type ListFilter struct {
-	Type    string
-	Search  string
-	City    string
-	OwnerID int64 // 0 means any owner
-	Page    int
-	Size    int
+	Type      string
+	EventType string
+	Search    string
+	City      string
+	OwnerID   int64 // 0 means any owner
+	Page      int
+	Size      int
 }
 
 func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error) {

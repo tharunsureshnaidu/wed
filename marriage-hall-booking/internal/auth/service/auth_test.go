@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -562,5 +563,27 @@ func TestRegisterWithEmptyAddressPersistsNull(t *testing.T) {
 	}
 	if u.Address == nil || *u.Address != "" {
 		t.Fatalf("expected db address empty string, got %v", u.Address)
+	}
+}
+
+func TestUserViewJSONSerialization(t *testing.T) {
+	u := &domain.User{
+		ID:       111,
+		FullName: "Priya Sharma",
+		Email:    str("priya14@gmail.com"),
+		Status:   domain.StatusPendingVerification,
+		Roles:    []string{"ROLE_CUSTOMER"},
+	}
+	v := view(u)
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	raw := string(data)
+	if !strings.Contains(raw, `"fullName":"Priya Sharma"`) {
+		t.Fatalf("expected raw JSON to contain fullName, got %s", raw)
+	}
+	if strings.Contains(raw, `"name":`) {
+		t.Fatalf("expected raw JSON not to contain duplicate 'name' field, got %s", raw)
 	}
 }
