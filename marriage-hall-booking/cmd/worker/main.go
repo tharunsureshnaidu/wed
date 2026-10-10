@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -274,7 +275,7 @@ func handleWithRetry(ctx context.Context, topic string, value []byte, handle eve
 	}
 	delay := retryDelay
 	for attempt := 1; ; attempt++ {
-		err := handle(ctx, e)
+		err := safeHandle(ctx, e, handle)
 		if err == nil || errors.Is(err, events.ErrPermanent) || attempt == maxAttempts {
 			return err
 		}
@@ -285,6 +286,20 @@ func handleWithRetry(ctx context.Context, topic string, value []byte, handle eve
 		}
 		delay *= 2
 	}
+}
+
+// safeHandle turns a panic into a permanent failure. Without it a poison
+// message panics before its offset is committed, the restarted worker reads
+// the same message, and every topic stalls in a crash loop. Permanent, so it
+// goes straight to the DLQ: a panic will not fix itself on retry.
+func safeHandle(ctx context.Context, e events.Envelope, handle events.Handler) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			logger.Error("event handler panicked", "type", e.Type, "panic", v, "stack", string(debug.Stack()))
+			err = fmt.Errorf("%w: handler panicked: %v", events.ErrPermanent, v)
+		}
+	}()
+	return handle(ctx, e)
 }
 
 // sleep waits d, or reports false if ctx ended first.

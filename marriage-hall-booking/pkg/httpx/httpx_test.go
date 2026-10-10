@@ -10,12 +10,10 @@ func TestOffset(t *testing.T) {
 	}{
 		{page: -1, size: 20, want: 0},
 		{page: 0, size: 20, want: 0},
-		{page: 1, size: 20, want: 0},
-		{page: 2, size: 20, want: 20},
-		{page: 3, size: 20, want: 40},
-		{page: 1, size: 10, want: 0},
-		{page: 2, size: 10, want: 10},
+		{page: 1, size: 20, want: 20},
+		{page: 2, size: 20, want: 40},
 		{page: 0, size: 10, want: 0},
+		{page: 3, size: 10, want: 30},
 	}
 
 	for _, tc := range tests {

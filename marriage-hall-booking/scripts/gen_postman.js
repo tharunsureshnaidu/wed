@@ -628,6 +628,8 @@ const NO_AUTH = new Set([
   "POST /api/v1/auth/reset-password",
   "POST /api/v1/payments/webhook",
   "GET /health",
+  "GET /livez",
+  "GET /readyz",
   "GET /ack/{token}",
   "GET /decline/{token}",
   "GET /api/v1/coupons/available",
@@ -1151,6 +1153,8 @@ const NAMES = {
   "POST /api/v1/admin/fraud-reports": "Create fraud report",
   "POST /api/v1/admin/fraud-reports/{reportId}/resolve": "Resolve fraud report",
   "GET /health": "Health check",
+  "GET /livez": "Liveness probe",
+  "GET /readyz": "Readiness probe",
   "GET /ack/{token}": "One-click booking acknowledgement",
   "GET /decline/{token}": "One-click booking decline",
   "GET /api/v1/coupons/offers": "Available coupon offers",
@@ -2056,15 +2060,9 @@ const FOLDER_DESC = {
     ],
   };
 
-  const outPaths = [
-    path.join(ROOT, "postman_collection.json"),
-    path.join(ROOT, "..", "..", "postman_collection.json"),
-  ];
-
-  for (const outPath of outPaths) {
-    fs.writeFileSync(outPath, JSON.stringify(collection, null, 2) + "\n", "utf8");
-    console.error(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
-  }
+  const outPath = path.join(ROOT, "postman_collection.json");
+  fs.writeFileSync(outPath, JSON.stringify(collection, null, 2) + "\n", "utf8");
+  console.error(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
 }
 
 main();

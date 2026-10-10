@@ -99,6 +99,21 @@ func main() {
 		logger.Fatal("migrate", logger.Err(err))
 	}
 
+	// Migration 026 seeds admin@example.com / Admin@123 with ROLE_ADMIN (055
+	// adds SUPER_ADMIN) so a laptop has an admin. Migrations run on every
+	// fresh database, production included, and that password is in the repo.
+	// Exact hash match: a changed password, or a deleted row, passes.
+	if config.IsProduction() {
+		var seeded int
+		if err := db.QueryRow(ctx, `SELECT count(*) FROM users WHERE is_deleted = FALSE AND password_hash = $1`,
+			seededAdminHash).Scan(&seeded); err != nil {
+			logger.Fatal("seeded admin check", logger.Err(err))
+		}
+		if seeded > 0 {
+			logger.Fatal("refusing to start in production: the development admin (admin@example.com / Admin@123, migration 026) still has its published password - change it or delete the account")
+		}
+	}
+
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		// Not fatal: the rate limiter fails open, so the API still serves.
@@ -204,7 +219,8 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	health.NewHandler(db).Register(mux)
+	probes := health.NewHandler(db, rdb)
+	probes.Register(mux)
 	authhandler.New(authSvc, signer).Register(mux)
 	userhandler.New(profiles, signer).Register(mux)
 	// S3 when AWS_S3_BUCKET is set, local disk otherwise. A configured bucket
@@ -228,8 +244,9 @@ func main() {
 	fh.RegisterInventory(mux)
 	fh.RegisterMedia(mux)
 	fh.RegisterCancellation(mux)
-	// Serves files uploaded with a facility (see internal/facility/handler/upload.go).
-	facilityhandler.ServeUploads(mux)
+	// Serves files uploaded with a facility (see internal/facility/handler/upload.go),
+	// without directory listings - see storage.FileServer.
+	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", storage.FileServer("uploads")))
 	bookingHandler := bookinghandler.New(bookingSvc, signer)
 	// Assigned rather than constructed inline so the event check can be wired;
 	// the facilities repo already exists here, and booking never imports facility.
@@ -377,8 +394,11 @@ func main() {
 		Addr:              ":" + cfg.ServerPort,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// Bounds a slow-trickle body; generous because a video upload is
+		// legitimately large.
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {
@@ -391,6 +411,10 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
+	// ponytail: /readyz flips to 503 here, but Shutdown follows immediately.
+	// Behind a load balancer that polls readiness, add a delay of one poll
+	// interval between the two so it stops routing before connections close.
+	probes.Drain()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -399,6 +423,9 @@ func main() {
 	}
 	logger.Info("stopped")
 }
+
+// seededAdminHash is the bcrypt of Admin@123 committed in migration 026.
+const seededAdminHash = "$2a$12$pJbsKYfMGwXhzSRcsU1TYeg0aPINjbwOjkluajBuwuEdIxwBVqMfy"
 
 // derefString is "" for a nil pointer, for optional columns going into a log
 // or an audit payload.

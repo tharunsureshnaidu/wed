@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -323,6 +324,14 @@ func (p *Publisher) handleLocal(topic string, body []byte) {
 	// within the radius.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// This runs on a bare goroutine, outside the HTTP Recover middleware: a
+	// panic in any reaction would otherwise take the whole API down.
+	defer func() {
+		if v := recover(); v != nil {
+			logger.Error("local event handler panicked (event dropped)", "topic", topic,
+				"panic", v, "stack", string(debug.Stack()))
+		}
+	}()
 	if err := p.Local(ctx, e); err != nil {
 		logger.Error("local event handler failed (event dropped)", "topic", topic, logger.Err(err))
 	}

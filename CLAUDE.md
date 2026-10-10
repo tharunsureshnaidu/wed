@@ -73,7 +73,7 @@ fixtures. For a no-side-effect run: `env -u TEST_DATABASE_URL go test ./...`.
 ## Migrations
 
 `internal/migrations/NNN_name.sql`, embedded, forward-only, applied on startup.
-Next number: check `ls internal/migrations/ | tail -1` (currently at 050).
+Next number: check `ls internal/migrations/ | tail -1` (currently at 060).
 
 House style: `IF NOT EXISTS`, `UUID PRIMARY KEY DEFAULT gen_random_uuid()`,
 `DECIMAL(10,2)` for money, `TIMESTAMPTZ`, `VARCHAR` + inline `CHECK` for enums,
