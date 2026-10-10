@@ -135,7 +135,13 @@ func (h *Handler) patchFacility(w http.ResponseWriter, r *http.Request) {
 	if req.DiscountValidUntil != nil && *req.DiscountValidUntil != "" {
 		t, perr := time.Parse(time.RFC3339, *req.DiscountValidUntil)
 		if perr != nil {
-			t, perr = time.Parse("2006-01-02", *req.DiscountValidUntil)
+			// A bare date is the whole of that day in IST. Parsed as UTC
+			// midnight, an offer "until the 10th" vanished at 05:30 that day.
+			// ponytail: same rule as coupon/handler parseWhen; handlers do not
+			// import each other.
+			t, perr = time.ParseInLocation("2006-01-02", *req.DiscountValidUntil,
+				time.FixedZone("IST", 5*3600+30*60))
+			t = t.AddDate(0, 0, 1).Add(-time.Millisecond)
 		}
 		if perr != nil {
 			e = append(e, "discountValidUntil must be YYYY-MM-DD or RFC3339")
@@ -503,6 +509,10 @@ func (h *Handler) children(r *http.Request, sql, id, label string) []map[string]
 			m[camel(string(c.Name))] = jsonValue(vals[i])
 		}
 		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		logger.Warn("admin facility detail: child rows truncated",
+			"facilityId", id, "child", label, logger.Err(err))
 	}
 	return out
 }

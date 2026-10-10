@@ -34,7 +34,10 @@ func parseUserLocation(r *http.Request) userLocation {
 	if err1 != nil || err2 != nil {
 		return userLocation{}
 	}
-	if lat < -90 || lat > 90 || lng < -180 || lng > 180 {
+	// Written as "in range" rather than "out of range": NaN fails every
+	// comparison, so it slipped through the old form and turned into a
+	// distanceKm the JSON encoder cannot write - a 200 with an empty body.
+	if !(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
 		return userLocation{}
 	}
 	// 0,0 is Null Island - the Atlantic. It is what an uninitialised location

@@ -162,12 +162,7 @@ func (r couponReq) validateInto(e *validate.Errors) (from, until *time.Time) {
 		if f.raw == nil || *f.raw == "" {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, *f.raw)
-		if err != nil {
-			// Accept a bare date too: an admin setting a campaign window
-			// should not have to write a timezone offset.
-			t, err = time.Parse("2006-01-02", *f.raw)
-		}
+		t, err := parseWhen(*f.raw, f.name == "validUntil")
 		if err != nil {
 			*e = append(*e, f.name+" must be YYYY-MM-DD or RFC3339")
 			continue
@@ -178,6 +173,26 @@ func (r couponReq) validateInto(e *validate.Errors) (from, until *time.Time) {
 		*e = append(*e, "validUntil must be after validFrom")
 	}
 	return from, until
+}
+
+// ist is the campaign clock. India keeps no DST, so a fixed zone needs no
+// tzdata in the image.
+var ist = time.FixedZone("IST", 5*3600+30*60)
+
+// parseWhen reads an RFC3339 instant, or a bare date so an admin setting a
+// campaign window need not write an offset. A bare date is a day in IST: its
+// first instant, or its last when endOfDay. Parsed as UTC midnight it killed a
+// coupon "valid until the 10th" at 05:30 that morning, and made validFrom ==
+// validUntil - a one-day campaign - impossible.
+func parseWhen(raw string, endOfDay bool) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t, nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", raw, ist)
+	if err == nil && endOfDay {
+		t = t.AddDate(0, 0, 1).Add(-time.Millisecond)
+	}
+	return t, err
 }
 
 // vendorOf returns the caller's vendor id, or nil for an admin (whose coupons
@@ -674,26 +689,24 @@ const (
 	maxGeoRadiusKm         = 500.0
 )
 
-// optCoord reads an optional coordinate. Out of range, unparseable or exactly
-// zero is treated as absent: 0,0 is Null Island in the Atlantic, which is what
-// an uninitialised location object serialises to far more often than it is a
-// real position.
-func optCoord(r *http.Request, key string) *float64 {
-	raw := r.URL.Query().Get(key)
-	if raw == "" {
-		return nil
+// optLocation reads the caller's ?lat=&lng=, both or neither. Half a location,
+// an unparseable or out-of-range value, and 0,0 (Null Island, what an
+// uninitialised location object serialises to) are all treated as absent.
+//
+// ponytail: the same rule as facility/handler's parseUserLocation, copied
+// because one handler must not import another. Keep the two identical; this
+// one used to drop any single 0 coordinate, so a venue on the equator or the
+// prime meridian lost its location here but not there.
+func optLocation(r *http.Request) (lat, lng *float64) {
+	q := r.URL.Query()
+	la, err1 := strconv.ParseFloat(q.Get("lat"), 64)
+	ln, err2 := strconv.ParseFloat(q.Get("lng"), 64)
+	// Written as "in range" so NaN, which fails every comparison, is out.
+	if err1 != nil || err2 != nil ||
+		!(la >= -90 && la <= 90 && ln >= -180 && ln <= 180) || (la == 0 && ln == 0) {
+		return nil, nil
 	}
-	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil || v == 0 {
-		return nil
-	}
-	if key == "lat" && (v < -90 || v > 90) {
-		return nil
-	}
-	if key == "lng" && (v < -180 || v > 180) {
-		return nil
-	}
-	return &v
+	return &la, &ln
 }
 
 // listAvailable returns coupon cards for a user's app screen.
@@ -709,10 +722,7 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 	// of 559 profiles have coordinates, so without this the radius filter does
 	// nothing for most users - and a phone knows where it is right now, which
 	// a stale profile address does not.
-	lat, lng := optCoord(r, "lat"), optCoord(r, "lng")
-	if lat == nil || lng == nil {
-		lat, lng = nil, nil // half a location is a client bug, not a location
-	}
+	lat, lng := optLocation(r)
 	// Capped at 500 km: beyond that "nearby offers" is not a screen anyone is
 	// looking at, and an unbounded radius is a cheap way to ask for every
 	// coupon in the table. An out-of-range value is a 400 rather than a silent
@@ -720,7 +730,7 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 	radius := float64(defaultGeoRadiusMetres)
 	if v := r.URL.Query().Get("radiusKm"); v != "" {
 		km, err := strconv.ParseFloat(v, 64)
-		if err != nil || km <= 0 || km > maxGeoRadiusKm {
+		if err != nil || !(km > 0 && km <= maxGeoRadiusKm) { // NaN fails both
 			response.Error(w, http.StatusBadRequest,
 				"radiusKm must be a number between 0 and 500", "VALIDATION_ERROR")
 			return
@@ -748,12 +758,12 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 		       END AS distance_km
 		  FROM coupons c
 		  CROSS JOIN me
-		  LEFT JOIN facilities f ON f.id = c.facility_id AND f.is_deleted = FALSE
-		 WHERE c.is_active = TRUE
-		   AND c.is_deleted = FALSE
-		   AND (c.valid_from IS NULL OR c.valid_from <= CURRENT_TIMESTAMP)
-		   AND (c.valid_until IS NULL OR c.valid_until >= CURRENT_TIMESTAMP)
+		  LEFT JOIN facilities f ON f.id = c.facility_id AND `+venuetype.LiveSQL("f")+`
+		 WHERE `+coupon.LiveSQL+`
 		   AND (c.usage_limit IS NULL OR c.used_count < c.usage_limit)
+		   -- A venue coupon whose venue is gone or not live is one checkout
+		   -- refuses; offering it here was a code that could never be used.
+		   AND (c.facility_id IS NULL OR f.id IS NOT NULL)
 		   -- A venue-scoped coupon is hidden only when we can prove it is far
 		   -- away. No location on either side means "not stated", never "no":
 		   -- hiding offers because a phone refused GPS looks like a broken
