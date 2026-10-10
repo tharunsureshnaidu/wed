@@ -1,8 +1,9 @@
 // Package handler serves venue search.
 //
 // The Java service ran this on Elasticsearch. There is no Elasticsearch here,
-// so search runs on PostgreSQL with trigram indexes - which covers every
-// endpoint's contract for this data size. Recent/recently-viewed/trending live
+// so search runs on PostgreSQL with pg_trgm - typo-tolerant and ranked by
+// match quality, see pkg/venuesearch - which covers every endpoint's contract
+// for this data size. Recent/recently-viewed/trending live
 // in Redis, exactly as they did before.
 package handler
 
@@ -22,6 +23,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuesearch"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
@@ -163,8 +165,15 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	text := strings.TrimSpace(q.Get("q") + q.Get("search"))
+
 	// ORDER BY is chosen from a fixed set - never interpolated from user input.
+	// With search text and no explicit sort, the best match leads: a typo
+	// like "palce" must not rank Grand Palace below every featured venue.
 	order := "f.is_featured DESC, f.avg_rating DESC NULLS LAST"
+	if text != "" {
+		order = venuesearch.ScoreSQL("$1") + " DESC, " + order
+	}
 	switch q.Get("sort") {
 	case "PRICE_LOW_TO_HIGH":
 		order = "f.base_price_per_day ASC NULLS LAST"
@@ -180,7 +189,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 
 	where := `
 		WHERE f.is_deleted = FALSE AND f.status <> 'BLOCKED'
-		  AND ($1 = '' OR f.name ILIKE '%'||$1||'%' OR f.description ILIKE '%'||$1||'%')
+		  AND ` + venuesearch.MatchSQL("$1") + `
 		  AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		  AND ($3 = '' OR f.type = $3)
 		  AND ($4 = 0 OR f.capacity_pax >= $4)
@@ -204,7 +213,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 	// of them the moment a filter is used would look like the search is broken.
 	// Silence is "not stated", not "no".
 	args := []any{
-		q.Get("q") + q.Get("search"), q.Get("city"), venuetype.Stored(q.Get("venueType")),
+		text, q.Get("city"), venuetype.Stored(q.Get("venueType")),
 		minCap, maxCap, minBudget, maxBudget, amenities,
 		strings.ToUpper(strings.TrimSpace(q.Get("eventType"))),
 	}
@@ -241,7 +250,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	took := time.Since(started).Milliseconds()
-	searchID := h.recordSearch(r, q.Get("q")+q.Get("search"), q.Get("city"), len(out), took)
+	searchID := h.recordSearch(r, text, q.Get("city"), len(out), took)
 
 	response.OK(w, "Venues fetched", searchResult{
 		SearchID: searchID, Content: out, Page: page, Size: size,
@@ -282,20 +291,28 @@ func (h *Handler) suggestions(w http.ResponseWriter, r *http.Request) {
 }
 
 // names returns matching venue names and cities - what a type-ahead needs.
+// Same match as the search itself, typos included, best match first; and it
+// skips BLOCKED venues, which the search would never return.
 func (h *Handler) names(w http.ResponseWriter, r *http.Request, limit int, msg string) {
-	q := r.URL.Query().Get("q")
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		response.OK(w, msg, []string{})
 		return
 	}
 	rows, err := h.db.Query(r.Context(),
 		`SELECT name FROM (
-		    SELECT DISTINCT f.name, 1 AS kind FROM facilities f
-		      WHERE f.is_deleted = FALSE AND f.name ILIKE '%'||$1||'%'
-		    UNION
-		    SELECT DISTINCT f.city, 2 AS kind FROM facilities f
-		      WHERE f.is_deleted = FALSE AND f.city ILIKE '%'||$1||'%' AND f.city IS NOT NULL
-		 ) s ORDER BY kind, name LIMIT $2`, q, limit)
+		    SELECT f.name, 1 AS kind, max(word_similarity($1, f.name)) AS score
+		      FROM facilities f
+		      WHERE f.is_deleted = FALSE AND f.status <> 'BLOCKED'
+		        AND `+venuesearch.Like("$1", "f.name")+`
+		      GROUP BY f.name
+		    UNION ALL
+		    SELECT f.city, 2, max(word_similarity($1, f.city))
+		      FROM facilities f
+		      WHERE f.is_deleted = FALSE AND f.status <> 'BLOCKED'
+		        AND `+venuesearch.Like("$1", "f.city")+`
+		      GROUP BY f.city
+		 ) s ORDER BY kind, score DESC, name LIMIT $2`, q, limit)
 	if err != nil {
 		httpx.Fail(w, err)
 		return

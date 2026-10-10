@@ -84,12 +84,16 @@ const BODIES = {
     email: "{{customerEmail}}",
     phoneNumber: "{{customerPhone}}",
     password: "SecurePass@123",
+    // Optional: a one-line string, or an object whose every part is optional.
+    address: { street: "12 MG Road", city: "Bengaluru", state: "Karnataka", zipCode: "560001", country: "India" },
   },
   "POST /api/v1/auth/register/vendor": {
     fullName: "Rajesh Kumar",
     email: "{{ownerEmail}}",
     phoneNumber: "{{ownerPhone}}",
     password: "SecurePass@123",
+    // Also seeds the vendor's business_address.
+    address: { street: "45 Brigade Road", city: "Bengaluru", state: "Karnataka", zipCode: "560025", country: "India" },
   },
   "POST /api/v1/auth/register/verify-email": {
     target: "{{customerEmail}}",
@@ -1495,7 +1499,13 @@ function collectRoutes() {
   const pat = /(?:mux\.(?:HandleFunc|Handle)\("|get\(")(GET|POST|PUT|PATCH|DELETE) ([^"]+)"/g;
   const seen = new Set();
   const routes = [];
-  const skipRoutes = new Set(["GET /uploads/"]);
+  const skipRoutes = new Set([
+    "GET /uploads/",
+    // Same handler as POST /api/v1/auth/refresh under the old spec path. Still
+    // served, but a second refresh in the run only adds a chance to replay a
+    // rotated token, which revokes every session.
+    "POST /api/v1/auth/login/refresh",
+  ]);
 
   function walk(dir) {
     for (const f of fs.readdirSync(dir, { withFileTypes: true })) {

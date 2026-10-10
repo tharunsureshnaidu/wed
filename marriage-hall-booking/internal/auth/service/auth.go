@@ -38,9 +38,10 @@ type AuthService struct {
 	otp      *OtpService
 	tokens   *TokenService
 	resetURL string
-	// OnUserCreated creates the matching user_profiles row. A func rather than a
+	// OnUserCreated creates the matching user_profiles row, plus an addresses
+	// row when the signup gave one (addr is nil otherwise). A func rather than a
 	// package dependency so auth does not import the user module.
-	OnUserCreated func(ctx context.Context, userID int64, firstName string, lastName *string) error
+	OnUserCreated func(ctx context.Context, userID int64, firstName string, lastName *string, addr *Address) error
 
 	// OnVendorCreated creates the vendors row behind a vendor signup. Without
 	// it /auth/register/vendor produced an account that could not act as a
@@ -48,7 +49,9 @@ type AuthService struct {
 	// next call - POST /facilities - returned 403 VENDOR_REQUIRED telling the
 	// user to "create your vendor business first", which is exactly what they
 	// believed registering had done.
-	OnVendorCreated func(ctx context.Context, userID int64, businessName string) error
+	//
+	// businessAddress is the signup address on one line, nil when none was given.
+	OnVendorCreated func(ctx context.Context, userID int64, businessName string, businessAddress *string) error
 }
 
 func NewAuthService(repo *repository.Repo, otp *OtpService, tokens *TokenService, resetURL string) *AuthService {
@@ -75,8 +78,39 @@ type RegisterInput struct {
 	FullName    string
 	Email       *string
 	PhoneNumber *string
-	Address     *string
+	Address     *string // one line, stored in users.address
 	Password    string
+	// AddressParts is the structured form, saved to the addresses table; its
+	// joined line fills users.address when Address is nil. Nil means none given.
+	AddressParts *Address
+}
+
+// Address is the optional signup address, in the shape of the addresses table.
+// Every part is optional: a signup form asking only for a city is still useful.
+type Address struct {
+	Street  *string `json:"street"`
+	City    *string `json:"city"`
+	State   *string `json:"state"`
+	ZipCode *string `json:"zipCode"`
+	Country *string `json:"country"`
+}
+
+// Line joins the parts that are present, for the free-text vendors.business_address.
+func (a *Address) Line() *string {
+	if a == nil {
+		return nil
+	}
+	var parts []string
+	for _, p := range []*string{a.Street, a.City, a.State, a.ZipCode, a.Country} {
+		if p != nil && *p != "" {
+			parts = append(parts, *p)
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	line := strings.Join(parts, ", ")
+	return &line
 }
 
 func (s *AuthService) Register(ctx context.Context, in RegisterInput, ip string) error {
@@ -132,11 +166,15 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 		return nil, err
 	}
 
+	line := in.Address
+	if line == nil {
+		line = in.AddressParts.Line()
+	}
 	u := &domain.User{
 		FullName:     in.FullName,
 		Email:        in.Email,
 		PhoneNumber:  in.PhoneNumber,
-		Address:      in.Address,
+		Address:      line,
 		PasswordHash: string(hash),
 		Status:       domain.StatusPendingVerification,
 		Roles:        []string{role},
@@ -150,20 +188,20 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 
 	if s.OnUserCreated != nil {
 		first, last := splitName(in.FullName)
-		if err := s.OnUserCreated(ctx, id, first, last); err != nil {
+		if err := s.OnUserCreated(ctx, id, first, last, in.AddressParts); err != nil {
 			logger.Error("create profile", "userId", id, logger.Err(err))
 		}
 	}
 
 	// A vendor signup gets its business straight away, seeded with the name
 	// they registered under. business_name is the only field the table
-	// requires, and PUT /api/v1/vendors/me remains how the real address, phone
-	// and KYC details are filled in.
+	// requires. The signup address, if any, seeds business_address the same
+	// way; PUT /api/v1/vendors/me remains how phone and KYC details are filled in.
 	//
 	// Best-effort like the profile above: a failed insert must not roll back a
 	// created account. The user can still call PUT /vendors/me themselves.
 	if role == domain.RoleHallOwner && s.OnVendorCreated != nil {
-		if err := s.OnVendorCreated(ctx, id, in.FullName); err != nil {
+		if err := s.OnVendorCreated(ctx, id, in.FullName, line); err != nil {
 			logger.Error("create vendor business", "userId", id, logger.Err(err))
 		}
 	}

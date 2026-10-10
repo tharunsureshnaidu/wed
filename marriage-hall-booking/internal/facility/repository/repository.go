@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuesearch"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 	"math"
 	"strings"
@@ -591,20 +592,21 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	// Fixed parameter positions with a sentinel for "not filtering", rather than
 	// building the WHERE clause dynamically - every value stays a bound parameter,
 	// so no caller input can reach the SQL text.
-	eventType := strings.ToUpper(strings.TrimSpace(f.EventType))
-	args := []any{f.Type, f.City, f.OwnerID, f.Search, eventType}
+	f.Search = strings.TrimSpace(f.Search)
+	args := []any{f.Type, f.City, f.OwnerID, f.Search}
 	// Columns are qualified with f. because facilityFrom joins users.
 	clause := ` WHERE f.is_deleted = FALSE
 		AND ($1 = '' OR f.type = $1)
 		AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		AND ($3 = 0 OR f.owner_id = $3)
-		AND ($4 = '' OR f.name ILIKE '%' || $4 || '%' OR f.description ILIKE '%' || $4 || '%')
 		AND ($3 <> 0 OR COALESCE(f.status, 'APPROVED') NOT IN ('BLOCKED', 'REJECTED'))
-		AND ($5 = '' OR EXISTS (
-			SELECT 1 FROM facility_events fe
-			 WHERE fe.facility_id = f.id AND fe.event_code = $5)
-		      OR NOT EXISTS (
-			SELECT 1 FROM facility_events fe WHERE fe.facility_id = f.id))`
+		AND ` + venuesearch.MatchSQL("$4")
+
+	// Search text puts the best match first, as on /search/venues.
+	order := "f.is_featured DESC, f.created_at DESC"
+	if f.Search != "" {
+		order = venuesearch.ScoreSQL("$4") + " DESC, " + order
+	}
 
 	var total int64
 	if err := r.db.QueryRow(ctx, `SELECT count(*)`+facilityFrom+clause, args...).Scan(&total); err != nil {
@@ -614,7 +616,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	args = append(args, f.Size, httpx.Offset(f.Page, f.Size))
 	rows, err := r.db.Query(ctx,
 		`SELECT `+facilityCols+facilityFrom+clause+
-			` ORDER BY f.is_featured DESC, f.created_at DESC LIMIT $6 OFFSET $7`, args...)
+			` ORDER BY `+order+` LIMIT $5 OFFSET $6`, args...)
 	if err != nil {
 		return nil, 0, err
 	}

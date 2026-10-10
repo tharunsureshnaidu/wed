@@ -385,13 +385,15 @@ func TestRegisterVendorCreatesTheVendorBusiness(t *testing.T) {
 
 	var vendorFor int64
 	var vendorName string
-	svc.OnVendorCreated = func(_ context.Context, userID int64, businessName string) error {
-		vendorFor, vendorName = userID, businessName
+	var vendorAddr *string
+	svc.OnVendorCreated = func(_ context.Context, userID int64, businessName string, businessAddress *string) error {
+		vendorFor, vendorName, vendorAddr = userID, businessName, businessAddress
 		return nil
 	}
 
 	if err := svc.RegisterVendor(ctx, RegisterInput{
 		FullName: "Tharun Venues", Email: str(email), Password: "Passw0rd!!",
+		AddressParts: &Address{Street: str("12 MG Road"), City: str("Bengaluru"), ZipCode: str("560001")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
@@ -404,6 +406,21 @@ func TestRegisterVendorCreatesTheVendorBusiness(t *testing.T) {
 	if vendorName != "Tharun Venues" {
 		t.Fatalf("business name = %q, want the registered name", vendorName)
 	}
+	// The signup address seeds business_address, skipping the parts not given.
+	if vendorAddr == nil || *vendorAddr != "12 MG Road, Bengaluru, 560001" {
+		t.Fatalf("business address = %v, want the signup address on one line", vendorAddr)
+	}
+}
+
+// No address, or one with every part blank, must reach the hooks as nil -
+// never as an empty row or a business_address of "".
+func TestAddressLineAbsentWhenEmpty(t *testing.T) {
+	if (*Address)(nil).Line() != nil {
+		t.Fatal("nil address produced a line")
+	}
+	if (&Address{City: str("")}).Line() != nil {
+		t.Fatal("blank address produced a line")
+	}
 }
 
 // A plain customer signup must NOT create a vendor business.
@@ -412,7 +429,7 @@ func TestRegisterCustomerCreatesNoVendorBusiness(t *testing.T) {
 	email := uniqueEmail(t, pool)
 
 	called := false
-	svc.OnVendorCreated = func(context.Context, int64, string) error {
+	svc.OnVendorCreated = func(context.Context, int64, string, *string) error {
 		called = true
 		return nil
 	}
@@ -434,7 +451,7 @@ func TestRegisterVendorSurvivesAFailingHook(t *testing.T) {
 	email := uniqueEmail(t, pool)
 	ctx := context.Background()
 
-	svc.OnVendorCreated = func(context.Context, int64, string) error {
+	svc.OnVendorCreated = func(context.Context, int64, string, *string) error {
 		return errors.New("vendors table unavailable")
 	}
 	if err := svc.RegisterVendor(ctx, RegisterInput{
