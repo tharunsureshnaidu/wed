@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/config"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 )
 
@@ -17,7 +18,9 @@ func New(ctx context.Context, uploadDir, baseURL string) (Store, error) {
 	bucket := os.Getenv("AWS_S3_BUCKET")
 	if bucket == "" {
 		s := NewLocal(uploadDir, baseURL)
-		if os.Getenv("APP_ENV") == "production" {
+		// Validate already refuses this in production; the warning is for a
+		// staging box that is not marked production but outlives a redeploy.
+		if config.IsProduction() {
 			logger.Warn("media is being written to local disk and will be lost on redeploy - set AWS_S3_BUCKET",
 				logger.Component, "storage")
 		}

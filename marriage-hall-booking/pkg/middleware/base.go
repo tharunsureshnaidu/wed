@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
@@ -13,7 +14,8 @@ func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if v := recover(); v != nil {
-				logger.Error("panic recovered", "method", r.Method, "path", r.URL.Path, "panic", v)
+				logger.Error("panic recovered", "id", RequestIDOf(r.Context()), "method", r.Method,
+					"path", r.URL.Path, "panic", v, "stack", string(debug.Stack()))
 				response.Error(w, http.StatusInternalServerError, "Something went wrong", "INTERNAL_ERROR")
 			}
 		}()

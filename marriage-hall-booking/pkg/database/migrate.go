@@ -15,8 +15,27 @@ import (
 //
 // ponytail: replaces Flyway. Forward-only, no checksums, no down migrations -
 // reach for golang-migrate if rollback or drift detection is ever needed.
-func Migrate(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, dir string) error {
-	_, err := pool.Exec(ctx, `
+func Migrate(ctx context.Context, db *pgxpool.Pool, fsys fs.FS, dir string) error {
+	// One connection for the whole run, holding an advisory lock: replicas
+	// booting together otherwise race on the same DDL, and the loser exits
+	// fatally into a restart loop. The pool's statement/lock timeouts are
+	// lifted on this connection - a migration may take longer than a request,
+	// and waiting out another replica's run is the point of the lock.
+	pool, err := db.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Release()
+	if _, err := pool.Exec(ctx, `SET statement_timeout = 0; SET lock_timeout = 0`); err != nil {
+		return err
+	}
+	// RESET ALL restores the pool's connection defaults before it is reused.
+	defer pool.Exec(context.Background(), `SELECT pg_advisory_unlock_all(); RESET ALL`)
+	if _, err := pool.Exec(ctx, `SELECT pg_advisory_lock(7262001)`); err != nil {
+		return fmt.Errorf("migration lock: %w", err)
+	}
+
+	_, err = pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			filename    VARCHAR(255) PRIMARY KEY,
 			applied_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

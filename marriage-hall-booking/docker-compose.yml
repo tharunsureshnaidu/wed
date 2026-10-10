@@ -35,6 +35,9 @@ x-app: &app
     # Shared: the API spools uploads to uploads/spool and the worker ships them.
     - uploads:/app/uploads
   restart: unless-stopped
+  # The API drains requests for up to 10s and the publisher flushes in-flight
+  # events for up to 40s more; docker's default 10s would SIGKILL mid-flush.
+  stop_grace_period: 45s
 
 services:
   postgres:
@@ -91,13 +94,18 @@ services:
       valkey: { condition: service_healthy }
       kafka: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      # /readyz, not the image's /livez: the worker waits on this, and it
+      # needs the database (migrated) behind the API, not just a live process.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
       interval: 3s
       retries: 40
 
   worker:
     <<: *app
     command: ["/app/worker"]
+    # Same image as the API, but no HTTP server for the image's healthcheck.
+    healthcheck:
+      disable: true
     # After the API is healthy, so its migrations have created the tables the worker reads.
     depends_on:
       api: { condition: service_healthy }

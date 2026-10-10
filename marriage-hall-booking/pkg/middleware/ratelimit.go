@@ -57,14 +57,22 @@ func RateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 			key := "rate_limit:" + b.prefix + ":" + clientIP(r)
 			ctx := r.Context()
 
-			count, err := rdb.Incr(ctx, key).Result()
+			// INCR and EXPIRE NX in one MULTI. They used to be two calls with
+			// the expiry set only on count == 1, so one failed EXPIRE left a
+			// counter with no TTL and that IP locked out for good. NX keeps the
+			// window fixed from the first request, and any later request
+			// repairs a key that somehow lost its TTL.
+			var incr *redis.IntCmd
+			_, err := rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+				incr = p.Incr(ctx, key)
+				p.ExpireNX(ctx, key, b.window)
+				return nil
+			})
 			if err != nil {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if count == 1 {
-				rdb.Expire(ctx, key, b.window)
-			}
+			count := incr.Val()
 			if count > int64(b.max) {
 				w.Header().Set("Retry-After", strconv.Itoa(int(b.window.Seconds())))
 				response.Error(w, http.StatusTooManyRequests, "Too many requests", "RATE_LIMIT_EXCEEDED")
