@@ -369,3 +369,79 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// FULL_DAY covers both halves of the day. The unique index is per slot, so
+// before the cross-slot check a FULL_DAY and a MORNING on one date both won.
+func TestFullDayClashesWithHalfDay(t *testing.T) {
+	svc := setup(t)
+	_, custID, hallID := fixture(t)
+	ctx := context.Background()
+
+	for i, order := range [][2]string{{"MORNING", "FULL_DAY"}, {"FULL_DAY", "EVENING"}} {
+		date := eventDate().AddDate(0, 0, i)
+		if _, err := svc.CreateHallBooking(ctx, custID, HallBookingRequest{
+			FacilityID: hallID, EventDate: date, SlotType: order[0],
+			IdempotentKey: t.Name() + "-a-" + itoa(i),
+		}); err != nil {
+			t.Fatalf("%s should be bookable: %v", order[0], err)
+		}
+		_, err := svc.CreateHallBooking(ctx, custID, HallBookingRequest{
+			FacilityID: hallID, EventDate: date, SlotType: order[1],
+			IdempotentKey: t.Name() + "-b-" + itoa(i),
+		})
+		if got := code(err); got != "SLOT_UNAVAILABLE" {
+			t.Fatalf("%s after %s: want SLOT_UNAVAILABLE, got %q (%v)", order[1], order[0], got, err)
+		}
+	}
+}
+
+// A repeated cancel used to decrement booked_rooms again on every call, before
+// the status check refused it - freeing rooms that belonged to other guests.
+func TestRepeatedHotelCancelReleasesOnce(t *testing.T) {
+	svc := setup(t)
+	ownerID, custID, _ := fixture(t)
+	ctx := context.Background()
+
+	var hotelID, roomID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO facilities (owner_id, name, type, status)
+		 VALUES ($1, 'Test Hotel', 'HOTEL', 'APPROVED') RETURNING id`, ownerID).Scan(&hotelID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `DELETE FROM bookings WHERE target_id = $1`, hotelID)
+		pool.Exec(ctx, `DELETE FROM facilities WHERE id = $1`, hotelID)
+	})
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO room_types (facility_id, name, capacity_adults, base_price_per_night, total_rooms)
+		 VALUES ($1, 'Deluxe', 2, 5000, 3) RETURNING id`, hotelID).Scan(&roomID); err != nil {
+		t.Fatal(err)
+	}
+
+	in := eventDate()
+	book := func(key string) string {
+		b, err := svc.CreateHotelBooking(ctx, custID, HotelBookingRequest{
+			FacilityID: hotelID, CheckIn: in, CheckOut: in.AddDate(0, 0, 1),
+			Rooms: []repository.RoomLine{{RoomTypeID: roomID, Quantity: 1}}, IdempotentKey: key,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b.ID
+	}
+
+	first := book(t.Name() + "-1")
+	book(t.Name() + "-2")
+	if err := svc.Cancel(ctx, first, custID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Cancel(ctx, first, custID, false); code(err) != "INVALID_STATE" {
+		t.Fatalf("second cancel: want INVALID_STATE, got %v", err)
+	}
+	var booked int
+	pool.QueryRow(ctx, `SELECT booked_rooms FROM room_availability WHERE room_type_id = $1 AND date = $2`,
+		roomID, in).Scan(&booked)
+	if booked != 1 {
+		t.Fatalf("want 1 room still booked by the second guest, got %d", booked)
+	}
+}

@@ -209,7 +209,9 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 		// most predate the feature, and refusing their bookings would be a
 		// regression caused by a screen their owner has not seen.
 		if h.HostsEvent != nil {
-			ok, err := h.HostsEvent(r.Context(), req.HallID, v)
+			// facilityID, not req.HallID: a client sending the legacy
+			// facilityId passed "" to a uuid column and got a 500.
+			ok, err := h.HostsEvent(r.Context(), facilityID, v)
 			if err != nil {
 				httpx.Fail(w, err)
 				return
@@ -251,6 +253,8 @@ type hotelReq struct {
 	GuestName     *string `json:"guestName"`
 	GuestEmail    *string `json:"guestEmail"`
 	GuestPhone    *string `json:"guestPhone"`
+	// CouponCode is optional; the discount is computed server-side.
+	CouponCode string `json:"couponCode"`
 }
 
 func (h *Handler) createHotel(w http.ResponseWriter, r *http.Request) {
@@ -292,6 +296,7 @@ func (h *Handler) createHotel(w http.ResponseWriter, r *http.Request) {
 		FacilityID: facilityID, CheckIn: checkIn, CheckOut: checkOut, Rooms: rooms,
 		IdempotentKey: req.IdempotentKey, GuestName: req.GuestName,
 		GuestEmail: req.GuestEmail, GuestPhone: req.GuestPhone,
+		CouponCode: strings.TrimSpace(req.CouponCode),
 	})
 	if err != nil {
 		httpx.Fail(w, err)

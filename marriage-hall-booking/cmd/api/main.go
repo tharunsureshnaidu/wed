@@ -158,7 +158,7 @@ func main() {
 			"totalAmount": b.TotalAmount,
 		})
 	}
-	bookingSvc.OnBookingCancelled = func(ctx context.Context, b *bookingrepo.Booking) {
+	bookingSvc.OnBookingCancelled = func(ctx context.Context, b *bookingrepo.Booking, actorID int64) {
 		publisher.Publish(ctx, events.TopicBookingCancelled, b.ID, map[string]any{
 			"bookingId": b.ID, "userId": b.UserID,
 		})
@@ -170,7 +170,7 @@ func main() {
 			eventType = *b.EventType
 		}
 		audit.Record(ctx, db, audit.Decision{
-			Actor: b.UserID, Action: "CANCEL_BOOKING",
+			Actor: actorID, Action: "CANCEL_BOOKING",
 			Entity: audit.EntityBooking, EntityID: b.ID,
 			Status: "CANCELLED", EventType: eventType,
 			Extra: map[string]any{"userId": b.UserID},
@@ -227,7 +227,12 @@ func main() {
 	// them. NotifyUser rather than a new topic: this needs no fan-out and no
 	// retry-until-acknowledged, and a topic would have to be added to both
 	// events.Topics and consumer.Topics to avoid being published and dropped.
-	bookingSvc.OnBookingDecided = func(ctx context.Context, b *bookingrepo.Booking, confirmed bool, reason string) {
+	bookingSvc.OnBookingDecided = func(ctx context.Context, b *bookingrepo.Booking, confirmed bool, reason string, actorID int64) {
+		// Deciding is the owner's answer, so stop chasing them (and ops) about
+		// the request; otherwise the retries ran to max attempts regardless.
+		if _, err := notifier.AckDecided(ctx, b.ID); err != nil {
+			logger.Error("ack decided booking", "bookingId", b.ID, logger.Err(err))
+		}
 		subject, body := "Your booking is confirmed", "The venue has confirmed your booking."
 		eventType := "booking.confirmed"
 		if !confirmed {
@@ -239,7 +244,7 @@ func main() {
 			}
 		}
 		audit.Record(ctx, db, audit.Decision{
-			Action: "DECIDE_BOOKING", Entity: audit.EntityBooking, EntityID: b.ID,
+			Actor: actorID, Action: "DECIDE_BOOKING", Entity: audit.EntityBooking, EntityID: b.ID,
 			Status: b.Status, Reason: reason,
 			EventType: derefString(b.EventType),
 		})

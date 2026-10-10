@@ -8,14 +8,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	bookingrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 )
 
 type Service struct {
@@ -45,15 +46,25 @@ type Payment struct {
 
 // Create opens a payment against a booking. The amount is the booking's own
 // outstanding balance - never a number supplied by the caller.
+//
+// One open order per booking: a double-tap or a second device gets the same
+// PENDING order back. Two orders each for the full balance could both be paid,
+// charging the customer twice. The booking row lock serialises the check.
 func (s *Service) Create(ctx context.Context, userID int64, bookingID string) (*Payment, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	var (
 		ownerID     int64
 		total, paid float64
 		status      string
 	)
-	err := s.db.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`SELECT user_id, total_amount, COALESCE(paid_amount,0), status
-		 FROM bookings WHERE id = $1 AND is_deleted = FALSE`, bookingID).
+		 FROM bookings WHERE id = $1 AND is_deleted = FALSE FOR UPDATE`, bookingID).
 		Scan(&ownerID, &total, &paid, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.BadRequest("BOOKING_NOT_FOUND", "Booking not found")
@@ -83,20 +94,33 @@ func (s *Service) Create(ctx context.Context, userID int64, bookingID string) (*
 		payType = "BALANCE"
 	}
 
-	orderID := "order_" + randHex(12)
+	const ret = ` id, booking_id, user_id, amount, currency, status, gateway,
+		           gateway_order_id, payment_type, created_at`
 	var p Payment
-	err = s.db.QueryRow(ctx,
+	dest := []any{&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
+		&p.Gateway, &p.GatewayOrderID, &p.PaymentType, &p.CreatedAt}
+
+	// While one order is open nothing else can be paid, so the balance cannot
+	// shrink under it: the open order is still the right amount to pay.
+	err = tx.QueryRow(ctx,
+		`SELECT`+ret+` FROM payments WHERE booking_id = $1 AND status = 'PENDING'
+		 ORDER BY created_at DESC LIMIT 1`, bookingID).Scan(dest...)
+	if err == nil {
+		return &p, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	orderID := "order_" + randHex(12)
+	err = tx.QueryRow(ctx,
 		`INSERT INTO payments (booking_id, user_id, amount, gateway, gateway_order_id, payment_type)
 		 VALUES ($1, $2, $3, 'MOCK', $4, $5)
-		 RETURNING id, booking_id, user_id, amount, currency, status, gateway,
-		           gateway_order_id, payment_type, created_at`,
-		bookingID, userID, due, orderID, payType).
-		Scan(&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
-			&p.Gateway, &p.GatewayOrderID, &p.PaymentType, &p.CreatedAt)
+		 RETURNING`+ret, bookingID, userID, due, orderID, payType).Scan(dest...)
 	if err != nil {
 		return nil, err
 	}
-	return &p, nil
+	return &p, tx.Commit(ctx)
 }
 
 type WebhookPayload struct {
@@ -125,21 +149,14 @@ func (s *Service) VerifySignature(body []byte, signature string) bool {
 // The UNIQUE event_id insert is the idempotency guard: a gateway that retries a
 // delivery (they all do) hits a duplicate key and the event is ignored rather
 // than crediting the booking twice.
+//
+// The insert is inside the transaction that applies the payment. Committed on
+// its own first, a transient failure later on rolled the work back but kept the
+// event row, so the gateway's retry was told "already processed" - the money
+// taken, the booking never credited.
 func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayload) error {
 	if p.EventID == "" || p.OrderID == "" {
 		return apperr.BadRequest("INVALID_WEBHOOK", "eventId and orderId are required")
-	}
-
-	payload, _ := json.Marshal(p)
-	_, err := s.db.Exec(ctx,
-		`INSERT INTO payment_webhook_events (event_id, payload) VALUES ($1, $2)`,
-		p.EventID, payload)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil // already processed; replay is a no-op
-		}
-		return err
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -147,6 +164,17 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 		return err
 	}
 	defer tx.Rollback(ctx)
+
+	payload, _ := json.Marshal(p)
+	tag, err := tx.Exec(ctx,
+		`INSERT INTO payment_webhook_events (event_id, payload) VALUES ($1, $2)
+		 ON CONFLICT (event_id) DO NOTHING`, p.EventID, payload)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil // already processed; replay is a no-op
+	}
 
 	// FOR UPDATE so two concurrent deliveries for the same order serialise.
 	var paymentID, bookingID, status string
@@ -174,17 +202,34 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 		}
 		// Captured before the update: once the row is written the previous
 		// status is gone, and the history row would have to guess at it.
+		// FOR UPDATE so the sweeper or a cancel cannot end the booking between
+		// this read and the update below.
 		var wasStatus string
+		var total, paid float64
 		if err := tx.QueryRow(ctx,
-			`SELECT status FROM bookings WHERE id = $1`, bookingID).Scan(&wasStatus); err != nil {
+			`SELECT status, total_amount, COALESCE(paid_amount,0) FROM bookings WHERE id = $1 FOR UPDATE`,
+			bookingID).Scan(&wasStatus, &total, &paid); err != nil {
 			return err
+		}
+		if paid+amount > total {
+			logger.Warn("payment: overpayment", "bookingId", bookingID, "paymentId", paymentID,
+				"total", total, "paidBefore", paid, "amount", amount)
+		}
+		// A booking that already ended (expired hold, cancelled, rejected) has
+		// released its dates, possibly to someone else. Confirming it would be
+		// a double booking, so the money is recorded but the status is left
+		// alone and the payment flagged for a refund.
+		live := wasStatus == "PENDING" || wasStatus == "CONFIRMED"
+		if !live {
+			logger.Error("payment: received for a booking that has ended - refund due",
+				"bookingId", bookingID, "paymentId", paymentID, "status", wasStatus, "amount", amount)
 		}
 		if _, err := tx.Exec(ctx,
 			`UPDATE bookings SET paid_amount = paid_amount + $2,
-			    status = CASE WHEN paid_amount + $2 >= total_amount THEN 'CONFIRMED' ELSE status END,
-			    expires_at = CASE WHEN paid_amount + $2 >= total_amount THEN NULL ELSE expires_at END,
+			    status = CASE WHEN $3 AND paid_amount + $2 >= total_amount THEN 'CONFIRMED' ELSE status END,
+			    expires_at = CASE WHEN $3 AND paid_amount + $2 >= total_amount THEN NULL ELSE expires_at END,
 			    updated_at = CURRENT_TIMESTAMP
-			 WHERE id = $1`, bookingID, amount); err != nil {
+			 WHERE id = $1`, bookingID, amount, live); err != nil {
 			return err
 		}
 		// The real previous status, not a hardcoded PENDING: an owner may have
@@ -225,8 +270,14 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 
 // Refund issues a refund against a successful payment. The total refunded can
 // never exceed what was paid.
-func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, reason string) (string, error) {
-	if amount <= 0 {
+//
+// Only the owner of the venue the payment was for, or an admin, may refund it.
+// The route admits any ROLE_HALL_OWNER, and without this check one vendor
+// could refund every other vendor's customers.
+func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, reason string, callerID int64, isAdmin bool) (string, error) {
+	// NaN slips past "<= 0" and every later comparison, then poisons the
+	// refunded sum so no limit ever holds again.
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
 		return "", apperr.BadRequest("INVALID_AMOUNT", "Refund amount must be positive")
 	}
 
@@ -238,14 +289,23 @@ func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, 
 
 	var paid float64
 	var status, bookingID string
+	var venueOwner int64
 	err = tx.QueryRow(ctx,
-		`SELECT amount, status, booking_id FROM payments WHERE id = $1 FOR UPDATE`,
-		paymentID).Scan(&paid, &status, &bookingID)
+		`SELECT p.amount, p.status, p.booking_id, f.owner_id
+		   FROM payments p
+		   JOIN bookings b ON b.id = p.booking_id
+		   JOIN facilities f ON f.id = b.target_id
+		  WHERE p.id = $1 FOR UPDATE OF p`,
+		paymentID).Scan(&paid, &status, &bookingID, &venueOwner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
 	}
 	if err != nil {
 		return "", err
+	}
+	if !isAdmin && venueOwner != callerID {
+		// Same answer as a missing payment: an id from another venue reveals nothing.
+		return "", apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
 	}
 	if status != "SUCCESS" && status != "PARTIALLY_REFUNDED" {
 		return "", apperr.Conflict("INVALID_STATE", "Only a successful payment can be refunded")

@@ -10,6 +10,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 // Price preview for the review screen.
@@ -100,7 +101,7 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	)
 	if err := h.svc.Pool().QueryRow(r.Context(),
 		`SELECT name, city, base_price_per_day, capacity_pax, type, `+service.ActiveDiscountSQL+`
-		   FROM facilities WHERE id = $1 AND is_deleted = FALSE`,
+		   FROM facilities f WHERE id = $1 AND `+venuetype.LiveSQL("f"), // same rule as the booking
 		facilityID).Scan(&name, &city, &basePrice, &capacityPax, &facType, &discountPct); err != nil {
 		response.Error(w, http.StatusNotFound, "Hall not found", "HALL_NOT_FOUND")
 		return
