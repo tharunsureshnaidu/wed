@@ -41,6 +41,7 @@ func (r *Repo) GetRecommendations(ctx context.Context, params dto.Recommendation
 	whereClause := `
 		WHERE f.is_deleted = FALSE
 		  AND f.status = 'APPROVED'
+		  AND f.is_verified = TRUE
 		  AND f.lat IS NOT NULL
 		  AND f.lng IS NOT NULL
 		  AND f.lat BETWEEN -90 AND 90
@@ -115,27 +116,20 @@ func (r *Repo) GetRecommendations(ctx context.Context, params dto.Recommendation
 		}
 	}
 
-	// Batch-load cover images if any
+	// Batch-load images
 	if len(ids) > 0 {
-		irows, err := r.db.Query(ctx, `
-			SELECT DISTINCT ON (i.facility_id)
-			       i.facility_id::text, i.id, i.url, i.is_cover, i.sort_order
-			  FROM facility_images i
-			 WHERE i.facility_id::text = ANY($1)
-			 ORDER BY i.facility_id, i.is_cover DESC, i.sort_order`, ids)
+		images, err := facilityrepo.New(r.db).AllImagesOfMany(ctx, ids)
 		if err == nil {
-			defer irows.Close()
-			for irows.Next() {
-				var fid string
-				var im facilityrepo.Image
-				if err := irows.Scan(&fid, &im.ID, &im.URL, &im.IsCover, &im.SortOrder); err == nil {
-					if f, ok := byID[fid]; ok {
-						f.Images = append(f.Images, im)
-					}
+			for _, fac := range facilities {
+				if im, ok := images[fac.ID]; ok && im != nil {
+					fac.Images = im
+					fac.CoverImage = facilityrepo.DeriveCoverImage(im)
 				}
 			}
 		}
 	}
+
+	_ = facilityrepo.New(r.db).PopulateDiscounts(ctx, facilities)
 
 	venues := make([]facilityrepo.VenueResponse, len(facilities))
 	for i, fac := range facilities {

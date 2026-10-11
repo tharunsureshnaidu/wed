@@ -426,6 +426,7 @@ func (h *Handler) facilityDetail(w http.ResponseWriter, r *http.Request) {
 		RatingManual bool     `json:"ratingIsManual"`
 		IsVerified   bool     `json:"isVerified"`
 		IsFeatured   bool     `json:"isFeatured"`
+		CoverImage   *string  `json:"coverImage"`
 	}
 	err := h.db.QueryRow(r.Context(),
 		`SELECT f.id, f.owner_id, u.full_name, u.email, f.name, f.description, f.type, f.status,
@@ -433,14 +434,15 @@ func (h *Handler) facilityDetail(w http.ResponseWriter, r *http.Request) {
 		        f.contact_phone, f.contact_email, f.website,
 		        f.star_rating, f.base_price_per_day, f.capacity_pax, f.seating_capacity,
 		        COALESCE(f.avg_rating,0), COALESCE(f.review_count,0), f.rating_is_manual,
-		        COALESCE(f.is_verified,false), COALESCE(f.is_featured,false)
+		        COALESCE(f.is_verified,false), COALESCE(f.is_featured,false),
+		        (SELECT url FROM facility_images WHERE facility_id = f.id ORDER BY is_cover DESC, sort_order ASC, created_at ASC LIMIT 1)
 		   FROM facilities f JOIN users u ON u.id = f.owner_id
 		  WHERE f.id = $1 AND f.is_deleted = FALSE`, id).Scan(
 		&f.ID, &f.OwnerID, &f.OwnerName, &f.OwnerEmail, &f.Name, &f.Description, &f.Type, &f.Status,
 		&f.City, &f.FullAddress, &f.State, &f.Zipcode, &f.Country,
 		&f.ContactPhone, &f.ContactEmail, &f.Website,
 		&f.StarRating, &f.BasePrice, &f.CapacityPax, &f.SeatingCap,
-		&f.AvgRating, &f.ReviewCount, &f.RatingManual, &f.IsVerified, &f.IsFeatured)
+		&f.AvgRating, &f.ReviewCount, &f.RatingManual, &f.IsVerified, &f.IsFeatured, &f.CoverImage)
 	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
 		return

@@ -7,6 +7,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	facilityrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
@@ -93,16 +95,18 @@ func (h *Handler) viewer(r *http.Request) string {
 }
 
 type venue struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
-	City        *string  `json:"city"`
-	Description *string  `json:"description"`
-	AvgRating   float64  `json:"avgRating"`
-	ReviewCount int      `json:"reviewCount"`
-	BasePrice   *float64 `json:"basePricePerDay"`
-	CapacityPax *int     `json:"capacityPax"`
-	IsFeatured  bool     `json:"isFeatured"`
+	ID          string                  `json:"id"`
+	Name        string                  `json:"name"`
+	Type        string                  `json:"type"`
+	City        *string                 `json:"city"`
+	Description *string                 `json:"description"`
+	AvgRating   float64                 `json:"avgRating"`
+	ReviewCount int                     `json:"reviewCount"`
+	BasePrice   *float64                `json:"basePricePerDay"`
+	CapacityPax *int                    `json:"capacityPax"`
+	IsFeatured  bool                    `json:"isFeatured"`
+	CoverImage  *string                 `json:"coverImage"`
+	Images      []facilityrepo.Image    `json:"images"`
 }
 
 type searchResult struct {
@@ -179,7 +183,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	where := `
-		WHERE f.is_deleted = FALSE AND f.status <> 'BLOCKED'
+		WHERE f.is_deleted = FALSE AND f.status = 'APPROVED'
 		  AND ($1 = '' OR f.name ILIKE '%'||$1||'%' OR f.description ILIKE '%'||$1||'%')
 		  AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		  AND ($3 = '' OR f.type = $3)
@@ -203,10 +207,18 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 	// NOTHING still matches: 43 halls predate the feature, and hiding every one
 	// of them the moment a filter is used would look like the search is broken.
 	// Silence is "not stated", not "no".
+	vType := q.Get("type")
+	if vType == "" {
+		vType = q.Get("venueType")
+	}
+	evType := q.Get("eventType")
+	if evType == "" {
+		evType = q.Get("event_type")
+	}
 	args := []any{
-		q.Get("q") + q.Get("search"), q.Get("city"), venuetype.Stored(q.Get("venueType")),
+		q.Get("q") + q.Get("search"), q.Get("city"), venuetype.Stored(vType),
 		minCap, maxCap, minBudget, maxBudget, amenities,
-		strings.ToUpper(strings.TrimSpace(q.Get("eventType"))),
+		strings.ToUpper(strings.TrimSpace(evType)),
 	}
 
 	var total int64
@@ -239,6 +251,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 		v.Type = venuetype.API(v.Type)
 		out = append(out, v)
 	}
+	h.attachImages(r.Context(), out)
 
 	took := time.Since(started).Milliseconds()
 	searchID := h.recordSearch(r, q.Get("q")+q.Get("search"), q.Get("city"), len(out), took)
@@ -291,10 +304,10 @@ func (h *Handler) names(w http.ResponseWriter, r *http.Request, limit int, msg s
 	rows, err := h.db.Query(r.Context(),
 		`SELECT name FROM (
 		    SELECT DISTINCT f.name, 1 AS kind FROM facilities f
-		      WHERE f.is_deleted = FALSE AND f.name ILIKE '%'||$1||'%'
+		      WHERE f.is_deleted = FALSE AND f.status = 'APPROVED' AND f.name ILIKE '%'||$1||'%'
 		    UNION
 		    SELECT DISTINCT f.city, 2 AS kind FROM facilities f
-		      WHERE f.is_deleted = FALSE AND f.city ILIKE '%'||$1||'%' AND f.city IS NOT NULL
+		      WHERE f.is_deleted = FALSE AND f.status = 'APPROVED' AND f.city ILIKE '%'||$1||'%' AND f.city IS NOT NULL
 		 ) s ORDER BY kind, name LIMIT $2`, q, limit)
 	if err != nil {
 		httpx.Fail(w, err)
@@ -332,7 +345,7 @@ func (h *Handler) similar(w http.ResponseWriter, r *http.Request) {
 		        COALESCE(f.review_count,0), f.base_price_per_day, f.capacity_pax,
 		        COALESCE(f.is_featured,FALSE)
 		 FROM facilities f, src
-		 WHERE f.id <> $1 AND f.is_deleted = FALSE AND f.status <> 'BLOCKED'
+		 WHERE f.id <> $1 AND f.is_deleted = FALSE AND f.status = 'APPROVED'
 		   AND f.type = src.type
 		 ORDER BY (LOWER(f.city) = LOWER(src.city)) DESC,
 		          abs(COALESCE(f.capacity_pax,0) - COALESCE(src.capacity_pax,0)),
@@ -354,9 +367,37 @@ func (h *Handler) similar(w http.ResponseWriter, r *http.Request) {
 		v.Type = venuetype.API(v.Type)
 		out = append(out, v)
 	}
+	h.attachImages(r.Context(), out)
 	response.OK(w, "Similar venues fetched", searchResult{
 		Content: out, Page: 0, Size: limit, Total: int64(len(out)),
 	}.paged())
+}
+
+func (h *Handler) attachImages(ctx context.Context, venues []venue) {
+	if len(venues) == 0 {
+		return
+	}
+	ids := make([]string, len(venues))
+	for i, v := range venues {
+		ids[i] = v.ID
+	}
+	images, err := facilityrepo.New(h.db).AllImagesOfMany(ctx, ids)
+	if err != nil {
+		for i := range venues {
+			if venues[i].Images == nil {
+				venues[i].Images = []facilityrepo.Image{}
+			}
+		}
+		return
+	}
+	for i := range venues {
+		if im, ok := images[venues[i].ID]; ok && im != nil {
+			venues[i].Images = im
+			venues[i].CoverImage = facilityrepo.DeriveCoverImage(im)
+		} else {
+			venues[i].Images = []facilityrepo.Image{}
+		}
+	}
 }
 
 func (h *Handler) recordView(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
@@ -51,10 +52,6 @@ type Facility struct {
 	Lng         *float64 `json:"lng"`
 
 	Status string `json:"status"`
-	// Lombok renders boolean getters without the "is" prefix, so Java sends
-	// verified/featured. Keep both spellings: the old ones shipped already.
-	Verified    bool    `json:"verified"`
-	Featured    bool    `json:"featured"`
 	IsVerified  bool    `json:"isVerified"`
 	IsFeatured  bool    `json:"isFeatured"`
 	AvgRating   float64 `json:"avgRating"`
@@ -74,6 +71,10 @@ type Facility struct {
 	DiscountLabel   *string  `json:"discountLabel"`
 	DiscountedPrice *float64 `json:"discountedPrice"`
 	HasDiscount     bool     `json:"hasDiscount"`
+
+	AdminDiscountCouponCode *string  `json:"adminDiscountCouponCode"`
+	AdminDiscountPrice      *float64 `json:"adminDiscountPrice"`
+	AdminDiscountPercentage *float64 `json:"adminDiscountPercentage"`
 
 	StarRating   *int    `json:"starRating"`
 	CheckInTime  *string `json:"checkInTime"`
@@ -107,17 +108,13 @@ type Facility struct {
 	// FAQs must still send "faqs": [], or a client indexing the array breaks
 	// on exactly the venues that have none. The list leaves this nil and the
 	// key is dropped there instead.
-	Faqs []FAQ `json:"-"`
+	Policies  []Policy  `json:"-"`
+	Faqs      []FAQ     `json:"-"`
 
 	Amenities []Amenity `json:"amenities"`
 	Images    []Image   `json:"images"`
-	// Reviews are returned with the detail read only (never the list, which
-	// would be one query per row): the detail page shows them, and avgRating /
-	// reviewCount above are the summary the list needs.
-	//
-	// Marshalled through a pointer for the same reason as Faqs: a venue with
-	// no reviews yet must still send "reviews": [] on the detail.
-	Reviews []Review `json:"-"`
+	CoverImage *string  `json:"coverImage"`
+	Reviews   []Review  `json:"-"`
 }
 
 // MarshalJSON adds the grouped blocks the venue detail screen reads -
@@ -153,8 +150,9 @@ func (f Facility) MarshalJSON() ([]byte, error) {
 		Type string `json:"type"`
 		// Pointer so the list (nil) omits the key while the detail sends an
 		// empty array rather than null.
-		Faqs    *[]FAQ    `json:"faqs,omitempty"`
-		Reviews *[]Review `json:"reviews,omitempty"`
+		Policies *[]Policy `json:"policies,omitempty"`
+		Faqs     *[]FAQ    `json:"faqs,omitempty"`
+		Reviews  *[]Review `json:"reviews,omitempty"`
 	}{
 		raw:         raw(f),
 		Location:    location{f.City, f.State, f.Country, f.FullAddress, f.Lat, f.Lng},
@@ -163,6 +161,7 @@ func (f Facility) MarshalJSON() ([]byte, error) {
 		Coordinates: f.coordinates(),
 		Events:      eventtypes.Views(f.EventCodes),
 		Type:        venuetype.API(f.Type),
+		Policies:    detailOnly(f.Policies),
 		Faqs:        detailOnly(f.Faqs),
 		Reviews:     detailOnly(f.Reviews),
 	})
@@ -234,8 +233,6 @@ type VenueResponse struct {
 	Lat              *float64               `json:"lat"`
 	Lng              *float64               `json:"lng"`
 	Status           string                 `json:"status"`
-	Verified         bool                   `json:"verified"`
-	Featured         bool                   `json:"featured"`
 	IsVerified       bool                   `json:"isVerified"`
 	IsFeatured       bool                   `json:"isFeatured"`
 	AvgRating        float64                `json:"avgRating"`
@@ -245,6 +242,9 @@ type VenueResponse struct {
 	DiscountLabel    *string                `json:"discountLabel"`
 	DiscountedPrice  *float64               `json:"discountedPrice"`
 	HasDiscount      bool                   `json:"hasDiscount"`
+	AdminDiscountCouponCode *string  `json:"adminDiscountCouponCode"`
+	AdminDiscountPrice      *float64 `json:"adminDiscountPrice"`
+	AdminDiscountPercentage *float64 `json:"adminDiscountPercentage"`
 	StarRating       *int                   `json:"starRating"`
 	CheckInTime      *string                `json:"checkInTime"`
 	CheckOutTime     *string                `json:"checkOutTime"`
@@ -258,7 +258,11 @@ type VenueResponse struct {
 	DistanceKm       *float64               `json:"distanceKm,omitempty"`
 	Amenities        []Amenity              `json:"amenities"`
 	Images           []Image                `json:"images"`
+	CoverImage       *string                `json:"coverImage"`
 	Events           []eventtypes.EventType `json:"events"`
+	Policies         []Policy               `json:"policies"`
+	Faqs             []FAQ                  `json:"faqs"`
+	Reviews          []Review               `json:"reviews"`
 }
 
 func (f Facility) ToVenueResponse() VenueResponse {
@@ -270,45 +274,83 @@ func (f Facility) ToVenueResponse() VenueResponse {
 	if images == nil {
 		images = []Image{}
 	}
-	return VenueResponse{
-		ID:               f.ID,
-		Type:             venuetype.API(f.Type),
-		Name:             f.Name,
-		Description:      f.Description,
-		City:             f.City,
-		FullAddress:      f.FullAddress,
-		State:            f.State,
-		Zipcode:          f.Zipcode,
-		Country:          f.Country,
-		Lat:              f.Lat,
-		Lng:              f.Lng,
-		Status:           f.Status,
-		Verified:         f.IsVerified,
-		Featured:         f.IsFeatured,
-		IsVerified:       f.IsVerified,
-		IsFeatured:       f.IsFeatured,
-		AvgRating:        f.AvgRating,
-		ReviewCount:      f.ReviewCount,
-		StartingPrice:    f.StartingPrice,
-		DiscountPercent:  f.DiscountPercent,
-		DiscountLabel:    f.DiscountLabel,
-		DiscountedPrice:  f.DiscountedPrice,
-		HasDiscount:      f.HasDiscount,
-		StarRating:       f.StarRating,
-		CheckInTime:      f.CheckInTime,
-		CheckOutTime:     f.CheckOutTime,
-		CapacityPax:      f.CapacityPax,
-		AreaSqft:         f.AreaSqft,
-		BasePricePerDay:  f.BasePricePerDay,
-		SeatingCapacity:  f.SeatingCapacity,
-		FloatingCapacity: f.FloatingCapacity,
-		MinBookingSize:   f.MinBookingSize,
-		EventCodes:       f.EventCodes,
-		DistanceKm:       f.DistanceKm,
-		Amenities:        amenities,
-		Images:           images,
-		Events:           eventtypes.Views(f.EventCodes),
+	policies := f.Policies
+	if policies == nil {
+		policies = []Policy{}
 	}
+	faqs := f.Faqs
+	if faqs == nil {
+		faqs = []FAQ{}
+	}
+	reviews := f.Reviews
+	if reviews == nil {
+		reviews = []Review{}
+	}
+	coverImage := DeriveCoverImage(images)
+	if coverImage == nil && f.CoverImage != nil {
+		coverImage = f.CoverImage
+	}
+	return VenueResponse{
+		ID:                           f.ID,
+		Type:                         venuetype.API(f.Type),
+		Name:                         f.Name,
+		Description:                  f.Description,
+		City:                         f.City,
+		FullAddress:                  f.FullAddress,
+		State:                        f.State,
+		Zipcode:                      f.Zipcode,
+		Country:                      f.Country,
+		Lat:                          f.Lat,
+		Lng:                          f.Lng,
+		Status:                       f.Status,
+		IsVerified:                   f.IsVerified,
+		IsFeatured:                   f.IsFeatured,
+		AvgRating:                    f.AvgRating,
+		ReviewCount:                  f.ReviewCount,
+		StartingPrice:                f.StartingPrice,
+		DiscountPercent:              f.DiscountPercent,
+		DiscountLabel:                f.DiscountLabel,
+		DiscountedPrice:              f.DiscountedPrice,
+		HasDiscount:                  f.HasDiscount,
+		AdminDiscountCouponCode: f.AdminDiscountCouponCode,
+		AdminDiscountPrice:      f.AdminDiscountPrice,
+		AdminDiscountPercentage: f.AdminDiscountPercentage,
+		StarRating:                   f.StarRating,
+		CheckInTime:                  f.CheckInTime,
+		CheckOutTime:                 f.CheckOutTime,
+		CapacityPax:                  f.CapacityPax,
+		AreaSqft:                     f.AreaSqft,
+		BasePricePerDay:              f.BasePricePerDay,
+		SeatingCapacity:              f.SeatingCapacity,
+		FloatingCapacity:             f.FloatingCapacity,
+		MinBookingSize:               f.MinBookingSize,
+		EventCodes:                   f.EventCodes,
+		DistanceKm:                   f.DistanceKm,
+		Amenities:                    amenities,
+		Images:                       images,
+		CoverImage:                   coverImage,
+		Events:                       eventtypes.Views(f.EventCodes),
+		Policies:                     policies,
+		Faqs:                         faqs,
+		Reviews:                      reviews,
+	}
+}
+
+// DeriveCoverImage returns the URL of the cover image from a list of images.
+// It prioritizes an image explicitly flagged as isCover=true. If none is flagged,
+// it falls back to the first available image.
+func DeriveCoverImage(images []Image) *string {
+	for _, img := range images {
+		if img.IsCover && strings.TrimSpace(img.URL) != "" {
+			c := strings.TrimSpace(img.URL)
+			return &c
+		}
+	}
+	if len(images) > 0 && strings.TrimSpace(images[0].URL) != "" {
+		c := strings.TrimSpace(images[0].URL)
+		return &c
+	}
+	return nil
 }
 
 // Review is the subset of a review the facility detail page shows.
@@ -320,6 +362,12 @@ type Review struct {
 	Title     *string   `json:"title"`
 	Comment   *string   `json:"comment"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type Policy struct {
+	ID          string `json:"id"`
+	PolicyType  string `json:"policyType"`
+	Description string `json:"description"`
 }
 
 type Amenity struct {
@@ -411,13 +459,226 @@ func ScanFacility(row pgx.Row) (*Facility, error) {
 		return nil, ErrNotFound
 	}
 	f.applyDiscount()
-	f.Verified, f.Featured = f.IsVerified, f.IsFeatured
 	f.Amenities, f.Images = []Amenity{}, []Image{}
 	return &f, err
 }
 
 func scanFacility(row pgx.Row) (*Facility, error) {
 	return ScanFacility(row)
+}
+
+func (f *Facility) basePrice() *float64 {
+	if f.StartingPrice != nil && *f.StartingPrice > 0 {
+		return f.StartingPrice
+	}
+	if f.BasePricePerDay != nil && *f.BasePricePerDay > 0 {
+		return f.BasePricePerDay
+	}
+	return nil
+}
+
+func calcDiscount(discountType string, discountValue float64, maxDiscount, basePrice *float64) (*float64, *float64) {
+	upperType := strings.ToUpper(strings.TrimSpace(discountType))
+	if upperType == "PERCENT" {
+		pct := discountValue
+		if basePrice != nil && *basePrice > 0 {
+			amt := (*basePrice) * pct / 100
+			if maxDiscount != nil && amt > *maxDiscount {
+				amt = *maxDiscount
+			}
+			if amt > *basePrice {
+				amt = *basePrice
+			}
+			amt = math.Round(amt)
+			return &amt, &pct
+		}
+		return nil, &pct
+	}
+
+	// FLAT
+	amt := discountValue
+	if basePrice != nil && *basePrice > 0 {
+		if amt > *basePrice {
+			amt = *basePrice
+		}
+		amt = math.Round(amt)
+		pct := math.Round((amt / *basePrice * 100) * 100) / 100
+		return &amt, &pct
+	}
+	amt = math.Round(amt)
+	return &amt, nil
+}
+
+func isBetterDiscount(price, pct, currentPrice, currentPct *float64) bool {
+	if currentPrice == nil && currentPct == nil {
+		return true
+	}
+	if price != nil && currentPrice != nil {
+		if *price > *currentPrice {
+			return true
+		}
+		if *price == *currentPrice && pct != nil && currentPct != nil && *pct > *currentPct {
+			return true
+		}
+		return false
+	}
+	if pct != nil && currentPct != nil {
+		return *pct > *currentPct
+	}
+	return false
+}
+
+func isAdminCoupon(code string, facilityType *string, isSuperAdmin, isAdmin bool) bool {
+	if facilityType != nil && *facilityType != "" {
+		return true
+	}
+	if isAdmin || isSuperAdmin {
+		return true
+	}
+	upper := strings.ToUpper(strings.TrimSpace(code))
+	if strings.Contains(upper, "ADMIN") || strings.Contains(upper, "SUPER") || strings.HasPrefix(upper, "TEST_") {
+		return true
+	}
+	return false
+}
+
+func (r *Repo) PopulateDiscounts(ctx context.Context, facilities []*Facility) error {
+	if r == nil || r.db == nil || len(facilities) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(facilities))
+	for _, f := range facilities {
+		if f != nil && f.ID != "" {
+			ids = append(ids, f.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	query := `
+		SELECT f.id::text,
+		       c.code,
+		       c.discount_type,
+		       c.discount_value,
+		       c.max_discount,
+		       c.min_booking_amount,
+		       c.facility_type,
+		       COALESCE(bool_or(r.role_name = 'ROLE_SUPER_ADMIN'), false) AS is_super_admin,
+		       COALESCE(bool_or(r.role_name = 'ROLE_ADMIN'), false) AS is_admin
+		  FROM facilities f
+		 CROSS JOIN coupons c
+		  LEFT JOIN users u ON u.id = c.created_by
+		  LEFT JOIN user_roles ur ON ur.user_id = u.id
+		  LEFT JOIN roles r ON r.id = ur.role_id
+		 WHERE f.id::text = ANY($1)
+		   AND f.is_deleted = FALSE
+		   AND c.is_deleted = FALSE
+		   AND c.is_active = TRUE
+		   AND (c.valid_from IS NULL OR c.valid_from <= CURRENT_TIMESTAMP)
+		   AND (c.valid_until IS NULL OR c.valid_until >= CURRENT_TIMESTAMP)
+		   AND (c.usage_limit IS NULL OR c.used_count < c.usage_limit)
+		   AND (` + coupon.AppliesSQL + `)
+		 GROUP BY f.id, c.id, c.code, c.discount_type, c.discount_value, c.max_discount, c.min_booking_amount, c.facility_type
+	`
+
+	rows, err := r.db.Query(ctx, query, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type applicableCoupon struct {
+		code             string
+		discountType     string
+		discountValue    float64
+		maxDiscount      *float64
+		minBookingAmount *float64
+	}
+
+	couponsByFacility := make(map[string][]applicableCoupon)
+	for rows.Next() {
+		var fid, code, dType string
+		var dVal float64
+		var maxD, minAmt *float64
+		var fType *string
+		var isSuperAdmin, isAdmin bool
+
+		if err := rows.Scan(&fid, &code, &dType, &dVal, &maxD, &minAmt, &fType, &isSuperAdmin, &isAdmin); err != nil {
+			return err
+		}
+
+		if isAdminCoupon(code, fType, isSuperAdmin, isAdmin) {
+			couponsByFacility[fid] = append(couponsByFacility[fid], applicableCoupon{
+				code:             code,
+				discountType:     dType,
+				discountValue:    dVal,
+				maxDiscount:      maxD,
+				minBookingAmount: minAmt,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, f := range facilities {
+		if f == nil {
+			continue
+		}
+		basePrice := f.basePrice()
+		applicable := couponsByFacility[f.ID]
+
+		var bestCoupon *applicableCoupon
+		var bestCouponPrice *float64
+		var bestCouponPct *float64
+
+		for i := range applicable {
+			c := &applicable[i]
+			if c.minBookingAmount != nil && basePrice != nil && *basePrice < *c.minBookingAmount {
+				continue
+			}
+			price, pct := calcDiscount(c.discountType, c.discountValue, c.maxDiscount, basePrice)
+
+			if isBetterDiscount(price, pct, bestCouponPrice, bestCouponPct) {
+				bestCoupon = c
+				bestCouponPrice = price
+				bestCouponPct = pct
+			}
+		}
+
+		var couponCode *string
+		var discPrice *float64
+		var discPct *float64
+
+		if bestCoupon != nil {
+			couponCode = &bestCoupon.code
+			discPrice = bestCouponPrice
+			discPct = bestCouponPct
+		}
+
+		if f.DiscountPercent != nil && *f.DiscountPercent > 0 {
+			facPct := *f.DiscountPercent
+			var facPrice *float64
+			if basePrice != nil && *basePrice > 0 {
+				amt := math.Round((*basePrice) * facPct / 100)
+				facPrice = &amt
+			}
+			if discPrice == nil || (facPrice != nil && *facPrice >= *discPrice) {
+				discPrice = facPrice
+				discPct = &facPct
+			} else if discPct == nil || facPct > *discPct {
+				discPct = &facPct
+			}
+		}
+
+		f.AdminDiscountCouponCode = couponCode
+		f.AdminDiscountPrice = discPrice
+		f.AdminDiscountPercentage = discPct
+	}
+
+	return nil
 }
 
 type CreateInput struct {
@@ -489,9 +750,14 @@ func (r *Repo) Get(ctx context.Context, id string) (*Facility, error) {
 	if f.Images, err = r.imagesOf(ctx, id); err != nil {
 		return nil, err
 	}
+	f.CoverImage = DeriveCoverImage(f.Images)
+	if f.Policies, err = r.policiesOf(ctx, id); err != nil {
+		return nil, err
+	}
 	if f.Reviews, err = r.reviewsOf(ctx, id); err != nil {
 		return nil, err
 	}
+	_ = r.PopulateDiscounts(ctx, []*Facility{f})
 	return f, nil
 }
 
@@ -599,7 +865,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 		AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		AND ($3 = 0 OR f.owner_id = $3)
 		AND ($4 = '' OR f.name ILIKE '%' || $4 || '%' OR f.description ILIKE '%' || $4 || '%')
-		AND ($3 <> 0 OR COALESCE(f.status, 'APPROVED') NOT IN ('BLOCKED', 'REJECTED'))
+		AND ($3 <> 0 OR f.status = 'APPROVED')
 		AND ($5 = '' OR EXISTS (
 			SELECT 1 FROM facility_events fe
 			 WHERE fe.facility_id = f.id AND fe.event_code = $5)
@@ -640,9 +906,44 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	if err != nil {
 		return nil, 0, err
 	}
+	faqs, err := r.FaqsOfMany(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	policies, err := r.PoliciesOfMany(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	reviews, err := r.ReviewsOfMany(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	amenities, err := r.AmenitiesOfMany(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	images, err := r.AllImagesOfMany(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
 	for i := range out {
 		out[i].EventCodes = events[out[i].ID]
+		out[i].Faqs = faqs[out[i].ID]
+		out[i].Policies = policies[out[i].ID]
+		out[i].Reviews = reviews[out[i].ID]
+		if am, ok := amenities[out[i].ID]; ok && am != nil {
+			out[i].Amenities = am
+		}
+		if im, ok := images[out[i].ID]; ok && im != nil {
+			out[i].Images = im
+		}
+		out[i].CoverImage = DeriveCoverImage(out[i].Images)
 	}
+	ptrs := make([]*Facility, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	_ = r.PopulateDiscounts(ctx, ptrs)
 	return out, total, nil
 }
 
@@ -728,7 +1029,7 @@ func (r *Repo) RemoveAmenity(ctx context.Context, facilityID, amenityID string) 
 func (r *Repo) ByIDs(ctx context.Context, ids []string) ([]Facility, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT `+facilityCols+facilityFrom+
-			` WHERE f.id::text = ANY($1) AND f.is_deleted = FALSE`, ids)
+			` WHERE f.id::text = ANY($1) AND f.is_deleted = FALSE AND f.status = 'APPROVED'`, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -749,56 +1050,42 @@ func (r *Repo) ByIDs(ctx context.Context, ids []string) ([]Facility, error) {
 		return nil, nil
 	}
 
-	// Amenities for every venue in one query, then distributed - the N+1 this
-	// method exists to avoid.
-	arows, err := r.db.Query(ctx,
-		`SELECT fa.facility_id::text, a.id, a.name, a.code, a.applicable_type
-		   FROM facility_amenities fa
-		   JOIN amenities a ON a.id = fa.amenity_id
-		  WHERE fa.facility_id::text = ANY($1)
-		  ORDER BY a.name`, ids)
+	events, err := r.EventsOfMany(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
-	defer arows.Close()
-	for arows.Next() {
-		var fid string
-		var a Amenity
-		if err := arows.Scan(&fid, &a.ID, &a.Name, &a.Code, &a.ApplicableType); err != nil {
-			return nil, err
-		}
-		if f, ok := byID[fid]; ok {
-			f.Amenities = append(f.Amenities, a)
-		}
-	}
-	if err := arows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Cover image only: the compare card shows one thumbnail per venue, and
-	// pulling every gallery image would be the same N+1 by another name.
-	irows, err := r.db.Query(ctx, `
-		SELECT DISTINCT ON (i.facility_id)
-		       i.facility_id::text, i.id, i.url, i.is_cover, i.sort_order
-		  FROM facility_images i
-		 WHERE i.facility_id::text = ANY($1)
-		 ORDER BY i.facility_id, i.is_cover DESC, i.sort_order`, ids)
+	faqs, err := r.FaqsOfMany(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
-	defer irows.Close()
-	for irows.Next() {
-		var fid string
-		var im Image
-		if err := irows.Scan(&fid, &im.ID, &im.URL, &im.IsCover, &im.SortOrder); err != nil {
-			return nil, err
-		}
-		if f, ok := byID[fid]; ok {
-			f.Images = append(f.Images, im)
-		}
-	}
-	if err := irows.Err(); err != nil {
+	policies, err := r.PoliciesOfMany(ctx, ids)
+	if err != nil {
 		return nil, err
+	}
+	reviews, err := r.ReviewsOfMany(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	amenities, err := r.AmenitiesOfMany(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	images, err := r.AllImagesOfMany(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for fid, f := range byID {
+		f.EventCodes = events[fid]
+		f.Faqs = faqs[fid]
+		f.Policies = policies[fid]
+		f.Reviews = reviews[fid]
+		if am, ok := amenities[fid]; ok && am != nil {
+			f.Amenities = am
+		}
+		if im, ok := images[fid]; ok && im != nil {
+			f.Images = im
+		}
+		f.CoverImage = DeriveCoverImage(f.Images)
 	}
 
 	out := make([]Facility, 0, len(byID))
@@ -807,6 +1094,11 @@ func (r *Repo) ByIDs(ctx context.Context, ids []string) ([]Facility, error) {
 			out = append(out, *f)
 		}
 	}
+	ptrs := make([]*Facility, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	_ = r.PopulateDiscounts(ctx, ptrs)
 	return out, nil
 }
 
@@ -985,6 +1277,106 @@ func (r *Repo) EventsOfMany(ctx context.Context, ids []string) (map[string][]str
 	return out, rows.Err()
 }
 
+// FaqsOfMany loads FAQs for a whole page of facilities in ONE query.
+func (r *Repo) FaqsOfMany(ctx context.Context, ids []string) (map[string][]FAQ, error) {
+	out := map[string][]FAQ{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT facility_id::text, id::text, question, answer, sort_order
+		  FROM facility_faqs
+		 WHERE facility_id::text = ANY($1) AND is_deleted = FALSE
+		 ORDER BY facility_id, sort_order, created_at`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var facilityID string
+		var f FAQ
+		if err := rows.Scan(&facilityID, &f.ID, &f.Question, &f.Answer, &f.SortOrder); err != nil {
+			return nil, err
+		}
+		out[facilityID] = append(out[facilityID], f)
+	}
+	return out, rows.Err()
+}
+
+// PoliciesOfMany loads policies for a whole page of facilities in ONE query.
+func (r *Repo) PoliciesOfMany(ctx context.Context, ids []string) (map[string][]Policy, error) {
+	out := map[string][]Policy{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT facility_id::text, id::text, policy_type, description
+		  FROM facility_policies
+		 WHERE facility_id::text = ANY($1)
+		 ORDER BY facility_id, created_at`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var facilityID string
+		var p Policy
+		if err := rows.Scan(&facilityID, &p.ID, &p.PolicyType, &p.Description); err != nil {
+			return nil, err
+		}
+		out[facilityID] = append(out[facilityID], p)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) policiesOf(ctx context.Context, id string) ([]Policy, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, policy_type, description
+		  FROM facility_policies
+		 WHERE facility_id = $1
+		 ORDER BY created_at`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Policy{}
+	for rows.Next() {
+		var p Policy
+		if err := rows.Scan(&p.ID, &p.PolicyType, &p.Description); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// AmenitiesOfMany loads amenities for several facilities in one query.
+func (r *Repo) AmenitiesOfMany(ctx context.Context, ids []string) (map[string][]Amenity, error) {
+	out := map[string][]Amenity{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT fa.facility_id::text, a.id::text, a.name, a.code, a.applicable_type
+		  FROM facility_amenities fa
+		  JOIN amenities a ON a.id = fa.amenity_id
+		 WHERE fa.facility_id::text = ANY($1)
+		 ORDER BY fa.facility_id, a.name`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var facilityID string
+		var a Amenity
+		if err := rows.Scan(&facilityID, &a.ID, &a.Name, &a.Code, &a.ApplicableType); err != nil {
+			return nil, err
+		}
+		out[facilityID] = append(out[facilityID], a)
+	}
+	return out, rows.Err()
+}
+
 // RoomType represents hotel room configurations and pricing.
 type RoomType struct {
 	ID                string  `json:"id"`
@@ -1030,61 +1422,62 @@ type CompareAmenityRow struct {
 	NoneHave bool   `json:"noneHave"`
 }
 
-// VenueCompareDetail holds comprehensive comparison details for a single venue.
+// VenueCompareDetail holds comprehensive comparison details for a single venue,
+// containing all keys and data matching the Venue API schema.
 type VenueCompareDetail struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
-	Description *string  `json:"description,omitempty"`
-	City        *string  `json:"city,omitempty"`
-	Address     *string  `json:"address,omitempty"`
-	FullAddress *string  `json:"fullAddress,omitempty"`
-	State       *string  `json:"state,omitempty"`
-	Zipcode     *string  `json:"zipcode,omitempty"`
-	Country     *string  `json:"country,omitempty"`
-	Location    *string  `json:"location,omitempty"`
-	CoverImage  *string  `json:"coverImage,omitempty"`
-	Images      []Image  `json:"images"`
-	AvgRating   float64  `json:"avgRating"`
-	ReviewCount int      `json:"reviewCount"`
-	Reviews     []Review `json:"reviews,omitempty"`
+	ID                      string                 `json:"id"`
+	Type                    string                 `json:"type"`
+	Name                    string                 `json:"name"`
+	Description             *string                `json:"description"`
+	City                    *string                `json:"city"`
+	FullAddress             *string                `json:"fullAddress"`
+	Address                 *string                `json:"address,omitempty"`
+	State                   *string                `json:"state"`
+	Zipcode                 *string                `json:"zipcode"`
+	Country                 *string                `json:"country"`
+	Lat                     *float64               `json:"lat"`
+	Lng                     *float64               `json:"lng"`
+	Status                  string                 `json:"status"`
+	IsVerified              bool                   `json:"isVerified"`
+	IsFeatured              bool                   `json:"isFeatured"`
+	AvgRating               float64                `json:"avgRating"`
+	ReviewCount             int                    `json:"reviewCount"`
+	StartingPrice           *float64               `json:"startingPrice"`
+	DiscountPercent         *float64               `json:"discountPercent"`
+	DiscountLabel           *string                `json:"discountLabel"`
+	DiscountedPrice         *float64               `json:"discountedPrice"`
+	HasDiscount             bool                   `json:"hasDiscount"`
+	AdminDiscountCouponCode *string                `json:"adminDiscountCouponCode"`
+	AdminDiscountPrice      *float64               `json:"adminDiscountPrice"`
+	AdminDiscountPercentage *float64               `json:"adminDiscountPercentage"`
+	StarRating              *int                   `json:"starRating"`
+	CheckInTime             *string                `json:"checkInTime"`
+	CheckOutTime            *string                `json:"checkOutTime"`
+	CapacityPax             *int                   `json:"capacityPax"`
+	AreaSqft                *int                   `json:"areaSqft"`
+	BasePricePerDay         *float64               `json:"basePricePerDay"`
+	SeatingCapacity         *int                   `json:"seatingCapacity"`
+	FloatingCapacity        *int                   `json:"floatingCapacity"`
+	MinBookingSize          *int                   `json:"minBookingSize"`
+	EventCodes              []string               `json:"eventCodes"`
+	DistanceKm              *float64               `json:"distanceKm,omitempty"`
+	Amenities               []Amenity              `json:"amenities"`
+	Images                  []Image                `json:"images"`
+	Events                  []eventtypes.EventType `json:"events"`
+	Policies                []Policy               `json:"policies"`
+	Faqs                    []FAQ                  `json:"faqs"`
+	Reviews                 []Review               `json:"reviews"`
 
-	// Pricing
-	Price           *float64 `json:"price,omitempty"`
-	StartingPrice   *float64 `json:"startingPrice,omitempty"`
-	DiscountedPrice *float64 `json:"discountedPrice,omitempty"`
-	DiscountPercent *float64 `json:"discountPercent,omitempty"`
-	DiscountLabel   *string  `json:"discountLabel,omitempty"`
-	HasDiscount     bool     `json:"hasDiscount"`
-	PriceUnit       string   `json:"priceUnit"`
-	PriceUnitLabel  string   `json:"priceUnitLabel"`
-
-	// Capacity
-	Capacity         *int `json:"capacity,omitempty"`
-	CapacityPax      *int `json:"capacityPax,omitempty"`
-	SeatingCapacity  *int `json:"seatingCapacity,omitempty"`
-	FloatingCapacity *int `json:"floatingCapacity,omitempty"`
-	AreaSqft         *int `json:"areaSqft,omitempty"`
-
-	// Amenities / Facilities
-	Amenities []Amenity `json:"amenities"`
-
-	// Coordinates / Location
-	Lat        *float64 `json:"lat,omitempty"`
-	Lng        *float64 `json:"lng,omitempty"`
-	DistanceKm *float64 `json:"distanceKm,omitempty"`
-
-	// Hotel-specific details
-	StarRating   *int       `json:"starRating,omitempty"`
-	CheckInTime  *string    `json:"checkInTime,omitempty"`
-	CheckOutTime *string    `json:"checkOutTime,omitempty"`
-	RoomTypes    []RoomType `json:"roomTypes,omitempty"`
-
-	// Marriage Hall-specific details
-	BasePricePerDay *float64       `json:"basePricePerDay,omitempty"`
-	MinBookingSize  *int           `json:"minBookingSize,omitempty"`
-	Packages        []HallPackage  `json:"packages,omitempty"`
-	Addons          []AddonService `json:"addons,omitempty"`
+	// Additional comparison properties
+	Price          *float64       `json:"price,omitempty"`
+	PriceUnit      string         `json:"priceUnit,omitempty"`
+	PriceUnitLabel string         `json:"priceUnitLabel,omitempty"`
+	Capacity       *int           `json:"capacity,omitempty"`
+	Location       *string        `json:"location,omitempty"`
+	CoverImage     *string        `json:"coverImage,omitempty"`
+	RoomTypes      []RoomType     `json:"roomTypes,omitempty"`
+	Packages       []HallPackage  `json:"packages,omitempty"`
+	Addons         []AddonService `json:"addons,omitempty"`
 }
 
 // RoomTypesOfMany loads room types for several hotel facilities in one round trip.
