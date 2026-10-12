@@ -5,3 +5,20 @@ __pycache__/
 *.pyc
 kafka_*/
 .claude/worktrees/
+
+# User uploads (venue photos, feedback screenshots, the media spool) are runtime
+# data, not source. They live on disk / S3, never in git.
+uploads/
+
+# The dumps ship gzipped only; the raw .sql is the same bytes, 4x larger.
+marriage-hall-booking/dumps/*.sql
+
+# Images and media are never source here.
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.heic
+*.mp4
+*.mov

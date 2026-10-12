@@ -18,6 +18,11 @@ reached "done" did so because something compiled and was assumed to work.
 **Check the request struct before writing a payload.** Field names differ from
 the obvious guess; see the table below.
 
+**Never commit photos, uploads or build output.** `uploads/` (venue photos,
+feedback screenshots, the media spool), images, `*.exe` and raw `.sql` dumps are
+gitignored; a 28MB `api.exe` and user photos had both been pushed to `main`.
+Check `git status` for them before every commit — `git add -A` picks them up.
+
 **Clean up test data.** Delete test users, bookings, reviews and any row you
 mutated in a shared table. Restore any facility you edited.
 
