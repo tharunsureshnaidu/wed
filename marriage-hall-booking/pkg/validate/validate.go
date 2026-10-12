@@ -16,7 +16,7 @@ var phoneRe = regexp.MustCompile(`^\+?[1-9]\d{1,14}$`)
 
 // Both mirror Java's @Pattern on UpdateVendorProfileRequest exactly, message
 // text included - the message is part of the API contract clients match on.
-var urlRe = regexp.MustCompile(`^https?://.+`)
+var urlRe = regexp.MustCompile(`(?i)^https?://.+`)
 var upiRe = regexp.MustCompile(`^[\w.\-]{2,256}@[a-zA-Z]{2,64}$`)
 
 type Errors []string

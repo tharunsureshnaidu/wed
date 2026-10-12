@@ -441,3 +441,25 @@ func TestUserWithAddressLoginAndMe(t *testing.T) {
 	}
 }
 
+
+// address arrives as one line or as an object; neither shape may break the other.
+func TestRegisterReqAddressShapes(t *testing.T) {
+	var line registerReq
+	if err := json.Unmarshal([]byte(`{"name":"A","address":"Bangalore, Karnataka"}`), &line); err != nil {
+		t.Fatal(err)
+	}
+	if line.FullName != "A" || line.Address != "Bangalore, Karnataka" || line.AddressParts != nil {
+		t.Fatalf("string shape: %+v", line)
+	}
+	var obj registerReq
+	if err := json.Unmarshal([]byte(`{"fullName":"B","address":{"city":"Bengaluru"}}`), &obj); err != nil {
+		t.Fatal(err)
+	}
+	if obj.Address != "" || obj.AddressParts == nil || *obj.AddressParts.City != "Bengaluru" {
+		t.Fatalf("object shape: %+v", obj)
+	}
+	var none registerReq
+	if err := json.Unmarshal([]byte(`{"address":null}`), &none); err != nil || none.Address != "" || none.AddressParts != nil {
+		t.Fatalf("null: %+v %v", none, err)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,6 +55,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/notify"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 )
 
@@ -97,6 +99,21 @@ func main() {
 		logger.Fatal("migrate", logger.Err(err))
 	}
 
+	// Migration 026 seeds admin@example.com / Admin@123 with ROLE_ADMIN (055
+	// adds SUPER_ADMIN) so a laptop has an admin. Migrations run on every
+	// fresh database, production included, and that password is in the repo.
+	// Exact hash match: a changed password, or a deleted row, passes.
+	if config.IsProduction() {
+		var seeded int
+		if err := db.QueryRow(ctx, `SELECT count(*) FROM users WHERE is_deleted = FALSE AND password_hash = $1`,
+			seededAdminHash).Scan(&seeded); err != nil {
+			logger.Fatal("seeded admin check", logger.Err(err))
+		}
+		if seeded > 0 {
+			logger.Fatal("refusing to start in production: the development admin (admin@example.com / Admin@123, migration 026) still has its published password - change it or delete the account")
+		}
+	}
+
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		// Not fatal: the rate limiter fails open, so the API still serves.
@@ -120,11 +137,34 @@ func main() {
 	middleware.SetRevoker(revoker)
 
 	otpSvc := authservice.NewOtpService(authRepo, cfg.LogOtpCodes)
+	// Codes and reset links go straight to the provider, by email when the
+	// target is an address and by SMS otherwise. A sender with no credentials
+	// is skipped rather than called: its log-only fallback prints the body,
+	// and the code is logged only under LOG_OTP_CODES.
+	otpSenders := notify.FromEnv(nil)
+	otpSvc.Send = func(ctx context.Context, target, subject, body string) error {
+		s := otpSenders[notify.SMS]
+		if strings.Contains(target, "@") {
+			s = otpSenders[notify.Email]
+		}
+		if !s.Live() {
+			return nil
+		}
+		return s.Send(ctx, notify.Message{To: target, Subject: subject, Body: body})
+	}
 	tokenSvc := authservice.NewTokenService(authRepo, signer, cfg.JWTRefreshExpiry, revoker)
 	authSvc := authservice.NewAuthService(authRepo, otpSvc, tokenSvc, cfg.ResetPasswordURL)
-	authSvc.OnUserCreated = func(ctx context.Context, userID int64, first string, last *string) error {
+	authSvc.OnUserCreated = func(ctx context.Context, userID int64, first string, last *string, addr *authservice.Address) error {
 		if err := profiles.EnsureProfile(ctx, userID, first, last); err != nil {
 			return err
+		}
+		if addr != nil {
+			if err := profiles.AddAddress(ctx, userID, userrepo.Address{
+				Street: addr.Street, City: addr.City, State: addr.State,
+				ZipCode: addr.ZipCode, Country: addr.Country,
+			}); err != nil {
+				return err
+			}
 		}
 		publisher.Publish(ctx, events.TopicUserRegistered, strconv.FormatInt(userID, 10),
 			map[string]any{"userId": userID, "firstName": first})
@@ -136,10 +176,10 @@ func main() {
 	//
 	// ON CONFLICT DO NOTHING because user_id is unique: a retried registration
 	// must not fail on a row that already exists.
-	authSvc.OnVendorCreated = func(ctx context.Context, userID int64, businessName string) error {
+	authSvc.OnVendorCreated = func(ctx context.Context, userID int64, businessName string, businessAddress *string) error {
 		_, err := db.Exec(ctx,
-			`INSERT INTO vendors (user_id, business_name)
-			 VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`, userID, businessName)
+			`INSERT INTO vendors (user_id, business_name, business_address)
+			 VALUES ($1, $2, $3) ON CONFLICT (user_id) DO NOTHING`, userID, businessName, businessAddress)
 		return err
 	}
 
@@ -150,7 +190,7 @@ func main() {
 			"totalAmount": b.TotalAmount,
 		})
 	}
-	bookingSvc.OnBookingCancelled = func(ctx context.Context, b *bookingrepo.Booking) {
+	bookingSvc.OnBookingCancelled = func(ctx context.Context, b *bookingrepo.Booking, actorID int64) {
 		publisher.Publish(ctx, events.TopicBookingCancelled, b.ID, map[string]any{
 			"bookingId": b.ID, "userId": b.UserID,
 		})
@@ -162,7 +202,7 @@ func main() {
 			eventType = *b.EventType
 		}
 		audit.Record(ctx, db, audit.Decision{
-			Actor: b.UserID, Action: "CANCEL_BOOKING",
+			Actor: actorID, Action: "CANCEL_BOOKING",
 			Entity: audit.EntityBooking, EntityID: b.ID,
 			Status: "CANCELLED", EventType: eventType,
 			Extra: map[string]any{"userId": b.UserID},
@@ -179,7 +219,8 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	health.NewHandler(db).Register(mux)
+	probes := health.NewHandler(db, rdb)
+	probes.Register(mux)
 	authhandler.New(authSvc, signer).Register(mux)
 	userhandler.New(profiles, signer).Register(mux)
 	// S3 when AWS_S3_BUCKET is set, local disk otherwise. A configured bucket
@@ -203,8 +244,9 @@ func main() {
 	fh.RegisterInventory(mux)
 	fh.RegisterMedia(mux)
 	fh.RegisterCancellation(mux)
-	// Serves files uploaded with a facility (see internal/facility/handler/upload.go).
-	facilityhandler.ServeUploads(mux)
+	// Serves files uploaded with a facility (see internal/facility/handler/upload.go),
+	// without directory listings - see storage.FileServer.
+	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", storage.FileServer("uploads")))
 	bookingHandler := bookinghandler.New(bookingSvc, signer)
 	// Assigned rather than constructed inline so the event check can be wired;
 	// the facilities repo already exists here, and booking never imports facility.
@@ -219,7 +261,12 @@ func main() {
 	// them. NotifyUser rather than a new topic: this needs no fan-out and no
 	// retry-until-acknowledged, and a topic would have to be added to both
 	// events.Topics and consumer.Topics to avoid being published and dropped.
-	bookingSvc.OnBookingDecided = func(ctx context.Context, b *bookingrepo.Booking, confirmed bool, reason string) {
+	bookingSvc.OnBookingDecided = func(ctx context.Context, b *bookingrepo.Booking, confirmed bool, reason string, actorID int64) {
+		// Deciding is the owner's answer, so stop chasing them (and ops) about
+		// the request; otherwise the retries ran to max attempts regardless.
+		if _, err := notifier.AckDecided(ctx, b.ID); err != nil {
+			logger.Error("ack decided booking", "bookingId", b.ID, logger.Err(err))
+		}
 		subject, body := "Your booking is confirmed", "The venue has confirmed your booking."
 		eventType := "booking.confirmed"
 		if !confirmed {
@@ -231,7 +278,7 @@ func main() {
 			}
 		}
 		audit.Record(ctx, db, audit.Decision{
-			Action: "DECIDE_BOOKING", Entity: audit.EntityBooking, EntityID: b.ID,
+			Actor: actorID, Action: "DECIDE_BOOKING", Entity: audit.EntityBooking, EntityID: b.ID,
 			Status: b.Status, Reason: reason,
 			EventType: derefString(b.EventType),
 		})
@@ -347,8 +394,11 @@ func main() {
 		Addr:              ":" + cfg.ServerPort,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// Bounds a slow-trickle body; generous because a video upload is
+		// legitimately large.
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {
@@ -361,6 +411,10 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
+	// ponytail: /readyz flips to 503 here, but Shutdown follows immediately.
+	// Behind a load balancer that polls readiness, add a delay of one poll
+	// interval between the two so it stops routing before connections close.
+	probes.Drain()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -369,6 +423,9 @@ func main() {
 	}
 	logger.Info("stopped")
 }
+
+// seededAdminHash is the bcrypt of Admin@123 committed in migration 026.
+const seededAdminHash = "$2a$12$pJbsKYfMGwXhzSRcsU1TYeg0aPINjbwOjkluajBuwuEdIxwBVqMfy"
 
 // derefString is "" for a nil pointer, for optional columns going into a log
 // or an audit payload.

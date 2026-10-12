@@ -187,10 +187,43 @@ func TestAccountLocksAfterFiveFailures(t *testing.T) {
 	for i := 0; i < maxFailedAttempts; i++ {
 		svc.Login(context.Background(), email, "wrong", "127.0.0.1", "t")
 	}
-	// The correct password must now be refused.
+	// The correct password must now be refused - with the same answer as a
+	// wrong one, or the lock tells a guesser which guess was right.
 	_, err := svc.Login(context.Background(), email, "Passw0rd!!", "127.0.0.1", "t")
-	if got := code(t, err); got != "ACCOUNT_LOCKED" {
-		t.Fatalf("want ACCOUNT_LOCKED, got %q", got)
+	_, errWrong := svc.Login(context.Background(), email, "wrong", "127.0.0.1", "t")
+	if got := code(t, err); got != "INVALID_CREDENTIALS" {
+		t.Fatalf("want INVALID_CREDENTIALS, got %q", got)
+	}
+	if err.Error() != errWrong.Error() {
+		t.Fatalf("locked account answers differ for right and wrong password: %q vs %q", err, errWrong)
+	}
+}
+
+// Login and Refresh share this gate; each row is a state that once drifted.
+func TestCanSignIn(t *testing.T) {
+	owner := []string{domain.RoleHallOwner}
+	cases := []struct {
+		name string
+		u    domain.User
+		want string // "" = allowed
+	}{
+		{"active", domain.User{Status: domain.StatusActive}, ""},
+		{"unverified customer", domain.User{Status: domain.StatusPendingVerification}, ""},
+		{"unverified vendor", domain.User{Status: domain.StatusPendingVerification, Roles: owner}, "UNVERIFIED_ACCOUNT"},
+		{"phone-verified vendor", domain.User{Status: domain.StatusPendingVerification, Roles: owner, IsPhoneVerified: true}, ""},
+		{"inactive", domain.User{Status: domain.StatusInactive}, "USER_INACTIVE"},
+		{"suspended", domain.User{Status: domain.StatusSuspended}, "ACCOUNT_SUSPENDED"},
+		{"deleted", domain.User{Status: domain.StatusActive, IsDeleted: true}, "ACCOUNT_DELETED"},
+	}
+	for _, c := range cases {
+		err := canSignIn(&c.u)
+		got := ""
+		if err != nil {
+			got = code(t, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 
@@ -385,13 +418,15 @@ func TestRegisterVendorCreatesTheVendorBusiness(t *testing.T) {
 
 	var vendorFor int64
 	var vendorName string
-	svc.OnVendorCreated = func(_ context.Context, userID int64, businessName string) error {
-		vendorFor, vendorName = userID, businessName
+	var vendorAddr *string
+	svc.OnVendorCreated = func(_ context.Context, userID int64, businessName string, businessAddress *string) error {
+		vendorFor, vendorName, vendorAddr = userID, businessName, businessAddress
 		return nil
 	}
 
 	if err := svc.RegisterVendor(ctx, RegisterInput{
 		FullName: "Tharun Venues", Email: str(email), Password: "Passw0rd!!",
+		AddressParts: &Address{Street: str("12 MG Road"), City: str("Bengaluru"), ZipCode: str("560001")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
@@ -404,6 +439,21 @@ func TestRegisterVendorCreatesTheVendorBusiness(t *testing.T) {
 	if vendorName != "Tharun Venues" {
 		t.Fatalf("business name = %q, want the registered name", vendorName)
 	}
+	// The signup address seeds business_address, skipping the parts not given.
+	if vendorAddr == nil || *vendorAddr != "12 MG Road, Bengaluru, 560001" {
+		t.Fatalf("business address = %v, want the signup address on one line", vendorAddr)
+	}
+}
+
+// No address, or one with every part blank, must reach the hooks as nil -
+// never as an empty row or a business_address of "".
+func TestAddressLineAbsentWhenEmpty(t *testing.T) {
+	if (*Address)(nil).Line() != nil {
+		t.Fatal("nil address produced a line")
+	}
+	if (&Address{City: str("")}).Line() != nil {
+		t.Fatal("blank address produced a line")
+	}
 }
 
 // A plain customer signup must NOT create a vendor business.
@@ -412,7 +462,7 @@ func TestRegisterCustomerCreatesNoVendorBusiness(t *testing.T) {
 	email := uniqueEmail(t, pool)
 
 	called := false
-	svc.OnVendorCreated = func(context.Context, int64, string) error {
+	svc.OnVendorCreated = func(context.Context, int64, string, *string) error {
 		called = true
 		return nil
 	}
@@ -434,7 +484,7 @@ func TestRegisterVendorSurvivesAFailingHook(t *testing.T) {
 	email := uniqueEmail(t, pool)
 	ctx := context.Background()
 
-	svc.OnVendorCreated = func(context.Context, int64, string) error {
+	svc.OnVendorCreated = func(context.Context, int64, string, *string) error {
 		return errors.New("vendors table unavailable")
 	}
 	if err := svc.RegisterVendor(ctx, RegisterInput{

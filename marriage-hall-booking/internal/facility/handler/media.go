@@ -69,6 +69,8 @@ func (h *Handler) addImage(w http.ResponseWriter, r *http.Request) {
 		}
 		var e validate.Errors
 		e.Required("url", req.URL)
+		// Served to every visitor as a src/href: http(s) only, never javascript:.
+		e.URL("url", &req.URL)
 		if len(e) > 0 {
 			response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 			return
@@ -340,8 +342,11 @@ func (h *Handler) reorder(w http.ResponseWriter, r *http.Request, table string) 
 func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, facilityID string,
 	kind storage.Kind, field string, queued *pendingUpload) (string, error) {
 
+	// One file at the kind's limit plus a megabyte of form; without this the
+	// part beyond maxMemory spills to disk with no bound at all.
+	r.Body = http.MaxBytesReader(w, r.Body, storage.Limit(kind)+1<<20)
 	if err := r.ParseMultipartForm(storage.Limit(kind)); err != nil {
-		response.Error(w, http.StatusBadRequest, "Malformed multipart body", "VALIDATION_ERROR")
+		response.Error(w, http.StatusBadRequest, "File is too large or the form is malformed", "VALIDATION_ERROR")
 		return "", err
 	}
 	files := r.MultipartForm.File[field]
@@ -426,6 +431,8 @@ func (h *Handler) addVideo(w http.ResponseWriter, r *http.Request) {
 		}
 		var e validate.Errors
 		e.Required("url", req.URL)
+		e.URL("url", &req.URL)
+		e.URL("thumbnailUrl", req.ThumbnailURL)
 		if len(e) > 0 {
 			response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 			return
@@ -453,18 +460,43 @@ func (h *Handler) deleteVideo(w http.ResponseWriter, r *http.Request) {
 	h.deleteMedia(w, r, "facility_videos")
 }
 
-func (h *Handler) block(w http.ResponseWriter, r *http.Request)   { h.setStatus(w, r, "BLOCKED") }
-func (h *Handler) unblock(w http.ResponseWriter, r *http.Request) { h.setStatus(w, r, "APPROVED") }
+func (h *Handler) block(w http.ResponseWriter, r *http.Request) {
+	h.setStatus(w, r, "BLOCKED", "<> 'BLOCKED'")
+}
 
-func (h *Handler) setStatus(w http.ResponseWriter, r *http.Request, status string) {
+// unblock is admin-only. It used to set APPROVED for the owner too, so a vendor
+// could publish a PENDING or REJECTED listing, or undo an admin block, in one
+// call. An owner pause and an admin block are the same BLOCKED status today.
+// ponytail: owner self-unpause needs a facilities.blocked_by column to tell the
+// two apart; add it (and let the owner unblock their own pause) when asked.
+func (h *Handler) unblock(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasRole(r.Context(), domain.RoleAdmin) {
+		response.Error(w, http.StatusForbidden,
+			"Only an admin can unblock a listing", "UNBLOCK_ADMIN_ONLY")
+		return
+	}
+	h.setStatus(w, r, "APPROVED", "= 'BLOCKED'")
+}
+
+// setStatus moves the facility to status only from a status matching from (a
+// fixed SQL fragment, never user input), so a no-op or wrong-state call is a
+// 409 rather than a silent overwrite.
+func (h *Handler) setStatus(w http.ResponseWriter, r *http.Request, status, from string) {
 	facilityID, ok := h.requireOwner(w, r)
 	if !ok {
 		return
 	}
-	if _, err := h.repo.Pool().Exec(r.Context(),
-		`UPDATE facilities SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		facilityID, status); err != nil {
+	tag, err := h.repo.Pool().Exec(r.Context(),
+		`UPDATE facilities SET status = $2, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND is_deleted = FALSE AND COALESCE(status, 'APPROVED') `+from,
+		facilityID, status)
+	if err != nil {
 		httpx.Fail(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		response.Error(w, http.StatusConflict,
+			"Facility is not in a state that allows this", "INVALID_STATE")
 		return
 	}
 	response.OK(w, "Facility "+status, map[string]any{"id": facilityID, "status": status})

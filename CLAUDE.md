@@ -73,7 +73,7 @@ fixtures. For a no-side-effect run: `env -u TEST_DATABASE_URL go test ./...`.
 ## Migrations
 
 `internal/migrations/NNN_name.sql`, embedded, forward-only, applied on startup.
-Next number: check `ls internal/migrations/ | tail -1` (currently at 050).
+Next number: check `ls internal/migrations/ | tail -1` (currently at 060).
 
 House style: `IF NOT EXISTS`, `UUID PRIMARY KEY DEFAULT gen_random_uuid()`,
 `DECIMAL(10,2)` for money, `TIMESTAMPTZ`, `VARCHAR` + inline `CHECK` for enums,
@@ -88,6 +88,7 @@ surfaced when a cleanup failed.
 | Endpoint | Correct fields |
 |---|---|
 | `POST /auth/register` | `fullName`, `email`, `phoneNumber`, `password` — **not** `name` |
+| `POST /auth/register`, `/register/vendor` | optional `address`: a string (→ `users.address`) **or** `{street, city, state, zipCode, country}`, each part optional (→ `addresses`, and its joined line → `users.address`); a vendor's also seeds `vendors.business_address` |
 | `POST /auth/register/verify-email` | `target`, `otpCode` — **not** `identifier`/`otp` |
 | `POST /auth/login` | `identifier`, `password` |
 | `POST /bookings/halls` | `hallId`, `startDate`, `endDate`, `startTime`, `endTime`, `guestCount`, `roomCount` (optional), `eventType`, `idempotentKey` |
@@ -255,6 +256,25 @@ Rate button that 403s: a `CONFIRMED`/`COMPLETED` stay, and reviews are unique
 per **(user, facility)** — not per booking, so a second booking at the same
 venue is not a second chance to review it.
 
+## Venue search
+
+`/search/venues`, its autocomplete/suggestions, and `/halls` / `/facilities`
+`?search=` all match through **`pkg/venuesearch`**. Never write a fresh
+`name ILIKE '%q%'` for venue text: that was the old match, and `palce` or
+`grnd palace` returned 0 results.
+
+- **Fuzzy on name + city, substring only on description.** `word_similarity`
+  over `name||' '||city` at **0.4**, measured on live data: real typos score
+  0.43-0.83, the closest unrelated venue 0.33. A trigram score over a paragraph
+  matches nearly anything, so descriptions stay `ILIKE`.
+- **Search text with no explicit `sort` ranks best match first**; an explicit
+  sort still wins.
+- **Postgres, not Elasticsearch, deliberately.** 52 live venues; ES would mean a
+  JVM service, a sync pipeline for every facility write, and drift handling, for
+  what pg_trgm does in one file. Revisit past ~50k venues: the per-row score has
+  no index (see the `ponytail:` note in the package).
+- Not handled: synonyms and renames (`banglore` -> Bengaluru scores 0.11).
+
 ## Search history
 
 `GET /api/v1/search/recent` (and `/recently-viewed`) were already built and
@@ -341,7 +361,9 @@ and each fails *silently* — the run stays green while testing nothing:
   (alias)` replayed the token the request before it had already burnt. Replay is
   the theft signal, so the API revoked every session for that user and 14
   assertions failed across Bookings, Quotes and Refunds. The API was correct
-  throughout; the collection was replaying.
+  throughout; the collection was replaying. The alias
+  (`POST /auth/login/refresh`) is now in `SKIP_ROUTES`: the route is still
+  served, but the collection refreshes once.
 
 ## My reviews and app feedback
 
@@ -602,6 +624,11 @@ pagination helper. The notification feed keeps `content` but deliberately has no
 page number — it is a keyset cursor, and a page number over a shifting feed is a
 number no client can act on.
 
+**Pages are 0-based: `page=0` is the first.** `httpx.Offset` used to treat 0 and
+1 both as the first page, so a client walking `0..totalPages-1` saw page one
+twice and never the last. Recommendations were 1-based on their own; they now
+use `httpx.Offset` too. Never compute an offset by hand.
+
 ## Geo-targeted announcements
 
 Facility approved, amenities added and coupon created push to customers within
@@ -847,6 +874,64 @@ added later cannot leak to every app user by accident.
 **Do not validate a display phone with `validate.Phone`.** That enforces E.164
 for a user's login number and rejects `"+91 98765 43210"`. The support handler
 counts digits instead and keeps the admin's formatting.
+
+## Production hardening (2026-10)
+
+What a four-way audit (security, DB, API semantics, ops) found and fixed. Each
+rule below was a live bug; each was verified against the running API.
+
+**Inventory is released only inside `SetStatus`**, under its `FOR UPDATE`
+from-status guard, beside `coupon.Release`. Cancel, expiry and reject each used
+to release on their own, outside the transaction: a repeated cancel of a hotel
+booking 409'd but decremented `booked_rooms` again every time, and a payment
+racing the sweeper left a CONFIRMED booking with its slot freed.
+
+**A hall date is locked per `(hall, date)`** with `pg_advisory_xact_lock` before
+claiming. The unique key is per slot, so FULL_DAY and MORNING on the same date
+both succeeded — a real double booking.
+
+**Hall requests do not expire; hotels keep 15 minutes.** An owner now decides a
+hall request, and a 15-minute hold had expired 241 of them before any owner
+looked. `expires_at` is NULL for halls; the sweeper skips NULL.
+
+**The payment webhook is one transaction.** The dedupe row used to commit first,
+so a transient failure after it made the gateway's retry look "already
+processed" — money taken, booking never credited. A payment for a booking that
+has ended is recorded but never revives it (logged as "refund due").
+`payments/create` returns the open PENDING order instead of a second one.
+
+**One definition of a live venue: `venuetype.LiveSQL`** — not deleted, not
+BLOCKED/REJECTED. PENDING stays live: 48 of 52 venues are PENDING. Search, list,
+detail, compare, hall *and* hotel booking all use it; hotel booking used to check
+nothing. A non-live venue's detail is 404 except to its owner or an admin.
+
+**Quote acceptance belongs to the other party.** The customer accepts a REPLIED
+quote, the owner a COUNTERED one. "Either side can accept" let a customer counter
+at ₹1, accept it themselves and convert it into a booking. Every quote UPDATE is
+conditional on the status it read; an expired `valid_until` cannot be accepted.
+
+**Refunds are scoped to the venue's owner** (or admin); NaN/Inf amounts are
+refused — `NaN <= 0` is false, and one NaN row made every later limit pass.
+
+**Unblocking a venue is admin-only.** Owner and admin blocks both store
+`BLOCKED`, so an owner "unblock" could lift an admin block or approve a PENDING
+listing outright. Owners lost the ability to resume a self-paused listing; a
+`blocked_by` column would give it back.
+
+**Auth.** A logout/reset cutoff is never deleted on the next login (that revived
+every stolen token); new tokens wait past it instead. A locked account answers
+exactly like a wrong password, checked *before* bcrypt, so the lockout is no
+longer an oracle. Login and Refresh share `canSignIn`; INACTIVE is refused at
+both. OTPs and reset links are sent directly through `pkg/notify` — not the
+outbox, so codes never sit in `notifications` — and logged only with
+`LOG_OTP_CODES`.
+
+**Ops.** DB sessions carry `statement_timeout` 10s / `lock_timeout` 5s;
+`DB_MAX_CONNS` sizes the pool. Migrations run under an advisory lock, so
+replicas booting together no longer race. `/livez` and `/readyz` sit beside
+`/health`. A panicking event handler goes to the DLQ instead of crash-looping the
+worker. Production refuses to boot with the seeded `admin@example.com` password,
+no live email/SMS sender, no S3 bucket, or rate limiting disabled.
 
 ## Docs in this repo
 

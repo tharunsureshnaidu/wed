@@ -53,3 +53,10 @@ func TestValid(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveSQLUsesAlias(t *testing.T) {
+	want := "f.is_deleted = FALSE AND COALESCE(f.status, 'APPROVED') NOT IN ('BLOCKED', 'REJECTED')"
+	if got := LiveSQL("f"); got != want {
+		t.Fatalf("LiveSQL(f) = %q", got)
+	}
+}

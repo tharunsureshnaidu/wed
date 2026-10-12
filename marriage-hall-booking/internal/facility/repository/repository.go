@@ -7,6 +7,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuesearch"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 	"math"
 	"strings"
@@ -857,20 +858,30 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	// Fixed parameter positions with a sentinel for "not filtering", rather than
 	// building the WHERE clause dynamically - every value stays a bound parameter,
 	// so no caller input can reach the SQL text.
-	eventType := strings.ToUpper(strings.TrimSpace(f.EventType))
-	args := []any{f.Type, f.City, f.OwnerID, f.Search, eventType}
+	f.Search = strings.TrimSpace(f.Search)
+	args := []any{f.Type, f.City, f.OwnerID, f.Search, strings.ToUpper(strings.TrimSpace(f.EventType))}
 	// Columns are qualified with f. because facilityFrom joins users.
 	clause := ` WHERE f.is_deleted = FALSE
 		AND ($1 = '' OR f.type = $1)
 		AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		AND ($3 = 0 OR f.owner_id = $3)
-		AND ($4 = '' OR f.name ILIKE '%' || $4 || '%' OR f.description ILIKE '%' || $4 || '%')
-		AND ($3 <> 0 OR f.status = 'APPROVED')
+		AND ($3 <> 0 OR ` + venuetype.LiveSQL("f") + `)
+		AND ` + venuesearch.MatchSQL("$4") + `
 		AND ($5 = '' OR EXISTS (
-			SELECT 1 FROM facility_events fe
-			 WHERE fe.facility_id = f.id AND fe.event_code = $5)
-		      OR NOT EXISTS (
-			SELECT 1 FROM facility_events fe WHERE fe.facility_id = f.id))`
+		      SELECT 1 FROM facility_events fe
+		       WHERE fe.facility_id = f.id AND fe.event_code = $5)
+		    OR NOT EXISTS (
+		      SELECT 1 FROM facility_events fe WHERE fe.facility_id = f.id))`
+
+	// eventType was parsed and passed down but never reached this WHERE, so
+	// ?eventType= returned every venue. A venue with no declared events still
+	// matches - silence means "not stated", as on /search/venues and booking.
+
+	// Search text puts the best match first, as on /search/venues.
+	order := "f.is_featured DESC, f.created_at DESC"
+	if f.Search != "" {
+		order = venuesearch.ScoreSQL("$4") + " DESC, " + order
+	}
 
 	var total int64
 	if err := r.db.QueryRow(ctx, `SELECT count(*)`+facilityFrom+clause, args...).Scan(&total); err != nil {
@@ -880,7 +891,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	args = append(args, f.Size, httpx.Offset(f.Page, f.Size))
 	rows, err := r.db.Query(ctx,
 		`SELECT `+facilityCols+facilityFrom+clause+
-			` ORDER BY f.is_featured DESC, f.created_at DESC LIMIT $6 OFFSET $7`, args...)
+			` ORDER BY `+order+` LIMIT $6 OFFSET $7`, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1029,7 +1040,7 @@ func (r *Repo) RemoveAmenity(ctx context.Context, facilityID, amenityID string) 
 func (r *Repo) ByIDs(ctx context.Context, ids []string) ([]Facility, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT `+facilityCols+facilityFrom+
-			` WHERE f.id::text = ANY($1) AND f.is_deleted = FALSE AND f.status = 'APPROVED'`, ids)
+			` WHERE f.id::text = ANY($1) AND `+venuetype.LiveSQL("f"), ids)
 	if err != nil {
 		return nil, err
 	}
@@ -1261,7 +1272,7 @@ func (r *Repo) EventsOfMany(ctx context.Context, ids []string) (map[string][]str
 	rows, err := r.db.Query(ctx, `
 		SELECT facility_id::text, event_code
 		  FROM facility_events
-		 WHERE facility_id::text = ANY($1)
+		 WHERE facility_id = ANY($1::uuid[])
 		 ORDER BY facility_id, event_code`, ids)
 	if err != nil {
 		return nil, err
@@ -1490,7 +1501,7 @@ func (r *Repo) RoomTypesOfMany(ctx context.Context, ids []string) (map[string][]
 		SELECT id::text, facility_id::text, name, description, capacity_adults,
 		       capacity_children, base_price_per_night, total_rooms
 		  FROM room_types
-		 WHERE facility_id::text = ANY($1) AND is_deleted = FALSE
+		 WHERE facility_id = ANY($1::uuid[]) AND is_deleted = FALSE
 		 ORDER BY facility_id, created_at`, ids)
 	if err != nil {
 		return nil, err
@@ -1517,7 +1528,7 @@ func (r *Repo) PackagesOfMany(ctx context.Context, ids []string) (map[string][]H
 		SELECT id::text, facility_id::text, name, description, price, guest_capacity,
 		       includes_catering, included_services, excluded_services
 		  FROM hall_packages
-		 WHERE facility_id::text = ANY($1) AND is_deleted = FALSE
+		 WHERE facility_id = ANY($1::uuid[]) AND is_deleted = FALSE
 		 ORDER BY facility_id, created_at`, ids)
 	if err != nil {
 		return nil, err
@@ -1543,7 +1554,7 @@ func (r *Repo) AddonsOfMany(ctx context.Context, ids []string) (map[string][]Add
 	rows, err := r.db.Query(ctx, `
 		SELECT id::text, facility_id::text, name, description, price, service_type, unit
 		  FROM add_on_services
-		 WHERE facility_id::text = ANY($1) AND is_deleted = FALSE
+		 WHERE facility_id = ANY($1::uuid[]) AND is_deleted = FALSE
 		 ORDER BY facility_id, created_at`, ids)
 	if err != nil {
 		return nil, err
@@ -1569,7 +1580,7 @@ func (r *Repo) AllImagesOfMany(ctx context.Context, ids []string) (map[string][]
 	rows, err := r.db.Query(ctx, `
 		SELECT facility_id::text, id::text, url, is_cover, sort_order
 		  FROM facility_images
-		 WHERE facility_id::text = ANY($1)
+		 WHERE facility_id = ANY($1::uuid[])
 		 ORDER BY facility_id, is_cover DESC, sort_order ASC`, ids)
 	if err != nil {
 		return nil, err
@@ -1596,7 +1607,7 @@ func (r *Repo) ReviewsOfMany(ctx context.Context, ids []string) (map[string][]Re
 		SELECT rv.facility_id::text, rv.id::text, rv.user_id, u.full_name, rv.rating,
 		       rv.title, rv.comment, rv.created_at
 		  FROM reviews rv JOIN users u ON u.id = rv.user_id
-		 WHERE rv.facility_id::text = ANY($1) AND rv.is_deleted = FALSE AND rv.status = 'APPROVED'
+		 WHERE rv.facility_id = ANY($1::uuid[]) AND rv.is_deleted = FALSE AND rv.status = 'APPROVED'
 		 ORDER BY rv.facility_id, rv.created_at DESC`, ids)
 	if err != nil {
 		return nil, err

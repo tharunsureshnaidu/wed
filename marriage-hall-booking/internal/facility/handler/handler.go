@@ -60,9 +60,13 @@ func (h *Handler) Register(mux *http.ServeMux) {
 			middleware.RequireRole(domain.RoleHallOwner, domain.RoleAdmin))
 	}
 
+	// The detail is public, but knows its caller so an owner can still open
+	// their own BLOCKED or REJECTED listing.
+	detail := middleware.OptionalAuth(h.signer)(http.HandlerFunc(h.get))
+
 	// Public reads.
 	mux.HandleFunc("GET /api/v1/venues", h.listVenues)
-	mux.HandleFunc("GET /api/v1/venues/{id}", h.get)
+	mux.Handle("GET /api/v1/venues/{id}", detail)
 	mux.HandleFunc("GET /api/v1/facilities", h.list)
 	mux.HandleFunc("GET /api/v1/facilities/{id}", h.get)
 	// Side-by-side comparison. Public, like the other facility reads: comparing
@@ -89,8 +93,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/amenities", h.listAmenities)
 	mux.HandleFunc("GET /api/v1/halls", h.listHalls)
 	mux.HandleFunc("GET /api/v1/hotels", h.listHotels)
-	mux.HandleFunc("GET /api/v1/hotels/{id}", h.get)
-	mux.HandleFunc("GET /api/v1/halls/{id}", h.get)
+	mux.Handle("GET /api/v1/hotels/{id}", detail)
+	mux.Handle("GET /api/v1/halls/{id}", detail)
 
 	// Owner-only writes.
 	mux.Handle("POST /api/v1/facilities", owner(h.create))
@@ -109,6 +113,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // requireOwner is the authorization boundary for every mutating facility route:
 // the caller must own the facility, or be an admin. Without this any hall owner
 // could edit or delete any other owner's listing.
+// live is venuetype.LiveSQL for a row already loaded (deleted rows never load).
+func live(status string) bool { return status != "BLOCKED" && status != "REJECTED" }
+
 func (h *Handler) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("id")
 	if !httpx.ValidUUID(id) {
@@ -268,6 +275,10 @@ func (h *Handler) createWithType(w http.ResponseWriter, r *http.Request, forcedT
 	var uploads []*multipart.FileHeader
 	if isMultipart(r) {
 		var err error
+		// ParseMultipartForm's limit only bounds memory; the rest spills to
+		// disk unbounded. Cap the whole body: every image at the limit, plus
+		// a megabyte for the form fields.
+		r.Body = http.MaxBytesReader(w, r.Body, maxImages*maxImageSize+1<<20)
 		if uploads, err = decodeMultipart(r, &req); err != nil {
 			response.Error(w, http.StatusBadRequest, err.Error(), "VALIDATION_ERROR")
 			return
@@ -451,6 +462,13 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		httpx.Fail(w, err)
+		return
+	}
+	// A venue the list would hide is hidden here too, except from its owner
+	// and admins. 404, not 403: a rejected listing is simply not there.
+	userID, _ := middleware.UserID(r.Context())
+	if !live(f.Status) && f.OwnerID != userID && !middleware.HasRole(r.Context(), domain.RoleAdmin) {
+		response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
 		return
 	}
 	// Same field as the list card, so the app reads one key on both screens.
@@ -649,7 +667,13 @@ func (h *Handler) removeAmenity(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.repo.RemoveAmenity(r.Context(), id, r.PathValue("amenityId")); err != nil {
+	// amenity_id is a uuid: an unvalidated code here was a cast failure, a 500.
+	amenityID := r.PathValue("amenityId")
+	if !httpx.ValidUUID(amenityID) {
+		response.Error(w, http.StatusBadRequest, "Invalid amenity id", "VALIDATION_ERROR")
+		return
+	}
+	if err := h.repo.RemoveAmenity(r.Context(), id, amenityID); err != nil {
 		httpx.Fail(w, err)
 		return
 	}
