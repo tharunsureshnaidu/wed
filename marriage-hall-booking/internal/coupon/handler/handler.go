@@ -402,8 +402,30 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, _ := middleware.UserID(r.Context())
 	active := req.IsActive == nil || *req.IsActive
+	if active {
+		var exists bool
+		err := h.db.QueryRow(r.Context(), `
+			SELECT EXISTS (
+				SELECT 1 FROM coupons
+				 WHERE facility_type IS NOT NULL
+				   AND is_deleted = FALSE
+				   AND is_active = TRUE
+				   AND (valid_until IS NULL OR valid_until >= CURRENT_TIMESTAMP)
+			)`).Scan(&exists)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if exists {
+			response.Error(w, http.StatusBadRequest,
+				"Admin can only have one active coupon at a time. An active coupon already exists.",
+				"COUPON_LIMIT_EXCEEDED")
+			return
+		}
+	}
+
+	userID, _ := middleware.UserID(r.Context())
 	code := strings.ToUpper(strings.TrimSpace(req.Code))
 	var id string
 	err := h.db.QueryRow(r.Context(), `
@@ -550,6 +572,28 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, platform bool) {
 		return
 	}
 	active := req.IsActive == nil || *req.IsActive
+	if platform && active {
+		var exists bool
+		err := h.db.QueryRow(r.Context(), `
+			SELECT EXISTS (
+				SELECT 1 FROM coupons
+				 WHERE facility_type IS NOT NULL
+				   AND id <> $1::uuid
+				   AND is_deleted = FALSE
+				   AND is_active = TRUE
+				   AND (valid_until IS NULL OR valid_until >= CURRENT_TIMESTAMP)
+			)`, id).Scan(&exists)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if exists {
+			response.Error(w, http.StatusBadRequest,
+				"Admin can only have one active coupon at a time. An active coupon already exists.",
+				"COUPON_LIMIT_EXCEEDED")
+			return
+		}
+	}
 	// Ownership is in the WHERE clause, so another vendor's coupon simply
 	// matches nothing and is reported as not found.
 	tag, err := h.db.Exec(r.Context(), `

@@ -7,17 +7,19 @@ import (
 	"time"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
-	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/config"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/database"
 )
 
 func TestEventsFilterIntegration(t *testing.T) {
 	_ = os.Chdir("../../../")
-	cfg := config.Load()
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("set TEST_DATABASE_URL to run")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	pool, err := database.New(ctx, cfg.DatabaseURL)
+	pool, err := database.New(ctx, dbURL)
 	if err != nil {
 		t.Skipf("Skipping live database test: unable to connect: %v", err)
 	}
@@ -126,11 +128,14 @@ func TestEventsFilterIntegration(t *testing.T) {
 
 func TestEventsFilterExactRules(t *testing.T) {
 	_ = os.Chdir("../../../")
-	cfg := config.Load()
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("set TEST_DATABASE_URL to run")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, err := database.New(ctx, cfg.DatabaseURL)
+	pool, err := database.New(ctx, dbURL)
 	if err != nil {
 		t.Skipf("Skipping live database test: unable to connect: %v", err)
 	}

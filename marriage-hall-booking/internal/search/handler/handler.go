@@ -8,6 +8,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	facilityrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
@@ -96,16 +98,18 @@ func (h *Handler) viewer(r *http.Request) string {
 }
 
 type venue struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
-	City        *string  `json:"city"`
-	Description *string  `json:"description"`
-	AvgRating   float64  `json:"avgRating"`
-	ReviewCount int      `json:"reviewCount"`
-	BasePrice   *float64 `json:"basePricePerDay"`
-	CapacityPax *int     `json:"capacityPax"`
-	IsFeatured  bool     `json:"isFeatured"`
+	ID          string                  `json:"id"`
+	Name        string                  `json:"name"`
+	Type        string                  `json:"type"`
+	City        *string                 `json:"city"`
+	Description *string                 `json:"description"`
+	AvgRating   float64                 `json:"avgRating"`
+	ReviewCount int                     `json:"reviewCount"`
+	BasePrice   *float64                `json:"basePricePerDay"`
+	CapacityPax *int                    `json:"capacityPax"`
+	IsFeatured  bool                    `json:"isFeatured"`
+	CoverImage  *string                 `json:"coverImage"`
+	Images      []facilityrepo.Image    `json:"images"`
 }
 
 type searchResult struct {
@@ -233,10 +237,18 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 	// NOTHING still matches: 43 halls predate the feature, and hiding every one
 	// of them the moment a filter is used would look like the search is broken.
 	// Silence is "not stated", not "no".
+	vType := q.Get("type")
+	if vType == "" {
+		vType = q.Get("venueType")
+	}
+	evType := q.Get("eventType")
+	if evType == "" {
+		evType = q.Get("event_type")
+	}
 	args := []any{
-		text, q.Get("city"), venuetype.Stored(q.Get("venueType")),
+		text, q.Get("city"), venuetype.Stored(vType),
 		minCap, maxCap, minBudget, maxBudget, amenities,
-		strings.ToUpper(strings.TrimSpace(q.Get("eventType"))),
+		strings.ToUpper(strings.TrimSpace(evType)),
 	}
 
 	var total int64
@@ -273,6 +285,7 @@ func (h *Handler) searchVenues(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	h.attachImages(r.Context(), out)
 
 	took := time.Since(started).Milliseconds()
 	searchID := h.recordSearch(r, text, q.Get("city"), len(out), took)
@@ -404,9 +417,37 @@ func (h *Handler) similar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	h.attachImages(r.Context(), out)
 	response.OK(w, "Similar venues fetched", searchResult{
 		Content: out, Page: 0, Size: limit, Total: int64(len(out)),
 	}.paged())
+}
+
+func (h *Handler) attachImages(ctx context.Context, venues []venue) {
+	if len(venues) == 0 {
+		return
+	}
+	ids := make([]string, len(venues))
+	for i, v := range venues {
+		ids[i] = v.ID
+	}
+	images, err := facilityrepo.New(h.db).AllImagesOfMany(ctx, ids)
+	if err != nil {
+		for i := range venues {
+			if venues[i].Images == nil {
+				venues[i].Images = []facilityrepo.Image{}
+			}
+		}
+		return
+	}
+	for i := range venues {
+		if im, ok := images[venues[i].ID]; ok && im != nil {
+			venues[i].Images = im
+			venues[i].CoverImage = facilityrepo.DeriveCoverImage(im)
+		} else {
+			venues[i].Images = []facilityrepo.Image{}
+		}
+	}
 }
 
 func (h *Handler) recordView(w http.ResponseWriter, r *http.Request) {

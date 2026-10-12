@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/events"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
@@ -66,6 +68,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/venues", h.listVenues)
 	mux.Handle("GET /api/v1/venues/{id}", detail)
 	mux.HandleFunc("GET /api/v1/facilities", h.list)
+	mux.Handle("GET /api/v1/facilities/{id}", detail)
 	// Side-by-side comparison. Public, like the other facility reads: comparing
 	// venues is what a visitor does before signing up. The literal path beats
 	// /{id} in ServeMux's specificity rules, so "compare" is never read as an id.
@@ -89,11 +92,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/v1/facilities/{id}/faqs/{childId}", owner(h.deleteFaq))
 	mux.HandleFunc("GET /api/v1/amenities", h.listAmenities)
 	mux.HandleFunc("GET /api/v1/halls", h.listHalls)
+	mux.HandleFunc("GET /api/v1/hotels", h.listHotels)
 	mux.Handle("GET /api/v1/hotels/{id}", detail)
 	mux.Handle("GET /api/v1/halls/{id}", detail)
 
 	// Owner-only writes.
 	mux.Handle("POST /api/v1/facilities", owner(h.create))
+	mux.Handle("POST /api/v1/halls", owner(h.createHall))
+	mux.Handle("POST /api/v1/hotels", owner(h.createHotel))
 	mux.Handle("PUT /api/v1/hotels/{id}", owner(h.update))
 	mux.Handle("PUT /api/v1/halls/{id}", owner(h.update))
 	mux.Handle("DELETE /api/v1/hotels/{id}", owner(h.delete))
@@ -107,8 +113,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // requireOwner is the authorization boundary for every mutating facility route:
 // the caller must own the facility, or be an admin. Without this any hall owner
 // could edit or delete any other owner's listing.
-// live is venuetype.LiveSQL for a row already loaded (deleted rows never load).
-func live(status string) bool { return status != "BLOCKED" && status != "REJECTED" }
 
 func (h *Handler) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("id")
@@ -164,6 +168,77 @@ type facilityReq struct {
 	SeatingCapacity  *int     `json:"seatingCapacity"`
 	FloatingCapacity *int     `json:"floatingCapacity"`
 	MinBookingSize   *int     `json:"minBookingSize"`
+
+	// Images accepted via JSON
+	RawImages  json.RawMessage `json:"images"`
+	ImageURLs  []string        `json:"imageUrls"`
+	ImageURL   *string         `json:"imageUrl"`
+	CoverImage *string         `json:"coverImage"`
+}
+
+type imageInput struct {
+	URL     string `json:"url"`
+	IsCover bool   `json:"isCover"`
+}
+
+func (req *facilityReq) extractImageInputs() []imageInput {
+	var results []imageInput
+	seen := make(map[string]bool)
+
+	add := func(url string, isCover bool) {
+		u := strings.TrimSpace(url)
+		if u != "" && !seen[u] {
+			seen[u] = true
+			results = append(results, imageInput{URL: u, IsCover: isCover})
+		}
+	}
+
+	if req.CoverImage != nil && *req.CoverImage != "" {
+		add(*req.CoverImage, true)
+	}
+	if req.ImageURL != nil && *req.ImageURL != "" {
+		add(*req.ImageURL, len(results) == 0)
+	}
+	for _, u := range req.ImageURLs {
+		add(u, len(results) == 0)
+	}
+
+	if len(req.RawImages) > 0 {
+		var strArr []string
+		if err := json.Unmarshal(req.RawImages, &strArr); err == nil {
+			for _, u := range strArr {
+				add(u, len(results) == 0)
+			}
+		} else {
+			var objArr []struct {
+				URL     string `json:"url"`
+				IsCover bool   `json:"isCover"`
+			}
+			if err := json.Unmarshal(req.RawImages, &objArr); err == nil {
+				for _, obj := range objArr {
+					add(obj.URL, obj.IsCover || len(results) == 0)
+				}
+			} else {
+				var singleStr string
+				if err := json.Unmarshal(req.RawImages, &singleStr); err == nil {
+					add(singleStr, len(results) == 0)
+				}
+			}
+		}
+	}
+
+	hasCover := false
+	for _, img := range results {
+		if img.IsCover {
+			hasCover = true
+			break
+		}
+	}
+	if !hasCover && len(results) > 0 {
+		results[0].IsCover = true
+	}
+
+	return results
 }
 
 func (req facilityReq) toInput(ownerID int64) repository.CreateInput {
@@ -179,7 +254,19 @@ func (req facilityReq) toInput(ownerID int64) repository.CreateInput {
 	}
 }
 
+func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
+	h.createWithType(w, r, TypeHall)
+}
+
+func (h *Handler) createHotel(w http.ResponseWriter, r *http.Request) {
+	h.createWithType(w, r, TypeHotel)
+}
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	h.createWithType(w, r, "")
+}
+
+func (h *Handler) createWithType(w http.ResponseWriter, r *http.Request, forcedType string) {
 	var req facilityReq
 	// The listing form submits the venue and its photos together as multipart;
 	// API clients send plain JSON. Both are accepted on the same endpoint.
@@ -197,6 +284,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	} else if !httpx.Decode(w, r, &req) {
 		return
 	}
+
+	if forcedType != "" && (req.Type == "" || !venuetype.Valid(req.Type)) {
+		req.Type = forcedType
+	}
+
 	var e validate.Errors
 	e.Required("Name", req.Name)
 	// HALL is the word the API speaks; MARRIAGE_HALL is still accepted so
@@ -210,6 +302,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if req.BasePricePerDay != nil && *req.BasePricePerDay < 0 {
 		e = append(e, "Base price cannot be negative")
 	}
+
+	// Minimum 1 image is strictly required for Super Admin and Vendor
+	jsonImages := req.extractImageInputs()
+	if len(uploads) == 0 && len(jsonImages) == 0 {
+		e = append(e, "At least one image is required")
+	}
+
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -286,6 +385,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// orphaned upload behind. A file that fails to save is reported but does
 	// not undo the listing - re-uploading one photo is easier than re-entering
 	// the whole venue.
+	// Save uploaded files to storage and database
+	hasUploadCover := false
 	if len(uploads) > 0 {
 		var vendorID string
 		if f.VendorID != nil {
@@ -298,23 +399,39 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 				failed = append(failed, err.Error())
 				continue
 			}
+			isCover := i == 0
+			if isCover {
+				hasUploadCover = true
+			}
 			if _, err := h.repo.Pool().Exec(r.Context(),
 				`INSERT INTO facility_images (facility_id, url, is_cover, sort_order)
-				 VALUES ($1,$2,$3,$4)`, f.ID, url, i == 0, i); err != nil {
+				 VALUES ($1,$2,$3,$4)`, f.ID, url, isCover, i); err != nil {
 				failed = append(failed, fh.Filename+": could not be recorded")
 				continue
 			}
 		}
-		if reloaded, err := h.repo.Get(r.Context(), f.ID); err == nil {
-			f = reloaded
-		}
 		if len(failed) > 0 {
-			h.notifyCreated(r.Context(), f.ID, f.Name, userID)
-			response.OK(w, "Facility created, but some images were rejected: "+
-				strings.Join(failed, "; "), f)
-			return
+			logger.Warn("facility: some upload images rejected", "facilityId", f.ID, "errors", strings.Join(failed, "; "))
 		}
 	}
+
+	// Save JSON image URLs if provided
+	if len(jsonImages) > 0 {
+		startIndex := len(uploads)
+		for i, img := range jsonImages {
+			isCover := img.IsCover && !hasUploadCover
+			if !hasUploadCover && i == 0 {
+				isCover = true
+				hasUploadCover = true
+			}
+			if _, err := h.repo.Pool().Exec(r.Context(),
+				`INSERT INTO facility_images (facility_id, url, is_cover, sort_order, status)
+				 VALUES ($1,$2,$3,$4,'READY')`, f.ID, img.URL, isCover, startIndex+i); err != nil {
+				logger.Error("facility: could not record image url", "facilityId", f.ID, "url", img.URL, logger.Err(err))
+			}
+		}
+	}
+
 	if reloaded, err := h.repo.Get(r.Context(), f.ID); err == nil {
 		f = reloaded
 	}
@@ -348,7 +465,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	// A venue the list would hide is hidden here too, except from its owner
 	// and admins. 404, not 403: a rejected listing is simply not there.
 	userID, _ := middleware.UserID(r.Context())
-	if !live(f.Status) && f.OwnerID != userID && !middleware.HasRole(r.Context(), domain.RoleAdmin) {
+	if !venuetype.Live(f.Status) && f.OwnerID != userID && !middleware.HasRole(r.Context(), domain.RoleAdmin) {
 		response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
 		return
 	}
@@ -398,8 +515,9 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Facility deleted successfully", nil)
 }
 
-func (h *Handler) list(w http.ResponseWriter, r *http.Request)      { h.listWithType(w, r, "") }
-func (h *Handler) listHalls(w http.ResponseWriter, r *http.Request) { h.listWithType(w, r, TypeHall) }
+func (h *Handler) list(w http.ResponseWriter, r *http.Request)       { h.listWithType(w, r, "") }
+func (h *Handler) listHalls(w http.ResponseWriter, r *http.Request)  { h.listWithType(w, r, TypeHall) }
+func (h *Handler) listHotels(w http.ResponseWriter, r *http.Request) { h.listWithType(w, r, TypeHotel) }
 
 func (h *Handler) listVenues(w http.ResponseWriter, r *http.Request) {
 	rawType := strings.TrimSpace(r.URL.Query().Get("type"))
@@ -471,7 +589,11 @@ func (h *Handler) listWithType(w http.ResponseWriter, r *http.Request, forced st
 			items[i].DistanceKm = here.distanceFrom(items[i].Lat, items[i].Lng)
 		}
 	}
-	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(items, page, size, total))
+	venues := make([]repository.VenueResponse, len(items))
+	for i, item := range items {
+		venues[i] = item.ToVenueResponse()
+	}
+	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(venues, page, size, total))
 }
 
 func (h *Handler) myHotels(w http.ResponseWriter, r *http.Request) { h.mine(w, r, TypeHotel) }
@@ -487,7 +609,11 @@ func (h *Handler) mine(w http.ResponseWriter, r *http.Request, t string) {
 		httpx.Fail(w, err)
 		return
 	}
-	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(items, page, size, total))
+	venues := make([]repository.VenueResponse, len(items))
+	for i, item := range items {
+		venues[i] = item.ToVenueResponse()
+	}
+	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(venues, page, size, total))
 }
 
 func (h *Handler) listAmenities(w http.ResponseWriter, r *http.Request) {

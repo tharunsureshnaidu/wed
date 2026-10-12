@@ -650,11 +650,12 @@ func (h *Handler) setKyc(w http.ResponseWriter, r *http.Request, status, reason 
 func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
 	page, size := httpx.Page(r)
 	rows, err := h.db.Query(r.Context(),
-		`SELECT id, name, type, status, owner_id, COALESCE(city,''), count(*) OVER ()
-		 FROM facilities WHERE is_deleted = FALSE
-		   AND ($1 = '' OR type = $1)
-		   AND ($2 = '' OR name ILIKE '%'||$2||'%')
-		 ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+		`SELECT f.id, f.name, f.type, f.status, f.owner_id, COALESCE(f.city,''), count(*) OVER (),
+		        (SELECT url FROM facility_images WHERE facility_id = f.id ORDER BY is_cover DESC, sort_order ASC, created_at ASC LIMIT 1)
+		 FROM facilities f WHERE f.is_deleted = FALSE
+		   AND ($1 = '' OR f.type = $1)
+		   AND ($2 = '' OR f.name ILIKE '%'||$2||'%')
+		 ORDER BY f.created_at DESC LIMIT $3 OFFSET $4`,
 		r.URL.Query().Get("type"), r.URL.Query().Get("search"), size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
@@ -663,18 +664,19 @@ func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type row struct {
-		ID      string `json:"id"`
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Status  string `json:"status"`
-		OwnerID int64  `json:"ownerId"`
-		City    string `json:"city"`
+		ID         string  `json:"id"`
+		Name       string  `json:"name"`
+		Type       string  `json:"type"`
+		Status     string  `json:"status"`
+		OwnerID    int64   `json:"ownerId"`
+		City       string  `json:"city"`
+		CoverImage *string `json:"coverImage"`
 	}
 	out := []row{}
 	var total int64 // the page length was reported before, so totalPages was always 1
 	for rows.Next() {
 		var f row
-		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.Status, &f.OwnerID, &f.City, &total); err != nil {
+		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.Status, &f.OwnerID, &f.City, &total, &f.CoverImage); err != nil {
 			httpx.Fail(w, err)
 			return
 		}

@@ -94,6 +94,15 @@ func decodeMultipart(r *http.Request, dst *facilityReq) ([]*multipart.FileHeader
 	}
 
 	files := r.MultipartForm.File["images"]
+	if len(files) == 0 {
+		files = r.MultipartForm.File["image"]
+	}
+	if len(files) == 0 {
+		files = r.MultipartForm.File["photos"]
+	}
+	if len(files) == 0 {
+		files = r.MultipartForm.File["coverImage"]
+	}
 	if len(files) > maxImages {
 		return nil, fmt.Errorf("at most %d images per request", maxImages)
 	}

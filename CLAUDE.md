@@ -66,6 +66,11 @@ nothing (verified: booking with Kafka stopped → 28ms response, 9 outbox rows).
   The broker has no auth, and a forged path would upload any readable file to
   public storage.
 
+**A DB test must skip unless `TEST_DATABASE_URL` is set** — never connect via
+`config.Load()`. Four tests did, so a plain `go test ./...` deleted `TEST_%`
+coupons and inserted a live all-venue coupon into the dev database, and CI would
+have failed with no database at all.
+
 **`make test` runs the DB tests against the dev database**, and
 `booking_test.go`'s `ExpireHolds` expires *every* lapsed hold there, not just its
 fixtures. For a no-side-effect run: `env -u TEST_DATABASE_URL go test ./...`.
@@ -514,9 +519,10 @@ would make a ₹4,500 hotel look ten times cheaper than a ₹50,000 hall.
 of 43 halls no capacity — this is the common case, not an edge. A missing price
 is not a free venue, and a missing capacity is not zero guests.
 
-`repository.ByIDs` loads all three venues, their amenities and their cover images
-in **3 queries regardless of venue count** — measured with `log_statement=all`,
-not assumed. Never call `Get` in a loop here: that is 9 queries for 3 venues.
+`repository.ByIDs` loads all three venues with their events, FAQs, policies,
+reviews, amenities and images in **7 queries regardless of venue count** — one
+per kind, via the `*OfMany` loaders. Never call `Get` in a loop here: that is
+N queries per venue.
 
 Two smaller rules that each hid a bug:
 
@@ -900,10 +906,14 @@ processed" — money taken, booking never credited. A payment for a booking that
 has ended is recorded but never revives it (logged as "refund due").
 `payments/create` returns the open PENDING order instead of a second one.
 
-**One definition of a live venue: `venuetype.LiveSQL`** — not deleted, not
-BLOCKED/REJECTED. PENDING stays live: 48 of 52 venues are PENDING. Search, list,
-detail, compare, hall *and* hotel booking all use it; hotel booking used to check
-nothing. A non-live venue's detail is 404 except to its owner or an admin.
+**One definition of a live venue: `venuetype.LiveSQL`** — not deleted and
+**APPROVED**. A PENDING venue is unreviewed, and serving it bypassed moderation
+(on 2026-10-12 that left 4 of 52 venues live until an admin approves the rest).
+Search, list, detail, compare, recommendations, hall *and* hotel booking all use
+it, or its Go mirror `venuetype.Live`; hotel booking used to check nothing. A
+non-live venue's detail is 404 except to its owner or an admin. Never write a
+`status = 'APPROVED'` literal for a venue — one drifted copy is how PENDING
+venues were briefly listed but unbookable.
 
 **Quote acceptance belongs to the other party.** The customer accepts a REPLIED
 quote, the owner a COUNTERED one. "Either side can accept" let a customer counter
