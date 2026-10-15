@@ -89,11 +89,13 @@ func (h *Handler) refund(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	amount, err := strconv.ParseFloat(r.URL.Query().Get("amount"), 64)
-	if err != nil || amount <= 0 {
+	if err != nil || amount <= 0 { // NaN/Inf are refused in the service
 		response.Error(w, http.StatusBadRequest, "A positive amount is required", "VALIDATION_ERROR")
 		return
 	}
-	id, err := h.svc.Refund(r.Context(), paymentID, amount, r.URL.Query().Get("reason"))
+	userID, _ := middleware.UserID(r.Context())
+	id, err := h.svc.Refund(r.Context(), paymentID, amount, r.URL.Query().Get("reason"),
+		userID, middleware.HasRole(r.Context(), domain.RoleAdmin))
 	if err != nil {
 		httpx.Fail(w, err)
 		return

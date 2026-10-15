@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,4 +67,26 @@ func (l *Local) Delete(ctx context.Context, url string) error {
 		return nil
 	}
 	return err
+}
+
+// FileServer serves the files under dir, refusing directories. A plain
+// http.FileServer lists a directory's contents, so GET /uploads/ and
+// /uploads/spool/ used to enumerate every stored file - feedback screenshots
+// included - for anyone who asked. A directory now reads as not found.
+func FileServer(dir string) http.Handler {
+	return http.FileServer(noDirs{http.Dir(dir)})
+}
+
+type noDirs struct{ http.FileSystem }
+
+func (n noDirs) Open(name string) (http.File, error) {
+	f, err := n.FileSystem.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || st.IsDir() {
+		f.Close()
+		return nil, os.ErrNotExist
+	}
+	return f, nil
 }
