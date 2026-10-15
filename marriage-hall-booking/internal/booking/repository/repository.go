@@ -146,6 +146,7 @@ type BookingFacility struct {
 type HallBookingInput struct {
 	UserID     int64
 	FacilityID string
+	TargetType string // "HALL" or "HOTEL"
 	EventDate  time.Time
 	// EndDate is the last day of the event; equal to EventDate for a
 	// single-day booking.
@@ -204,15 +205,20 @@ func (r *Repo) CreateHallBooking(ctx context.Context, in HallBookingInput) (*Boo
 		expiresAt = &t
 	}
 
+	targetType := in.TargetType
+	if targetType == "" {
+		targetType = "HALL"
+	}
+
 	err = tx.QueryRow(ctx,
 		`INSERT INTO bookings (user_id, target_type, target_id, check_in, check_out,
 		    slot_type, total_amount, idempotent_key, expires_at, guest_name, guest_email,
 		    guest_phone, start_time, end_time, guest_count, event_type, room_count,
 		    discount_amount, coupon_id, coupon_code)
-		 VALUES ($1,'HALL',$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10,$11,
-		         NULLIF($12,'')::time, NULLIF($13,'')::time, $14, $15, $16,
-		         $17, NULLIF($18,'')::uuid, NULLIF($19,'')) RETURNING id`,
-		in.UserID, in.FacilityID, in.EventDate, in.EndDate, in.SlotType, in.TotalAmount,
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),$9,$10,$11,$12,
+		         NULLIF($13,'')::time, NULLIF($14,'')::time, $15, $16, $17,
+		         $18, NULLIF($19,'')::uuid, NULLIF($20,'')) RETURNING id`,
+		in.UserID, targetType, in.FacilityID, in.EventDate, in.EndDate, in.SlotType, in.TotalAmount,
 		in.IdempotentKey, expiresAt, in.GuestName, in.GuestEmail, in.GuestPhone,
 		in.StartTime, in.EndTime, in.GuestCount, in.EventType, in.RoomCount,
 		in.DiscountAmount, in.CouponID, in.CouponCode).Scan(&bookingID)
@@ -494,14 +500,15 @@ func releaseInventory(ctx context.Context, tx pgx.Tx, id string) error {
 		return err
 	}
 
-	if b.TargetType == "HALL" {
-		if _, err := tx.Exec(ctx,
-			`UPDATE hall_availability SET status = 'AVAILABLE', booking_id = NULL,
-			    updated_at = CURRENT_TIMESTAMP
-			 WHERE booking_id = $1`, id); err != nil {
-			return err
-		}
-	} else {
+	// Free any slots claimed in hall_availability (applies to all venue bookings)
+	if _, err := tx.Exec(ctx,
+		`UPDATE hall_availability SET status = 'AVAILABLE', booking_id = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		 WHERE booking_id = $1`, id); err != nil {
+		return err
+	}
+
+	if b.TargetType == "HOTEL" {
 		rows, err := tx.Query(ctx,
 			`SELECT room_type_id, quantity FROM booking_rooms WHERE booking_id = $1`, id)
 		if err != nil {

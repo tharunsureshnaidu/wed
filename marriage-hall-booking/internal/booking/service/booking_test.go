@@ -445,3 +445,56 @@ func TestRepeatedHotelCancelReleasesOnce(t *testing.T) {
 		t.Fatalf("want 1 room still booked by the second guest, got %d", booked)
 	}
 }
+
+func TestCreateVenueBookingHotelAndHall(t *testing.T) {
+	svc := setup(t)
+	ownerID, custID, hallID := fixture(t)
+	ctx := context.Background()
+
+	// Create a hotel facility
+	var hotelID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO facilities (owner_id, name, type, base_price_per_day, status)
+		 VALUES ($1, 'Grand Palace Hotel', 'HOTEL', 75000, 'APPROVED') RETURNING id`,
+		ownerID).Scan(&hotelID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `DELETE FROM bookings WHERE target_id = $1`, hotelID)
+		pool.Exec(ctx, `DELETE FROM facilities WHERE id = $1`, hotelID)
+	})
+
+	date := eventDate()
+	rooms := 2
+
+	// 1. Book marriage hall with optional fields provided
+	hallBooking, err := svc.CreateVenueBooking(ctx, custID, VenueBookingRequest{
+		FacilityID: hallID, EventDate: date, EndDate: date,
+		StartTime: "10:00", EndTime: "18:00", SlotType: "FULL_DAY",
+		RoomCount: &rooms, IdempotentKey: t.Name() + "-hall",
+	})
+	if err != nil {
+		t.Fatalf("CreateVenueBooking for hall failed: %v", err)
+	}
+	if hallBooking.TargetType != "HALL" {
+		t.Errorf("hall targetType = %q, want HALL", hallBooking.TargetType)
+	}
+	if hallBooking.TotalAmount != 100000 {
+		t.Errorf("hall totalAmount = %v, want 100000", hallBooking.TotalAmount)
+	}
+
+	// 2. Book hotel with optional fields omitted
+	hotelBooking, err := svc.CreateVenueBooking(ctx, custID, VenueBookingRequest{
+		FacilityID: hotelID, EventDate: date.AddDate(0, 0, 7),
+		IdempotentKey: t.Name() + "-hotel",
+	})
+	if err != nil {
+		t.Fatalf("CreateVenueBooking for hotel failed: %v", err)
+	}
+	if hotelBooking.TargetType != "HOTEL" {
+		t.Errorf("hotel targetType = %q, want HOTEL", hotelBooking.TargetType)
+	}
+	if hotelBooking.TotalAmount != 75000 {
+		t.Errorf("hotel totalAmount = %v, want 75000", hotelBooking.TotalAmount)
+	}
+}

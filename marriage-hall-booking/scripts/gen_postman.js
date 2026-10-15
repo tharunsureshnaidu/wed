@@ -49,6 +49,30 @@ const BODIES = {
     title: "Privacy Policy",
     content: "Updated: we now also record the device you signed in from.",
   },
+  "POST /api/v1/admin/faqs": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>To book a marriage hall, follow these steps:</p><ol><li>Browse available venues.</li><li>Select your preferred hall.</li><li>Choose your event date.</li><li>Submit your booking request.</li></ol><p>Our team will help you with the booking process.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "PUT /api/v1/admin/faqs/{faqId}": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>Follow these steps to book your venue:</p><ul><li>Choose a venue.</li><li>Select your event date.</li><li>Submit your booking request.</li></ul><p><strong>Note:</strong> Booking confirmation depends on availability.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "POST /api/admin/faqs": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>To book a marriage hall, follow these steps:</p><ol><li>Browse available venues.</li><li>Select your preferred hall.</li><li>Choose your event date.</li><li>Submit your booking request.</li></ol><p>Our team will help you with the booking process.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "PUT /api/admin/faqs/{faqId}": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>Follow these steps to book your venue:</p><ul><li>Choose a venue.</li><li>Select your event date.</li><li>Submit your booking request.</li></ul><p><strong>Note:</strong> Booking confirmation depends on availability.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
   "POST /api/v1/facilities/compare": {
     type: "hall",
     venue_ids: ["{{hallId}}", "{{hallId2}}"],
@@ -279,15 +303,28 @@ const BODIES = {
   },
   "PUT /api/v1/facilities/{id}/images/reorder": { order: ["{{imageId}}"] },
   "PUT /api/v1/facilities/{id}/videos/reorder": { order: ["{{videoId}}"] },
+  "POST /api/v1/bookings/venues": {
+    venueId: "{{hallId}}",
+    startDate: "2027-06-25",
+    endDate: "2027-06-26",
+    startTime: "10:00",
+    endTime: "18:00",
+    slotType: "FULL_DAY",
+    guestCount: 400,
+    eventType: "WEDDING",
+    roomCount: 2,
+    idempotentKey: "venue-{{runId}}",
+  },
   "POST /api/v1/bookings/halls": {
     hallId: "{{hallId}}",
     startDate: "2027-06-25",
     endDate: "2027-06-26",
-    startTime: "18:00",
-    endTime: "23:00",
+    startTime: "10:00",
+    endTime: "18:00",
+    slotType: "FULL_DAY",
     guestCount: 400,
     eventType: "WEDDING",
-    roomCount: 12,
+    roomCount: 2,
     idempotentKey: "hall-{{runId}}",
   },
   "PATCH /api/v1/admin/facilities/{id}": {
@@ -531,6 +568,8 @@ const QUERIES = {
   "POST /api/v1/admin/facilities/{id}/approve": "status=APPROVED",
   "GET /api/v1/super-admin/help/messages": "search=&status=&page=0&limit=20",
   "GET /api/v1/public/recommendations": "lat=12.9716&lng=77.5946&type=ALL&radiusKm=50",
+  "GET /api/v1/admin/faqs": "page=0&size=20",
+  "GET /api/admin/faqs": "page=0&size=20",
 };
 
 // Which token each folder acts as
@@ -563,6 +602,7 @@ const FOLDER_TOKEN = {
   "Support": null,
   "Help Center": "accessToken",
   "Privacy Policy": "accessToken",
+  "FAQs": "adminToken",
   "Feedback": "accessToken",
   "Search": "accessToken",
   "Admin": "adminToken",
@@ -611,6 +651,16 @@ const REQUEST_TOKEN = {
   "GET /api/admin/feedback/{id}": "adminToken",
   "PUT /api/v1/admin/feedback/{id}": "adminToken",
   "PUT /api/admin/feedback/{id}": "adminToken",
+  "POST /api/v1/admin/faqs": "adminToken",
+  "POST /api/admin/faqs": "adminToken",
+  "GET /api/v1/admin/faqs": "adminToken",
+  "GET /api/admin/faqs": "adminToken",
+  "GET /api/v1/admin/faqs/{faqId}": "adminToken",
+  "GET /api/admin/faqs/{faqId}": "adminToken",
+  "PUT /api/v1/admin/faqs/{faqId}": "adminToken",
+  "PUT /api/admin/faqs/{faqId}": "adminToken",
+  "DELETE /api/v1/admin/faqs/{faqId}": "adminToken",
+  "DELETE /api/admin/faqs/{faqId}": "adminToken",
 };
 
 // Endpoints that are completely public (No Bearer token required)
@@ -667,6 +717,8 @@ const NO_AUTH = new Set([
   "GET /api/privacy-policy",
   "GET /api/v1/privacy-policy",
   "GET /api/v1/public/recommendations",
+  "GET /api/v1/public/faqs",
+  "GET /api/public/faqs",
 ]);
 
 const MODULE_FOLDER = {
@@ -686,6 +738,7 @@ const MODULE_FOLDER = {
   feedback: "Feedback",
   help: "Help Center",
   privacypolicy: "Privacy Policy",
+  faq: "FAQs",
   recommendation: "Recommendations",
 };
 
@@ -719,6 +772,7 @@ const FOLDER_ORDER = [
   "Help Center",
   "Feedback",
   "Privacy Policy",
+  "FAQs",
   "Search",
   "Admin",
   "Cleanup (destructive)",
@@ -772,6 +826,8 @@ const DESTRUCTIVE = new Set([
   "DELETE /api/v1/super-admin/help/messages/{messageId}",
   "DELETE /api/v1/admin/privacy-policy",
   "DELETE /api/admin/privacy-policy",
+  "DELETE /api/v1/admin/faqs/{faqId}",
+  "DELETE /api/admin/faqs/{faqId}",
 ]);
 
 const REQUEST_ORDER = [
@@ -842,6 +898,7 @@ const REQUEST_ORDER = [
   "POST /api/v1/facilities/{id}/block",
   "POST /api/v1/facilities/{id}/unblock",
 
+  "POST /api/v1/bookings/venues",
   "POST /api/v1/bookings/halls",
   "POST /api/v1/bookings/hotels",
   "GET /api/v1/bookings",
@@ -901,6 +958,14 @@ const REQUEST_ORDER = [
   "GET /api/v1/admin/privacy-policy",
   "PUT /api/v1/admin/privacy-policy",
   "DELETE /api/v1/admin/privacy-policy",
+
+  "GET /api/public/faqs",
+  "GET /api/v1/public/faqs",
+  "POST /api/v1/admin/faqs",
+  "GET /api/v1/admin/faqs",
+  "GET /api/v1/admin/faqs/{faqId}",
+  "PUT /api/v1/admin/faqs/{faqId}",
+  "DELETE /api/v1/admin/faqs/{faqId}",
 
   "GET /api/v1/search/venues",
   "GET /api/v1/search/autocomplete",
@@ -1051,6 +1116,7 @@ const NAMES = {
   "POST /api/v1/facilities/{id}/block": "Block facility",
   "POST /api/v1/facilities/{id}/unblock": "Unblock facility",
 
+  "POST /api/v1/bookings/venues": "Book a venue (hotel or hall)",
   "POST /api/v1/bookings/halls": "Book a hall",
   "POST /api/v1/bookings/hotels": "Book hotel rooms",
   "GET /api/v1/bookings": "My bookings",
@@ -1170,6 +1236,10 @@ if (d && d.items && d.items.length) {
 }`,
   "POST /api/v1/facilities/{id}/faqs": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
+  "POST /api/v1/admin/faqs": `const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
+  "POST /api/admin/faqs": `const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
   "POST /api/v1/feedback": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);`,
   "POST /api/feedback": `const d = pm.response.json().data;
@@ -1250,6 +1320,15 @@ if (d) pm.collectionVariables.set("roomTypeId", d.id);`,
 if (d) pm.collectionVariables.set("imageId", d.id);`,
   "POST /api/v1/facilities/{id}/videos": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("videoId", d.id);`,
+  "POST /api/v1/bookings/venues": `const d = pm.response.json().data;
+if (d) {
+  pm.collectionVariables.set("bookingId", d.id);
+  pm.environment.set("bookingId", d.id);
+  pm.collectionVariables.set("venueBookingId", d.id);
+  pm.environment.set("venueBookingId", d.id);
+  pm.collectionVariables.set("hallBookingId", d.id);
+  pm.environment.set("hallBookingId", d.id);
+}`,
   "POST /api/v1/bookings/halls": `const d = pm.response.json().data;
 if (d) {
   pm.collectionVariables.set("bookingId", d.id);
@@ -1323,7 +1402,14 @@ if (d && d.length) pm.collectionVariables.set("ruleId", d[0].id);`,
   "POST /api/v1/admin/fraud-reports": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("reportId", d.id);`,
   "POST /api/v1/help/messages": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("messageId", d.id);`,
+if (d && d.id) pm.collectionVariables.set("messageId", d.id);
+pm.test("Help message has camelCase fields and no duplicates", function () {
+    pm.expect(d).to.have.property("userId");
+    pm.expect(d).to.have.property("userName");
+    pm.expect(d).to.have.property("createdAt");
+    pm.expect(d).to.not.have.property("user_id");
+    pm.expect(d).to.not.have.property("user_name");
+});`,
   "GET /api/v1/super-admin/help/messages": `const d = pm.response.json().data;
 const list = d && d.messages ? d.messages : (d && d.content ? d.content : (Array.isArray(d) ? d : []));
 if (list.length > 0 && list[0].id) {
@@ -2033,6 +2119,7 @@ const FOLDER_DESC = {
   "Help Center": "Customer support messages, inquiry submission, and admin message handling.",
   Feedback: "Customer app feedback, ratings, and issue reporting.",
   "Privacy Policy": "Public privacy policy reading and admin version publishing.",
+  FAQs: "Platform Frequently Asked Questions (FAQ) management with rich HTML editor support and public browsing.",
   Search: "Advanced multi-criteria search, autocomplete, trending searches, and geolocation.",
   Admin: "Platform administration, KYC approvals, user moderation, review approval, and analytics.",
   "Cleanup (destructive)": "Deletes and cancellations kept last to maintain test isolation and idempotency.",
@@ -2109,6 +2196,7 @@ const FOLDER_DESC = {
       { key: "videoId", value: "" },
       { key: "videoId2", value: "" },
       { key: "bookingId", value: "" },
+      { key: "venueBookingId", value: "", description: "Captured from POST /bookings/venues" },
       { key: "hallBookingId", value: "", description: "Captured from POST /bookings/halls" },
       { key: "hotelBookingId", value: "", description: "Captured from POST /bookings/hotels" },
       { key: "faqId", value: "" },
