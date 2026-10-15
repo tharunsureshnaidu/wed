@@ -12,23 +12,16 @@ type CreateHelpMessageRequest struct {
 }
 
 // HelpMessageResponse represents the Help Center message returned to clients and administrators.
-// Both camelCase and snake_case fields are populated to satisfy all client expectations.
 type HelpMessageResponse struct {
-	ID             string     `json:"id"`
-	UserID         *int64     `json:"userId,omitempty"`
-	UserIDSnake    *int64     `json:"user_id,omitempty"`
-	UserName       string     `json:"userName"`
-	UserNameSnake  string     `json:"user_name,omitempty"`
-	UserEmail      *string    `json:"userEmail,omitempty"`
-	UserEmailSnake *string    `json:"user_email,omitempty"`
-	UserPhone      *string    `json:"userPhone,omitempty"`
-	UserPhoneSnake *string    `json:"user_phone,omitempty"`
-	Message        string     `json:"message"`
-	Status         string     `json:"status"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	CreatedAtSnake *time.Time `json:"created_at,omitempty"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
-	UpdatedAtSnake *time.Time `json:"updated_at,omitempty"`
+	ID        string    `json:"id"`
+	UserID    *int64    `json:"userId,omitempty"`
+	UserName  string    `json:"userName"`
+	UserEmail *string   `json:"userEmail,omitempty"`
+	UserPhone *string   `json:"userPhone,omitempty"`
+	Message   string    `json:"message"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // HelpMessageFilter contains query and filtering criteria for the Super Admin management API.

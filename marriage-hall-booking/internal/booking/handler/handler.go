@@ -35,7 +35,9 @@ func New(svc *service.Service, signer *jwt.Signer) *Handler {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	auth := middleware.RequireAuth(h.signer)
-	mux.Handle("POST /api/v1/bookings/halls", auth(http.HandlerFunc(h.createHall)))
+	mux.Handle("POST /api/v1/bookings/venues", auth(http.HandlerFunc(h.createVenue)))
+	mux.Handle("POST /api/v1/bookings", auth(http.HandlerFunc(h.createVenue)))
+	mux.Handle("POST /api/v1/bookings/halls", auth(http.HandlerFunc(h.createVenue)))
 	mux.Handle("POST /api/v1/bookings/hotels", auth(http.HandlerFunc(h.createHotel)))
 	mux.Handle("GET /api/v1/bookings", auth(http.HandlerFunc(h.list)))
 	mux.Handle("GET /api/v1/bookings/{id}", auth(http.HandlerFunc(h.get)))
@@ -56,60 +58,73 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	h.registerQuote(mux)
 }
 
-// hallReq is the booking form the app submits (screen 01: date, guests, event
-// type). An event can run across midnight or over several days, so it carries a
-// date range and times rather than a single date.
-//
-// eventDate/slotType are still accepted: they are what every existing client
-// sends, and dropping them would break those callers for no gain.
-type hallReq struct {
-	HallID     string `json:"hallId"`
+// venueReq is the booking form the app submits (date, guests, event type,
+// rooms, etc.). Both MARRIAGE_HALL and HOTEL venues can be booked through this
+// endpoint.
+type venueReq struct {
+	VenueID    string `json:"venueId"`
 	FacilityID string `json:"facilityId"`
-	StartDate  string `json:"startDate"`
-	EndDate    string `json:"endDate"`
-	StartTime  string `json:"startTime"` // HH:MM, optional
-	EndTime    string `json:"endTime"`   // HH:MM, optional
-	GuestCount *int   `json:"guestCount"`
-	// RoomCount is optional: how many guest rooms the party needs alongside
-	// the hall. Not priced - the owner arranges it offline.
-	RoomCount  *int     `json:"roomCount"`
-	EventType  *string  `json:"eventType"`
-	PackageIDs []string `json:"packageIds"`
-	// CouponCode is optional; the discount is computed server-side.
-	CouponCode string `json:"couponCode"`
+	HallID     string `json:"hallId"`
+	HotelID    string `json:"hotelId"`
 
-	// Legacy single-date form.
-	EventDate string `json:"eventDate"`
-	SlotType  string `json:"slotType"`
+	StartDate string `json:"startDate"`
+	EndDate   string `json:"endDate"`
+	CheckIn   string `json:"checkIn"`
+	CheckOut  string `json:"checkOut"`
+	EventDate string `json:"eventDate"` // legacy single-date form
+
+	StartTime string `json:"startTime"` // HH:MM, optional
+	EndTime   string `json:"endTime"`   // HH:MM, optional
+	SlotType  string `json:"slotType"`  // MORNING, EVENING, FULL_DAY, optional
+
+	GuestCount *int `json:"guestCount"` // optional
+	// RoomCount is optional: how many guest rooms the party needs alongside
+	// the venue. Not priced - the owner arranges it offline.
+	RoomCount *int `json:"roomCount"`
+
+	EventType  *string  `json:"eventType"`  // optional
+	PackageIDs []string `json:"packageIds"` // optional
+	CouponCode string   `json:"couponCode"` // optional
 
 	IdempotentKey string `json:"idempotentKey"`
 }
 
-// eventTypes was a second, narrower copy of the event list (5 entries against
-// the catalogue's 25). Two allowlists meant a venue could advertise Sangeet
-// through the facility API and then reject the booking for it. The catalogue in
-// internal/facility/handler is now the single source.
+type hallReq = venueReq
 
 // slotFor maps a time range onto the slot that availability is tracked by.
 // Anything touching both halves of the day takes the whole day; otherwise it is
 // the half it starts in. Midday is the boundary.
 func slotFor(start, end string) string {
-	if start == "" || end == "" {
+	if start == "" && end == "" {
 		return "FULL_DAY"
 	}
-	sh, _ := strconv.Atoi(start[:2])
-	eh, _ := strconv.Atoi(end[:2])
-	if eh <= sh { // runs past midnight
-		return "FULL_DAY"
+	if start != "" && end != "" {
+		sh, _ := strconv.Atoi(start[:2])
+		eh, _ := strconv.Atoi(end[:2])
+		if eh <= sh { // runs past midnight
+			return "FULL_DAY"
+		}
+		switch {
+		case eh <= 12:
+			return "MORNING"
+		case sh >= 12:
+			return "EVENING"
+		default:
+			return "FULL_DAY"
+		}
 	}
-	switch {
-	case eh <= 12:
+	if start != "" {
+		sh, _ := strconv.Atoi(start[:2])
+		if sh >= 12 {
+			return "EVENING"
+		}
 		return "MORNING"
-	case sh >= 12:
-		return "EVENING"
-	default:
-		return "FULL_DAY"
 	}
+	eh, _ := strconv.Atoi(end[:2])
+	if eh <= 12 {
+		return "MORNING"
+	}
+	return "EVENING"
 }
 
 // hhmm accepts "HH:MM" (and "HH:MM:SS", which is what a time input may send).
@@ -126,25 +141,44 @@ func hhmm(v string) (string, bool) {
 	return t.Format("15:04"), true
 }
 
-func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
-	var req hallReq
+func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
+	var req venueReq
 	if !httpx.Decode(w, r, &req) {
 		return
 	}
-	facilityID := req.HallID
+	facilityID := req.VenueID
 	if facilityID == "" {
 		facilityID = req.FacilityID
+	}
+	if facilityID == "" {
+		facilityID = req.HallID
+	}
+	if facilityID == "" {
+		facilityID = req.HotelID
 	}
 
 	var e validate.Errors
 	if !httpx.ValidUUID(facilityID) {
-		e = append(e, "A valid hallId is required")
+		if req.HallID != "" {
+			e = append(e, "A valid hallId is required")
+		} else if req.HotelID != "" {
+			e = append(e, "A valid hotelId is required")
+		} else {
+			e = append(e, "A valid venueId is required")
+		}
 	}
 
-	// startDate is the new form; eventDate the old one. Either is accepted.
-	rawStart, rawEnd := req.StartDate, req.EndDate
+	// startDate is the primary form; checkIn and eventDate are also accepted.
+	rawStart := req.StartDate
+	if rawStart == "" {
+		rawStart = req.CheckIn
+	}
 	if rawStart == "" {
 		rawStart = req.EventDate
+	}
+	rawEnd := req.EndDate
+	if rawEnd == "" {
+		rawEnd = req.CheckOut
 	}
 	if rawEnd == "" {
 		rawEnd = rawStart
@@ -161,37 +195,46 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 		e = append(e, "endDate cannot be before startDate")
 	}
 
-	startTime, ok1 := hhmm(req.StartTime)
-	endTime, ok2 := hhmm(req.EndTime)
-	if !ok1 || !ok2 {
-		e = append(e, "startTime and endTime must be HH:MM")
+	// startTime and endTime are optional.
+	var startTime, endTime string
+	if req.StartTime != "" {
+		st, ok := hhmm(req.StartTime)
+		if !ok {
+			e = append(e, "startTime must be HH:MM")
+		} else {
+			startTime = st
+		}
 	}
-	if (startTime == "") != (endTime == "") {
-		e = append(e, "startTime and endTime must be given together")
+	if req.EndTime != "" {
+		et, ok := hhmm(req.EndTime)
+		if !ok {
+			e = append(e, "endTime must be HH:MM")
+		} else {
+			endTime = et
+		}
 	}
 
-	// An explicit time range decides the slot; otherwise the caller's slotType
-	// stands, defaulting to the whole day.
-	slot := req.SlotType
-	if startTime != "" {
-		slot = slotFor(startTime, endTime)
-	} else if slot == "" {
-		slot = "FULL_DAY"
-	}
-	if slot != "MORNING" && slot != "EVENING" && slot != "FULL_DAY" {
+	// slotType is optional.
+	slot := strings.ToUpper(strings.TrimSpace(req.SlotType))
+	if slot != "" && slot != "MORNING" && slot != "EVENING" && slot != "FULL_DAY" {
 		e = append(e, "slotType must be MORNING, EVENING or FULL_DAY")
+	}
+	if slot == "" {
+		if startTime != "" || endTime != "" {
+			slot = slotFor(startTime, endTime)
+		} else {
+			slot = "FULL_DAY"
+		}
 	}
 
 	if req.GuestCount != nil && *req.GuestCount <= 0 {
 		e = append(e, "guestCount must be positive")
 	}
-	// 0 is allowed - "no rooms needed" is a real answer, distinct from not
-	// stating a number at all. An upper bound stops a typo becoming a
-	// nonsensical request the owner has to query.
+	// roomCount is optional: between 0 and 1000 if given.
 	if req.RoomCount != nil && (*req.RoomCount < 0 || *req.RoomCount > 1000) {
 		e = append(e, "roomCount must be between 0 and 1000")
 	}
-	if req.EventType != nil && !eventtypes.ValidEventCode(*req.EventType) {
+	if req.EventType != nil && strings.TrimSpace(*req.EventType) != "" && !eventtypes.ValidEventCode(*req.EventType) {
 		e = append(e, "eventType is not a known event - see GET /api/v1/events")
 	}
 	if len(e) > 0 {
@@ -200,17 +243,11 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var eventType *string
-	if req.EventType != nil {
-		v := strings.ToUpper(*req.EventType)
+	if req.EventType != nil && strings.TrimSpace(*req.EventType) != "" {
+		v := strings.ToUpper(strings.TrimSpace(*req.EventType))
 		eventType = &v
 
-		// A venue that has declared what it hosts should not take a booking for
-		// something else. Venues that have declared nothing accept anything -
-		// most predate the feature, and refusing their bookings would be a
-		// regression caused by a screen their owner has not seen.
 		if h.HostsEvent != nil {
-			// facilityID, not req.HallID: a client sending the legacy
-			// facilityId passed "" to a uuid column and got a 500.
 			ok, err := h.HostsEvent(r.Context(), facilityID, v)
 			if err != nil {
 				httpx.Fail(w, err)
@@ -226,7 +263,7 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID, _ := middleware.UserID(r.Context())
-	b, err := h.svc.CreateHallBooking(r.Context(), userID, service.HallBookingRequest{
+	b, err := h.svc.CreateVenueBooking(r.Context(), userID, service.VenueBookingRequest{
 		FacilityID: facilityID, EventDate: startDate, EndDate: endDate,
 		StartTime: startTime, EndTime: endTime,
 		GuestCount: req.GuestCount, RoomCount: req.RoomCount, EventType: eventType,
@@ -238,6 +275,11 @@ func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, "Booking created successfully", b)
+}
+
+// createHall is an alias for createVenue for backward compatibility.
+func (h *Handler) createHall(w http.ResponseWriter, r *http.Request) {
+	h.createVenue(w, r)
 }
 
 type hotelReq struct {

@@ -24,6 +24,9 @@ import (
 	couponhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/coupon/handler"
 	facilityhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/handler"
 	facilityrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
+	faqhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/faq/handler"
+	faqrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/faq/repository"
+	faqsvc "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/faq/service"
 	feedbackhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/feedback/handler"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/health"
 	helpdomain "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/help/domain"
@@ -359,6 +362,10 @@ func main() {
 	privacyRepo := privacypolicyrepo.New(db)
 	privacySvc := privacypolicysvc.New(privacyRepo, db)
 	privacypolicyhandler.New(privacySvc, signer).Register(mux)
+
+	faqRepo := faqrepo.New(db)
+	faqSvc := faqsvc.New(faqRepo)
+	faqhandler.NewWithService(faqSvc, signer).Register(mux)
 
 	admins := adminhandler.New(db, signer)
 	admins.OnStatusChange = func(ctx context.Context, ev adminhandler.StatusChange) {

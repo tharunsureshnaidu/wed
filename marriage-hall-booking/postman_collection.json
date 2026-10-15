@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking Platform API",
-    "description": "Comprehensive API testing collection (236 endpoints) for Marriage Hall & Hotel Booking.\n\nIncludes complete coverage for Authentication, Public Catalog, Side-by-side Compare, Bookings, Payments, Quotes, Reviews, Help Center, Admin Moderation, and Push Notifications.",
+    "description": "Comprehensive API testing collection (250 endpoints) for Marriage Hall & Hotel Booking.\n\nIncludes complete coverage for Authentication, Public Catalog, Side-by-side Compare, Bookings, Payments, Quotes, Reviews, Help Center, Admin Moderation, and Push Notifications.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -7280,8 +7280,91 @@
       "description": "Customer saved wishlist of favorite halls and hotels."
     },
     {
-      "name": "Bookings (11)",
+      "name": "Bookings (13)",
       "item": [
+        {
+          "name": "Book a venue (hotel or hall)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bookings/venues",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings",
+                "venues"
+              ]
+            },
+            "description": "Creates or acts on a booking record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"venueId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"10:00\",\n  \"endTime\": \"18:00\",\n  \"slotType\": \"FULL_DAY\",\n  \"guestCount\": 400,\n  \"eventType\": \"WEDDING\",\n  \"roomCount\": 2,\n  \"idempotentKey\": \"venue-{{runId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (d) {",
+                  "  pm.collectionVariables.set(\"bookingId\", d.id);",
+                  "  pm.environment.set(\"bookingId\", d.id);",
+                  "  pm.collectionVariables.set(\"venueBookingId\", d.id);",
+                  "  pm.environment.set(\"venueBookingId\", d.id);",
+                  "  pm.collectionVariables.set(\"hallBookingId\", d.id);",
+                  "  pm.environment.set(\"hallBookingId\", d.id);",
+                  "}",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "Book a hall",
           "request": {
@@ -7317,7 +7400,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"hallId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"18:00\",\n  \"endTime\": \"23:00\",\n  \"guestCount\": 400,\n  \"eventType\": \"WEDDING\",\n  \"roomCount\": 12,\n  \"idempotentKey\": \"hall-{{runId}}\"\n}",
+              "raw": "{\n  \"hallId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"10:00\",\n  \"endTime\": \"18:00\",\n  \"slotType\": \"FULL_DAY\",\n  \"guestCount\": 400,\n  \"eventType\": \"WEDDING\",\n  \"roomCount\": 2,\n  \"idempotentKey\": \"hall-{{runId}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -8089,6 +8172,64 @@
                   "language": "json"
                 }
               }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Bookings",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bookings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings"
+              ]
+            },
+            "description": "Creates or acts on a booking record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -11354,6 +11495,13 @@
                 "exec": [
                   "const d = pm.response.json().data;",
                   "if (d && d.id) pm.collectionVariables.set(\"messageId\", d.id);",
+                  "pm.test(\"Help message has camelCase fields and no duplicates\", function () {",
+                  "    pm.expect(d).to.have.property(\"userId\");",
+                  "    pm.expect(d).to.have.property(\"userName\");",
+                  "    pm.expect(d).to.have.property(\"createdAt\");",
+                  "    pm.expect(d).to.not.have.property(\"user_id\");",
+                  "    pm.expect(d).to.not.have.property(\"user_name\");",
+                  "});",
                   "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -12259,6 +12407,693 @@
         }
       ],
       "description": "Public privacy policy reading and admin version publishing."
+    },
+    {
+      "name": "FAQs (10)",
+      "item": [
+        {
+          "name": "GET Public Faqs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/public/faqs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "public",
+                "faqs"
+              ]
+            },
+            "description": "Lists faq data. See response for shape.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Public Faqs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/faqs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "public",
+                "faqs"
+              ]
+            },
+            "description": "Lists faq data. See response for shape.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Admin Faqs",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/faqs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "faqs"
+              ]
+            },
+            "description": "Creates or acts on a faq record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How can I book a marriage hall?\",\n  \"answer\": \"<p>To book a marriage hall, follow these steps:</p><ol><li>Browse available venues.</li><li>Select your preferred hall.</li><li>Choose your event date.</li><li>Submit your booking request.</li></ol><p>Our team will help you with the booking process.</p>\",\n  \"displayOrder\": 1,\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (d && d.id) pm.collectionVariables.set(\"faqId\", d.id);",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Faqs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/faqs?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "faqs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Lists faq data. See response for shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Faqs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/faqs/:faqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "faqs",
+                ":faqId"
+              ],
+              "variable": [
+                {
+                  "key": "faqId",
+                  "value": "{{faqId}}"
+                }
+              ]
+            },
+            "description": "Fetches faq data. See response for shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Faqs",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/faqs/:faqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "faqs",
+                ":faqId"
+              ],
+              "variable": [
+                {
+                  "key": "faqId",
+                  "value": "{{faqId}}"
+                }
+              ]
+            },
+            "description": "Updates faq. Send full object.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How can I book a marriage hall?\",\n  \"answer\": \"<p>Follow these steps to book your venue:</p><ul><li>Choose a venue.</li><li>Select your event date.</li><li>Submit your booking request.</li></ul><p><strong>Note:</strong> Booking confirmation depends on availability.</p>\",\n  \"displayOrder\": 1,\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Faqs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/faqs?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "faqs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Lists faq data. See response for shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Admin Faqs",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/faqs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "faqs"
+              ]
+            },
+            "description": "Creates or acts on a faq record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How can I book a marriage hall?\",\n  \"answer\": \"<p>To book a marriage hall, follow these steps:</p><ol><li>Browse available venues.</li><li>Select your preferred hall.</li><li>Choose your event date.</li><li>Submit your booking request.</li></ol><p>Our team will help you with the booking process.</p>\",\n  \"displayOrder\": 1,\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().data;",
+                  "if (d && d.id) pm.collectionVariables.set(\"faqId\", d.id);",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Faqs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/faqs/:faqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "faqs",
+                ":faqId"
+              ],
+              "variable": [
+                {
+                  "key": "faqId",
+                  "value": "{{faqId}}"
+                }
+              ]
+            },
+            "description": "Fetches faq data. See response for shape.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Faqs",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/faqs/:faqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "faqs",
+                ":faqId"
+              ],
+              "variable": [
+                {
+                  "key": "faqId",
+                  "value": "{{faqId}}"
+                }
+              ]
+            },
+            "description": "Updates faq. Send full object.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How can I book a marriage hall?\",\n  \"answer\": \"<p>Follow these steps to book your venue:</p><ul><li>Choose a venue.</li><li>Select your event date.</li><li>Submit your booking request.</li></ul><p><strong>Note:</strong> Booking confirmation depends on availability.</p>\",\n  \"displayOrder\": 1,\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Platform Frequently Asked Questions (FAQ) management with rich HTML editor support and public browsing."
     },
     {
       "name": "Search (10)",
@@ -15457,7 +16292,7 @@
       "description": "Platform administration, KYC approvals, user moderation, review approval, and analytics."
     },
     {
-      "name": "Cleanup (destructive) (19)",
+      "name": "Cleanup (destructive) (21)",
       "item": [
         {
           "name": "Admin: deactivate privacy policy",
@@ -15474,6 +16309,72 @@
                 "v1",
                 "admin",
                 "privacy-policy"
+              ]
+            },
+            "description": "Deletes cleanup (destructive) record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE Admin Faqs",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/faqs/:faqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "faqs",
+                ":faqId"
+              ],
+              "variable": [
+                {
+                  "key": "faqId",
+                  "value": "{{faqId}}"
+                }
               ]
             },
             "description": "Deletes cleanup (destructive) record.",
@@ -16666,6 +17567,71 @@
           ]
         },
         {
+          "name": "DELETE Admin Faqs",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/faqs/:faqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "faqs",
+                ":faqId"
+              ],
+              "variable": [
+                {
+                  "key": "faqId",
+                  "value": "{{faqId}}"
+                }
+              ]
+            },
+            "description": "Deletes cleanup (destructive) record.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Admin: deactivate privacy policy (alias)",
           "request": {
             "method": "DELETE",
@@ -16836,6 +17802,11 @@
     {
       "key": "bookingId",
       "value": ""
+    },
+    {
+      "key": "venueBookingId",
+      "value": "",
+      "description": "Captured from POST /bookings/venues"
     },
     {
       "key": "hallBookingId",

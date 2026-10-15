@@ -83,7 +83,7 @@ fixtures. For a no-side-effect run: `env -u TEST_DATABASE_URL go test ./...`.
 ## Migrations
 
 `internal/migrations/NNN_name.sql`, embedded, forward-only, applied on startup.
-Next number: check `ls internal/migrations/ | tail -1` (currently at 060).
+Next number: check `ls internal/migrations/ | tail -1` (currently at 061).
 
 House style: `IF NOT EXISTS`, `UUID PRIMARY KEY DEFAULT gen_random_uuid()`,
 `DECIMAL(10,2)` for money, `TIMESTAMPTZ`, `VARCHAR` + inline `CHECK` for enums,
@@ -102,6 +102,7 @@ surfaced when a cleanup failed.
 | `POST /auth/register/verify-email` | `target`, `otpCode` — **not** `identifier`/`otp` |
 | `POST /auth/login` | `identifier`, `password` |
 | `POST /bookings/halls` | `hallId`, `startDate`, `endDate`, `startTime`, `endTime`, `guestCount`, `roomCount` (optional), `eventType`, `idempotentKey` |
+| `POST /bookings/venues` (also `/bookings`, `/bookings/halls`) | one route for a hall **or** hotel: `venueId` (or `hallId`/`hotelId`), `startDate`/`endDate` or `checkIn`/`checkOut`, optional `startTime`/`endTime`/`slotType` |
 | `POST /bookings/hotels` | `hotelId`, `checkIn`, `checkOut`, `rooms: [{roomTypeId, quantity}]` — `rooms` is an **array**, not a count |
 
 **Halls and hotels count rooms differently, deliberately.** A hall booking takes

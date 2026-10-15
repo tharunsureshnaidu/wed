@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -70,8 +71,9 @@ func New(repo *repository.Repo, db *pgxpool.Pool) *Service {
 	return &Service{repo: repo, db: db}
 }
 
-type HallBookingRequest struct {
+type VenueBookingRequest struct {
 	FacilityID string
+	TargetType string // "HALL" or "HOTEL"
 	// EventDate is the first day; EndDate the last. A single-day booking has
 	// both equal, which is what the old single-date form produced.
 	EventDate time.Time
@@ -100,11 +102,11 @@ type HallBookingRequest struct {
 	OverrideAmount *float64
 }
 
-// CreateHallBooking prices the booking server-side and claims the slot.
-//
-// Prices are always read from the database, never taken from the request body -
-// a client that could send its own total would simply book a hall for ₹1.
-func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallBookingRequest) (*repository.Booking, error) {
+type HallBookingRequest = VenueBookingRequest
+
+// CreateVenueBooking prices the booking server-side and claims the slot.
+// Works for both marriage halls and hotels.
+func (s *Service) CreateVenueBooking(ctx context.Context, userID int64, req VenueBookingRequest) (*repository.Booking, error) {
 	// An idempotent retry must return the original booking, not a second one.
 	if req.IdempotentKey != "" {
 		existing, err := s.repo.FindByIdempotencyKey(ctx, req.IdempotentKey)
@@ -137,13 +139,18 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		 WHERE id = $1 AND `+venuetype.LiveSQL("f"),
 		req.FacilityID).Scan(&basePrice, &facilityType, &discountPct)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, apperr.BadRequest("INVALID_HALL", "Invalid hall")
+		return nil, apperr.BadRequest("INVALID_VENUE", "Invalid venue")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if facilityType != "MARRIAGE_HALL" {
-		return nil, apperr.BadRequest("INVALID_HALL", "Facility is not a marriage hall")
+	if facilityType != venuetype.StoredHall && facilityType != venuetype.Hotel {
+		return nil, apperr.BadRequest("INVALID_VENUE", "Facility is not a valid venue")
+	}
+
+	targetType := req.TargetType
+	if targetType == "" {
+		targetType = venuetype.API(facilityType)
 	}
 
 	// A caller that gives no end date means a single-day event. Defaulting here
@@ -226,12 +233,17 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		total -= d
 	}
 
+	slot := strings.ToUpper(strings.TrimSpace(req.SlotType))
+	if slot == "" {
+		slot = "FULL_DAY"
+	}
+
 	b, err := s.repo.CreateHallBooking(ctx, repository.HallBookingInput{
-		UserID: userID, FacilityID: req.FacilityID,
+		UserID: userID, FacilityID: req.FacilityID, TargetType: targetType,
 		EventDate: req.EventDate, EndDate: req.EndDate,
 		StartTime: req.StartTime, EndTime: req.EndTime,
 		GuestCount: req.GuestCount, RoomCount: req.RoomCount, EventType: req.EventType,
-		SlotType: req.SlotType, TotalAmount: total, IdempotentKey: req.IdempotentKey,
+		SlotType: slot, TotalAmount: total, IdempotentKey: req.IdempotentKey,
 		GuestName: req.GuestName, GuestEmail: req.GuestEmail, GuestPhone: req.GuestPhone,
 		HoldFor: 0, PackageIDs: req.PackageIDs, Addons: req.Addons, // no expiry: waits for the owner
 		DiscountAmount: venueDiscount + couponDiscount,
@@ -239,7 +251,7 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 	})
 	switch {
 	case errors.Is(err, repository.ErrSlotTaken):
-		return nil, apperr.Conflict("SLOT_UNAVAILABLE", "Hall slot is no longer available")
+		return nil, apperr.Conflict("SLOT_UNAVAILABLE", "Venue slot is no longer available")
 	case errors.Is(err, repository.ErrCouponUnavailable):
 		// Ran out (or was switched off) between pricing and the insert.
 		return nil, apperr.New(coupon.ErrExhausted.Status, coupon.ErrExhausted.Code,
@@ -261,6 +273,11 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		s.OnBookingCreated(ctx, b)
 	}
 	return b, nil
+}
+
+// CreateHallBooking is an alias for CreateVenueBooking for backward compatibility.
+func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallBookingRequest) (*repository.Booking, error) {
+	return s.CreateVenueBooking(ctx, userID, req)
 }
 
 // ActiveDiscountSQL is a facility's advertised discount percent, or NULL once
