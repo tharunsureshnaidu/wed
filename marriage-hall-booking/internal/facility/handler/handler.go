@@ -12,6 +12,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/events"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/geo"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
@@ -470,8 +471,8 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Same field as the list card, so the app reads one key on both screens.
-	if here := parseUserLocation(r); here.OK {
-		f.DistanceKm = here.distanceFrom(f.Lat, f.Lng)
+	if here := geo.Parse(r); here.OK {
+		f.DistanceKm = here.DistanceFrom(f.Lat, f.Lng)
 	}
 	response.OK(w, "Facility retrieved successfully", f)
 }
@@ -550,9 +551,9 @@ func (h *Handler) listVenues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if here := parseUserLocation(r); here.OK {
+	if here := geo.Parse(r); here.OK {
 		for i := range items {
-			items[i].DistanceKm = here.distanceFrom(items[i].Lat, items[i].Lng)
+			items[i].DistanceKm = here.DistanceFrom(items[i].Lat, items[i].Lng)
 		}
 	}
 
@@ -584,9 +585,9 @@ func (h *Handler) listWithType(w http.ResponseWriter, r *http.Request, forced st
 	}
 	// Distance is per caller, not per venue, so it is filled in here rather
 	// than scanned. No location on the request leaves every key absent.
-	if here := parseUserLocation(r); here.OK {
+	if here := geo.Parse(r); here.OK {
 		for i := range items {
-			items[i].DistanceKm = here.distanceFrom(items[i].Lat, items[i].Lng)
+			items[i].DistanceKm = here.DistanceFrom(items[i].Lat, items[i].Lng)
 		}
 	}
 	venues := make([]repository.VenueResponse, len(items))

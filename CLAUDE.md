@@ -83,7 +83,7 @@ fixtures. For a no-side-effect run: `env -u TEST_DATABASE_URL go test ./...`.
 ## Migrations
 
 `internal/migrations/NNN_name.sql`, embedded, forward-only, applied on startup.
-Next number: check `ls internal/migrations/ | tail -1` (currently at 061).
+Next number: check `ls internal/migrations/ | tail -1` (currently at 062).
 
 House style: `IF NOT EXISTS`, `UUID PRIMARY KEY DEFAULT gen_random_uuid()`,
 `DECIMAL(10,2)` for money, `TIMESTAMPTZ`, `VARCHAR` + inline `CHECK` for enums,
@@ -274,17 +274,68 @@ venue is not a second chance to review it.
 `name ILIKE '%q%'` for venue text: that was the old match, and `palce` or
 `grnd palace` returned 0 results.
 
-- **Fuzzy on name + city, substring only on description.** `word_similarity`
-  over `name||' '||city` at **0.4**, measured on live data: real typos score
-  0.43-0.83, the closest unrelated venue 0.33. A trigram score over a paragraph
-  matches nearly anything, so descriptions stay `ILIKE`.
-- **Search text with no explicit `sort` ranks best match first**; an explicit
-  sort still wins.
-- **Postgres, not Elasticsearch, deliberately.** 52 live venues; ES would mean a
-  JVM service, a sync pipeline for every facility write, and drift handling, for
-  what pg_trgm does in one file. Revisit past ~50k venues: the per-row score has
-  no index (see the `ponytail:` note in the package).
-- Not handled: synonyms and renames (`banglore` -> Bengaluru scores 0.11).
+- **Every word must match** - by full text (`facilities.search_vector`: name,
+  city, type words, amenities, description; stemmed, prefix, stop words
+  ignored) or as a typo of a name/city word (`word_similarity` >= **0.4**; real
+  typos score 0.40-0.83, the closest unrelated venue 0.33). Matching the phrase
+  as a whole let one word carry it: `palace bengaluru` returned 38 venues (every
+  Bengaluru one), `palace mysuru` a Bengaluru palace. Now 5, and none.
+- **Nothing matched every word -> `LooseSQL`**, the old whole-phrase match, so
+  the screen is never empty; `/search/venues` then says `relaxed: true`.
+- **Bind `venuesearch.Clean(text)`, never raw text.** It is spliced into a
+  tsquery, and `grand & palace` is a tsquery syntax error -> 500.
+- **`search_vector` is kept by triggers** (migration 062) on `facilities`,
+  `facility_amenities` and amenity renames - not a generated column, since
+  amenities are another table. Every write path, `cmd/import` included, is
+  covered without remembering to.
+- **The typo prefilter needs `pg_trgm.word_similarity_threshold` on the
+  session** - `pkg/database` sets it (0.3). A pool built elsewhere silently
+  falls back to 0.6 and loses typo matches.
+- **`<%` binds as tightly as `||`**: the haystack is parenthesised, or
+  `p <% f.name||...` parses as `(p <% f.name)||...` and errors.
+- **An explicit `sort` leads; relevance breaks its ties**, then `f.id` so
+  paging is stable. `sort=RATING` uses `rating_score`, a Bayesian average
+  (five phantom 3.5 reviews): 4.6 from 200 beats 5.0 from 1; unreviewed = 3.5.
+- **Indexed**: GIN on `search_vector` and on the name+city expression,
+  partial btrees on price and `rating_score` for live venues. Verified as a
+  `BitmapOr` over both GINs; on 52 rows the planner rightly seq-scans anyway.
+- **Postgres, not Elasticsearch, deliberately.** ES would mean a JVM service,
+  a sync pipeline for every facility write, and drift handling.
+- **Old city names and synonyms live in `pkg/venuesearch/aliases.go`**, a
+  hardcoded list like `eventtypes`. Cities are *replaced* (bangalore ->
+  bengaluru, in the text and in `?city=`); venue words are *expanded*
+  (mandapam -> mandapam|hall|banquet|...), any one of which matches.
+- Not handled: occasion words in free text (`sangeet hall` matches the word,
+  not venues hosting Sangeet - that is `?eventType=`).
+
+### Search like the big apps
+
+`/search/venues` also takes, all optional:
+
+- **Dates** - `date`, `startDate`/`endDate` or `checkIn`/`checkOut`, `slot`,
+  `rooms`. `availableSQL` mirrors what booking enforces when it claims: a hall
+  needs at least one free half per day with no slot (any half, FULL_DAY, as
+  asked), an owner `BLOCKED` is taken; a hotel needs `rooms` free across its
+  room types every night. **A hotel with no room types is shown** (not stated
+  is not "full"). A past, malformed or >30-day range is a 400, never "no
+  filter".
+- **Distance** - `lat`/`lng`, `sort=DISTANCE`, `radiusKm` (cap 500, 400 out of
+  range). A venue without coordinates is never hidden by a radius; it sorts
+  last with no `distanceKm`.
+- **`facets`** on every response: type, event and amenity counts plus price
+  min/max. **Each single-choice facet ignores its own filter** (Booking.com
+  style): with HOTEL chosen, the type facet still counts halls, and the price
+  range ignores the budget. Event counts include venues declaring no events,
+  as the filter does.
+- **Popularity** - default rank is `rating_score + 0.25*ln(1 + bookings in 90
+  days)`, PENDING/CONFIRMED/COMPLETED; also `sort=POPULARITY`.
+- **`didYouMean`** - only when nothing matched every word, and only a
+  correction that *does* find venues. Offered, never applied.
+
+`/search/autocomplete` and `/suggestions` return **typed** items (`VENUE`,
+`CITY`, `CATEGORY`, `RECENT` with an empty `q`), cities first. "Hotels in
+Bengaluru" categories appear only when the query is just a city - for
+`grand palace bengaluru` they would push aside the venue being typed.
 
 ## Search history
 
@@ -557,9 +608,8 @@ position, and accepting it would put every Indian venue ~6000 km away.
 caller's distance is a per-venue field; the matrix is a separate thing and
 clients already read it.
 
-One helper, `parseUserLocation` + `distanceFrom` in
-`internal/facility/handler/userlocation.go`, so list, detail and compare cannot
-drift. `haversineKm` moved there from `compare.go`. Straight-line, not driving
+One helper, `geo.Parse` + `DistanceFrom` in `pkg/geo`, so list, detail,
+compare and `/search/venues` cannot drift. Straight-line, not driving
 distance — there is no routing service here.
 
 Duplicate ids are rejected rather than collapsed (comparing a venue with itself

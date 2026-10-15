@@ -858,20 +858,23 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	// Fixed parameter positions with a sentinel for "not filtering", rather than
 	// building the WHERE clause dynamically - every value stays a bound parameter,
 	// so no caller input can reach the SQL text.
-	f.Search = strings.TrimSpace(f.Search)
+	f.Search = venuesearch.Clean(f.Search)
+	f.City = venuesearch.City(f.City) // "Bangalore" lists Bengaluru's venues
 	args := []any{f.Type, f.City, f.OwnerID, f.Search, strings.ToUpper(strings.TrimSpace(f.EventType))}
 	// Columns are qualified with f. because facilityFrom joins users.
-	clause := ` WHERE f.is_deleted = FALSE
+	clause := func(match string) string {
+		return ` WHERE f.is_deleted = FALSE
 		AND ($1 = '' OR f.type = $1)
 		AND ($2 = '' OR LOWER(f.city) = LOWER($2))
 		AND ($3 = 0 OR f.owner_id = $3)
 		AND ($3 <> 0 OR ` + venuetype.LiveSQL("f") + `)
-		AND ` + venuesearch.MatchSQL("$4") + `
+		AND ` + match + `
 		AND ($5 = '' OR EXISTS (
 		      SELECT 1 FROM facility_events fe
 		       WHERE fe.facility_id = f.id AND fe.event_code = $5)
 		    OR NOT EXISTS (
 		      SELECT 1 FROM facility_events fe WHERE fe.facility_id = f.id))`
+	}
 
 	// eventType was parsed and passed down but never reached this WHERE, so
 	// ?eventType= returned every venue. A venue with no declared events still
@@ -883,14 +886,23 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 		order = venuesearch.ScoreSQL("$4") + " DESC, " + order
 	}
 
+	// Every word must match; only when nothing does, the looser whole-phrase
+	// match, as on /search/venues.
+	where := clause(venuesearch.MatchSQL("$4", f.Search))
 	var total int64
-	if err := r.db.QueryRow(ctx, `SELECT count(*)`+facilityFrom+clause, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, `SELECT count(*)`+facilityFrom+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
+	}
+	if total == 0 && f.Search != "" {
+		where = clause(venuesearch.LooseSQL("$4"))
+		if err := r.db.QueryRow(ctx, `SELECT count(*)`+facilityFrom+where, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	args = append(args, f.Size, httpx.Offset(f.Page, f.Size))
 	rows, err := r.db.Query(ctx,
-		`SELECT `+facilityCols+facilityFrom+clause+
+		`SELECT `+facilityCols+facilityFrom+where+
 			` ORDER BY `+order+` LIMIT $6 OFFSET $7`, args...)
 	if err != nil {
 		return nil, 0, err

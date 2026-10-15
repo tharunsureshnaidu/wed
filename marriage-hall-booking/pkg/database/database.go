@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuesearch"
 )
 
 func New(ctx context.Context, url string) (*pgxpool.Pool, error) {
@@ -27,6 +29,9 @@ func New(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "10s"
 	cfg.ConnConfig.RuntimeParams["lock_timeout"] = "5s"
 	cfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "30s"
+	// The indexed typo prefilter reads its threshold from the session, not
+	// the query; without this, search falls back to pg_trgm's stricter 0.6.
+	cfg.ConnConfig.RuntimeParams[venuesearch.PrefilterGUC] = venuesearch.PrefilterThreshold
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

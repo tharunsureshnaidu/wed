@@ -8,6 +8,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/geo"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
@@ -128,7 +129,7 @@ func (h *Handler) compareVenues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if here := parseUserLocation(r); here.OK {
+	if here := geo.Parse(r); here.OK {
 		req.UserLat = &here.Lat
 		req.UserLng = &here.Lng
 	}
@@ -170,7 +171,7 @@ func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var userLat, userLng *float64
-	if here := parseUserLocation(r); here.OK {
+	if here := geo.Parse(r); here.OK {
 		userLat = &here.Lat
 		userLng = &here.Lng
 	}
@@ -247,11 +248,11 @@ func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	here := parseUserLocation(r)
+	here := geo.Parse(r)
 	venues := make([]compareVenue, 0, len(found))
 	for _, f := range found {
 		v := toCompareVenue(f)
-		v.DistanceKm = here.distanceFrom(f.Lat, f.Lng)
+		v.DistanceKm = here.DistanceFrom(f.Lat, f.Lng)
 		venues = append(venues, v)
 	}
 
@@ -502,7 +503,7 @@ func distanceMatrix(fs []repository.Facility) [][]*float64 {
 			if fs[i].Lat == nil || fs[i].Lng == nil || fs[j].Lat == nil || fs[j].Lng == nil {
 				continue
 			}
-			d := haversineKm(*fs[i].Lat, *fs[i].Lng, *fs[j].Lat, *fs[j].Lng)
+			d := geo.HaversineKm(*fs[i].Lat, *fs[i].Lng, *fs[j].Lat, *fs[j].Lng)
 			out[i][j] = &d
 		}
 	}
