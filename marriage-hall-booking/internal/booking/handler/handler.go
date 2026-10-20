@@ -33,12 +33,37 @@ func New(svc *service.Service, signer *jwt.Signer) *Handler {
 	return &Handler{svc: svc, signer: signer}
 }
 
+// isCustomer reports whether the context represents a customer who is allowed to
+// make a booking: the user must hold ROLE_CUSTOMER, and must not hold administrative
+// or venue-owner roles (neither ROLE_ADMIN, ROLE_SUPER_ADMIN, nor ROLE_HALL_OWNER).
+func isCustomer(ctx context.Context) bool {
+	return middleware.HasRole(ctx, domain.RoleCustomer) &&
+		!middleware.HasRole(ctx, domain.RoleHallOwner) &&
+		!middleware.HasRole(ctx, domain.RoleAdmin) &&
+		!middleware.HasRole(ctx, domain.RoleSuperAdmin)
+}
+
+// requireCustomer restricts booking creation routes to customers only:
+// venue owners and administrators cannot book halls or hotels.
+func requireCustomer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isCustomer(r.Context()) {
+			response.Error(w, http.StatusForbidden, "Only customers can book a hotel or hall", "CUSTOMER_ONLY")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (h *Handler) Register(mux *http.ServeMux) {
 	auth := middleware.RequireAuth(h.signer)
-	mux.Handle("POST /api/v1/bookings/venues", auth(http.HandlerFunc(h.createVenue)))
-	mux.Handle("POST /api/v1/bookings", auth(http.HandlerFunc(h.createVenue)))
-	mux.Handle("POST /api/v1/bookings/halls", auth(http.HandlerFunc(h.createVenue)))
-	mux.Handle("POST /api/v1/bookings/hotels", auth(http.HandlerFunc(h.createHotel)))
+	customer := func(fn http.HandlerFunc) http.Handler {
+		return middleware.Chain(fn, auth, requireCustomer)
+	}
+	mux.Handle("POST /api/v1/bookings/venues", customer(h.createVenue))
+	mux.Handle("POST /api/v1/bookings", customer(h.createVenue))
+	mux.Handle("POST /api/v1/bookings/halls", customer(h.createVenue))
+	mux.Handle("POST /api/v1/bookings/hotels", customer(h.createHotel))
 	mux.Handle("GET /api/v1/bookings", auth(http.HandlerFunc(h.list)))
 	mux.Handle("GET /api/v1/bookings/{id}", auth(http.HandlerFunc(h.get)))
 	mux.Handle("POST /api/v1/bookings/{id}/cancel", auth(http.HandlerFunc(h.cancel)))
@@ -142,6 +167,10 @@ func hhmm(v string) (string, bool) {
 }
 
 func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
+	if !isCustomer(r.Context()) {
+		response.Error(w, http.StatusForbidden, "Only customers can book a hotel or hall", "CUSTOMER_ONLY")
+		return
+	}
 	var req venueReq
 	if !httpx.Decode(w, r, &req) {
 		return
@@ -300,6 +329,10 @@ type hotelReq struct {
 }
 
 func (h *Handler) createHotel(w http.ResponseWriter, r *http.Request) {
+	if !isCustomer(r.Context()) {
+		response.Error(w, http.StatusForbidden, "Only customers can book a hotel or hall", "CUSTOMER_ONLY")
+		return
+	}
 	var req hotelReq
 	if !httpx.Decode(w, r, &req) {
 		return
