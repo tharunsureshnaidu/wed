@@ -10,6 +10,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 // Price preview for the review screen.
@@ -27,10 +28,14 @@ const (
 )
 
 type quoteReq struct {
+	VenueID    string   `json:"venueId"`
 	HallID     string   `json:"hallId"`
+	HotelID    string   `json:"hotelId"`
 	FacilityID string   `json:"facilityId"`
 	StartDate  string   `json:"startDate"`
 	EndDate    string   `json:"endDate"`
+	CheckIn    string   `json:"checkIn"`
+	CheckOut   string   `json:"checkOut"`
 	StartTime  string   `json:"startTime"`
 	EndTime    string   `json:"endTime"`
 	EventDate  string   `json:"eventDate"` // legacy single-date form
@@ -46,18 +51,37 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &req) {
 		return
 	}
-	facilityID := req.HallID
+	facilityID := req.VenueID
 	if facilityID == "" {
 		facilityID = req.FacilityID
+	}
+	if facilityID == "" {
+		facilityID = req.HallID
+	}
+	if facilityID == "" {
+		facilityID = req.HotelID
 	}
 
 	var e validate.Errors
 	if !httpx.ValidUUID(facilityID) {
-		e = append(e, "A valid hallId is required")
+		if req.HallID != "" {
+			e = append(e, "A valid hallId is required")
+		} else if req.HotelID != "" {
+			e = append(e, "A valid hotelId is required")
+		} else {
+			e = append(e, "A valid venueId is required")
+		}
 	}
-	rawStart, rawEnd := req.StartDate, req.EndDate
+	rawStart := req.StartDate
+	if rawStart == "" {
+		rawStart = req.CheckIn
+	}
 	if rawStart == "" {
 		rawStart = req.EventDate
+	}
+	rawEnd := req.EndDate
+	if rawEnd == "" {
+		rawEnd = req.CheckOut
 	}
 	if rawEnd == "" {
 		rawEnd = rawStart
@@ -73,21 +97,35 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	if err == nil && err2 == nil && end.Before(start) {
 		e = append(e, "endDate cannot be before startDate")
 	}
-	startTime, ok1 := hhmm(req.StartTime)
-	endTime, ok2 := hhmm(req.EndTime)
-	if !ok1 || !ok2 {
-		e = append(e, "startTime and endTime must be HH:MM")
+	var startTime, endTime string
+	if req.StartTime != "" {
+		st, ok := hhmm(req.StartTime)
+		if !ok {
+			e = append(e, "startTime must be HH:MM")
+		} else {
+			startTime = st
+		}
+	}
+	if req.EndTime != "" {
+		et, ok := hhmm(req.EndTime)
+		if !ok {
+			e = append(e, "endTime must be HH:MM")
+		} else {
+			endTime = et
+		}
 	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
 	}
 
-	slot := req.SlotType
-	if startTime != "" {
-		slot = slotFor(startTime, endTime)
-	} else if slot == "" {
-		slot = "FULL_DAY"
+	slot := strings.ToUpper(strings.TrimSpace(req.SlotType))
+	if slot == "" {
+		if startTime != "" || endTime != "" {
+			slot = slotFor(startTime, endTime)
+		} else {
+			slot = "FULL_DAY"
+		}
 	}
 
 	var (
@@ -100,13 +138,13 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	)
 	if err := h.svc.Pool().QueryRow(r.Context(),
 		`SELECT name, city, base_price_per_day, capacity_pax, type, `+service.ActiveDiscountSQL+`
-		   FROM facilities WHERE id = $1 AND is_deleted = FALSE`,
+		   FROM facilities f WHERE id = $1 AND `+venuetype.LiveSQL("f"), // same rule as the booking
 		facilityID).Scan(&name, &city, &basePrice, &capacityPax, &facType, &discountPct); err != nil {
-		response.Error(w, http.StatusNotFound, "Hall not found", "HALL_NOT_FOUND")
+		response.Error(w, http.StatusNotFound, "Venue not found", "VENUE_NOT_FOUND")
 		return
 	}
-	if facType != "MARRIAGE_HALL" {
-		response.Error(w, http.StatusBadRequest, "Facility is not a marriage hall", "INVALID_HALL")
+	if facType != venuetype.StoredHall && facType != venuetype.Hotel {
+		response.Error(w, http.StatusBadRequest, "Facility is not a valid venue", "INVALID_VENUE")
 		return
 	}
 

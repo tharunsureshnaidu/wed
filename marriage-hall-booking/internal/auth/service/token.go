@@ -31,15 +31,11 @@ func NewTokenService(repo *repository.Repo, signer *jwt.Signer, refreshTTL time.
 // to the caller but only its SHA-256 hash is stored, so a database leak alone
 // does not yield usable tokens.
 func (s *TokenService) Issue(ctx context.Context, u *domain.User, ip, device string) (access, refresh string, err error) {
-	// Every session starts here - login, OTP verification and refresh alike -
-	// so this is where an earlier logout's cutoff must be lifted. Without it a
-	// user who logs out can never log back in: their new token's iat would
-	// still sit at or before the cutoff.
-	if s.revoker != nil {
-		if err := s.revoker.ClearFor(ctx, u.ID); err != nil {
-			logger.Warn("could not clear revocation cutoff", "userId", u.ID, logger.Err(err))
-		}
-	}
+	// Every session starts here - login, OTP verification and refresh alike.
+	// The new token's iat must land strictly after an earlier logout's cutoff,
+	// or a user who logs out could not log back in. The cutoff itself stays, so
+	// tokens from before it remain dead.
+	s.revoker.WaitPast(ctx, u.ID)
 
 	access, err = s.signer.Generate(u.Username(), strconv.FormatInt(u.ID, 10), u.AllRoles()...)
 	if err != nil {

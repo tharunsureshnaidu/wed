@@ -34,8 +34,21 @@ func Init(component string) {
 		level = l
 	}
 
+	// Production defaults to JSON: a log shipper needs it, and the text format
+	// is for a person tailing a terminal. LOG_FORMAT=text still forces text.
+	// Init runs before .env is loaded, so this sees the real environment -
+	// which is where a deployment sets APP_ENV (it is in config's envWins).
+	// Read directly, not via config.IsProduction: logger stays a leaf package.
+	format := strings.ToLower(os.Getenv("LOG_FORMAT"))
+	if format == "" {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) {
+		case "prod", "production":
+			format = "json"
+		}
+	}
+
 	var h slog.Handler
-	if strings.EqualFold(os.Getenv("LOG_FORMAT"), "json") {
+	if format == "json" {
 		h = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	} else {
 		h = &textHandler{level: level, out: os.Stdout}
@@ -43,9 +56,10 @@ func Init(component string) {
 	slog.SetDefault(slog.New(h).With(Component, component))
 }
 
-// textHandler prints "HH:MM:SS LEVEL component  message  key=value", which is
-// greppable by level and short enough to scan. slog's own TextHandler emits
-// logfmt with a full timestamp on every line, which is noisier to read.
+// textHandler prints "YYYY-MM-DD HH:MM:SS LEVEL component  message  key=value",
+// which is greppable by level and short enough to scan. The date is there
+// because logs/app.log spans days, and a bare time-of-day could not say which.
+// slog's own TextHandler emits logfmt, which is noisier to read.
 type textHandler struct {
 	level slog.Level
 	out   *os.File
@@ -57,7 +71,7 @@ func (h *textHandler) Enabled(_ context.Context, l slog.Level) bool { return l >
 
 func (h *textHandler) Handle(_ context.Context, r slog.Record) error {
 	var sb strings.Builder
-	sb.WriteString(r.Time.Format("15:04:05"))
+	sb.WriteString(r.Time.Format("2006-01-02 15:04:05"))
 	sb.WriteByte(' ')
 	sb.WriteString(fmt.Sprintf("%-5s", r.Level.String()))
 	sb.WriteByte(' ')
