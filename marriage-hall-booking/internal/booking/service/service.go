@@ -92,8 +92,11 @@ type VenueBookingRequest struct {
 	IdempotentKey string
 	// CouponCode is optional. It comes off the price after the venue's own
 	// advertised discount, and is redeemed in the booking's transaction.
-	CouponCode string
-	GuestName  *string
+	CouponCode       string
+	CouponCodes      []string
+	AdminCouponCode  string
+	VendorCouponCode string
+	GuestName        *string
 	GuestEmail *string
 	GuestPhone *string
 	// OverrideAmount is the price agreed through the quote flow. It is set only
@@ -222,15 +225,51 @@ func (s *Service) CreateVenueBooking(ctx context.Context, userID int64, req Venu
 		total, venueDiscount = *req.OverrideAmount, 0
 	}
 
+	codes := req.CouponCodes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(c, trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.CouponCode)
+	addCode(req.AdminCouponCode)
+	addCode(req.VendorCouponCode)
+
+	var appliedCoupons []coupon.AppliedCoupon
 	var couponID, couponCode string
+	var adminCouponID, vendorCouponID *string
+	var adminDiscount, vendorDiscount float64
 	couponDiscount := 0.0
-	if req.CouponCode != "" && req.OverrideAmount == nil {
-		c, d, err := s.PriceCoupon(ctx, req.CouponCode, req.FacilityID, total)
+	if len(codes) > 0 && req.OverrideAmount == nil {
+		applied, d, err := s.PriceCoupons(ctx, codes, req.FacilityID, total)
 		if err != nil {
 			return nil, err
 		}
-		couponID, couponCode, couponDiscount = c.ID, c.Code, d
+		appliedCoupons = applied
+		couponDiscount = d
 		total -= d
+		if len(applied) > 0 {
+			couponID = applied[0].Coupon.ID
+			var cs []string
+			for _, ac := range applied {
+				cs = append(cs, ac.Coupon.Code)
+				if ac.Scope == "ADMIN" {
+					adminCouponID = &ac.Coupon.ID
+					adminDiscount = ac.DiscountAmount
+				} else {
+					vendorCouponID = &ac.Coupon.ID
+					vendorDiscount = ac.DiscountAmount
+				}
+			}
+			couponCode = strings.Join(cs, ", ")
+		}
 	}
 
 	slot := strings.ToUpper(strings.TrimSpace(req.SlotType))
@@ -248,6 +287,11 @@ func (s *Service) CreateVenueBooking(ctx context.Context, userID int64, req Venu
 		HoldFor: 0, PackageIDs: req.PackageIDs, Addons: req.Addons, // no expiry: waits for the owner
 		DiscountAmount: venueDiscount + couponDiscount,
 		CouponID:       couponID, CouponCode: couponCode,
+		AppliedCoupons: appliedCoupons,
+		AdminCouponID:        adminCouponID,
+		AdminCouponDiscount:  adminDiscount,
+		VendorCouponID:       vendorCouponID,
+		VendorCouponDiscount: vendorDiscount,
 	})
 	switch {
 	case errors.Is(err, repository.ErrSlotTaken):
@@ -314,6 +358,20 @@ func (s *Service) PriceCoupon(ctx context.Context, code, facilityID string, amou
 	return c, c.Discount(amount), nil
 }
 
+// PriceCoupons checks up to 2 coupon codes (max 1 Admin and 1 Hall Owner) against
+// a venue and an amount, returning the breakdown and total discount.
+func (s *Service) PriceCoupons(ctx context.Context, codes []string, facilityID string, amount float64) ([]coupon.AppliedCoupon, float64, error) {
+	applied, totalDiscount, err := coupon.PriceCoupons(ctx, s.db, codes, facilityID, amount)
+	var ce *coupon.Error
+	if errors.As(err, &ce) {
+		return nil, 0, apperr.New(ce.Status, ce.Code, ce.Message)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	return applied, totalDiscount, nil
+}
+
 type HotelBookingRequest struct {
 	FacilityID    string
 	CheckIn       time.Time
@@ -324,7 +382,10 @@ type HotelBookingRequest struct {
 	GuestEmail    *string
 	GuestPhone    *string
 	// CouponCode is optional, applied as for a hall: after the venue discount.
-	CouponCode string
+	CouponCode       string
+	CouponCodes      []string
+	AdminCouponCode  string
+	VendorCouponCode string
 }
 
 func (s *Service) CreateHotelBooking(ctx context.Context, userID int64, req HotelBookingRequest) (*repository.Booking, error) {
@@ -398,15 +459,51 @@ func (s *Service) CreateHotelBooking(ctx context.Context, userID int64, req Hote
 		venueDiscount += (price - rate) * units
 	}
 
+	codes := req.CouponCodes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(c, trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.CouponCode)
+	addCode(req.AdminCouponCode)
+	addCode(req.VendorCouponCode)
+
+	var appliedCoupons []coupon.AppliedCoupon
 	var couponID, couponCode string
+	var adminCouponID, vendorCouponID *string
+	var adminDiscount, vendorDiscount float64
 	couponDiscount := 0.0
-	if req.CouponCode != "" {
-		c, d, err := s.PriceCoupon(ctx, req.CouponCode, req.FacilityID, total)
+	if len(codes) > 0 {
+		applied, d, err := s.PriceCoupons(ctx, codes, req.FacilityID, total)
 		if err != nil {
 			return nil, err
 		}
-		couponID, couponCode, couponDiscount = c.ID, c.Code, d
+		appliedCoupons = applied
+		couponDiscount = d
 		total -= d
+		if len(applied) > 0 {
+			couponID = applied[0].Coupon.ID
+			var cs []string
+			for _, ac := range applied {
+				cs = append(cs, ac.Coupon.Code)
+				if ac.Scope == "ADMIN" {
+					adminCouponID = &ac.Coupon.ID
+					adminDiscount = ac.DiscountAmount
+				} else {
+					vendorCouponID = &ac.Coupon.ID
+					vendorDiscount = ac.DiscountAmount
+				}
+			}
+			couponCode = strings.Join(cs, ", ")
+		}
 	}
 
 	b, err := s.repo.CreateHotelBooking(ctx, repository.HotelBookingInput{
@@ -416,6 +513,11 @@ func (s *Service) CreateHotelBooking(ctx context.Context, userID int64, req Hote
 		HoldFor: holdWindow, Rooms: req.Rooms,
 		DiscountAmount: venueDiscount + couponDiscount,
 		CouponID:       couponID, CouponCode: couponCode,
+		AppliedCoupons: appliedCoupons,
+		AdminCouponID:        adminCouponID,
+		AdminCouponDiscount:  adminDiscount,
+		VendorCouponID:       vendorCouponID,
+		VendorCouponDiscount: vendorDiscount,
 	})
 	switch {
 	case errors.Is(err, repository.ErrNoInventory):
@@ -453,7 +555,7 @@ func (s *Service) Get(ctx context.Context, id string, userID int64, isAdmin bool
 	// Enriched for the same reason as List: the detail screen shows the venue,
 	// and a Rate button that depends on review state.
 	if err := s.repo.Enrich(ctx, userID, []*repository.Booking{b}); err != nil {
-		logger.Error("bookings: enrich detail", "bookingId", id, logger.Err(err))
+		logger.Error("bookings: enrich detail", "bookingId", b.ID, logger.Err(err))
 	}
 	// A booking is readable by the customer who made it, the facility owner, or an admin.
 	isOwnerOrAdmin := isAdmin

@@ -222,6 +222,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	var e validate.Errors
 	from, until := req.validateInto(&e)
+	if req.FacilityID == nil || strings.TrimSpace(*req.FacilityID) == "" {
+		e.Required("FacilityId", "")
+	} else if !httpx.ValidUUID(*req.FacilityID) {
+		e = append(e, "facilityId must be a valid id")
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -237,17 +242,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			"Create your vendor business first (PUT /api/v1/vendors/me)", "VENDOR_REQUIRED")
 		return
 	}
-	// An admin's coupon here must name a venue. One without used to mean
-	// "platform-wide" with no venue type, so it discounted hotels as well.
-	if vendorID == nil && (req.FacilityID == nil || *req.FacilityID == "") {
-		response.Error(w, http.StatusBadRequest,
-			"facilityId is required. For a coupon on every marriage hall use POST /api/v1/admin/coupons",
-			"VALIDATION_ERROR")
-		return
-	}
 	// A vendor may only scope a coupon to a venue they own; an admin may scope
-	// it anywhere. Checked before the insert so the coupon is never created.
-	if req.FacilityID != nil && *req.FacilityID != "" && vendorID != nil {
+	// it to any existing venue. Checked before the insert so the coupon is never created.
+	if vendorID != nil {
 		var owns bool
 		if err := h.db.QueryRow(r.Context(),
 			`SELECT EXISTS(SELECT 1 FROM facilities f JOIN vendors v ON v.id = $2
@@ -259,6 +256,18 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		if !owns {
 			response.Error(w, http.StatusForbidden,
 				"You do not own that facility", "NOT_FACILITY_OWNER")
+			return
+		}
+	} else {
+		var exists bool
+		if err := h.db.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM facilities WHERE id = $1 AND is_deleted = FALSE)`,
+			*req.FacilityID).Scan(&exists); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if !exists {
+			response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
 			return
 		}
 	}
@@ -466,7 +475,16 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 // facilityId, the ones valid at every marriage hall. Exhausted and expired
 // coupons are filtered in SQL, so the list never offers a code checkout rejects.
 func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
-	facilityID := r.URL.Query().Get("facilityId")
+	facilityID := strings.TrimSpace(r.URL.Query().Get("facilityId"))
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("venueId"))
+	}
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("hotelId"))
+	}
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("hallId"))
+	}
 	// Without a venue: the platform-wide offers - every-hall coupons and the
 	// ALL-venue ones, which would otherwise be invisible on this screen even
 	// though checkout accepts them everywhere. With a venue: whatever applies
@@ -490,6 +508,13 @@ func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
 		}
 		join = `JOIN facilities f ON f.id = $1 AND f.is_deleted = FALSE`
 		where, args = coupon.AppliesSQL, []any{facilityID}
+	} else if vt := strings.TrimSpace(r.URL.Query().Get("venueType")); vt != "" {
+		upper := strings.ToUpper(vt)
+		if upper == venuetype.Hotel {
+			where, args = `c.facility_type IN ($1, $2)`, []any{venuetype.Hotel, scopeAll}
+		} else if upper == venuetype.Hall || upper == venuetype.StoredHall {
+			where, args = `c.facility_type IN ($1, $2)`, []any{hallType, scopeAll}
+		}
 	}
 	rows, err := h.db.Query(r.Context(), `
 		SELECT c.id::text, c.code, c.description, c.discount_type, c.discount_value,
@@ -658,12 +683,19 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request, platform bool) 
 }
 
 type validateReq struct {
-	Code       string  `json:"code"`
-	Amount     float64 `json:"amount"`
-	FacilityID *string `json:"facilityId"`
+	Code             string   `json:"code"`
+	Codes            []string `json:"codes"`
+	AdminCouponCode  *string  `json:"adminCouponCode"`
+	VendorCouponCode *string  `json:"vendorCouponCode"`
+	Amount           float64  `json:"amount"`
+	FacilityID       *string  `json:"facilityId"`
+	VenueID          *string  `json:"venueId"`
+	HotelID          *string  `json:"hotelId"`
+	HallID           *string  `json:"hallId"`
 }
 
-// validateCode prices a coupon against an amount at one venue.
+// validateCode prices one or more coupon codes against an amount at one venue.
+// Supports applying multiple coupons (e.g. 1 Admin coupon + 1 Hall Owner coupon).
 //
 // amount is what the coupon comes off: the price after the venue's own
 // advertised discount, as the booking applies it. The discount is always
@@ -678,11 +710,45 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var e validate.Errors
-	e.Required("Code", req.Code)
+	targetFacilityID := ""
+	if req.FacilityID != nil && strings.TrimSpace(*req.FacilityID) != "" {
+		targetFacilityID = strings.TrimSpace(*req.FacilityID)
+	} else if req.VenueID != nil && strings.TrimSpace(*req.VenueID) != "" {
+		targetFacilityID = strings.TrimSpace(*req.VenueID)
+	} else if req.HotelID != nil && strings.TrimSpace(*req.HotelID) != "" {
+		targetFacilityID = strings.TrimSpace(*req.HotelID)
+	} else if req.HallID != nil && strings.TrimSpace(*req.HallID) != "" {
+		targetFacilityID = strings.TrimSpace(*req.HallID)
+	}
+
+	codes := req.Codes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(strings.TrimSpace(c), trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.Code)
+	if req.AdminCouponCode != nil {
+		addCode(*req.AdminCouponCode)
+	}
+	if req.VendorCouponCode != nil {
+		addCode(*req.VendorCouponCode)
+	}
+
+	if len(codes) == 0 {
+		e.Required("Code", req.Code)
+	}
 	if req.Amount <= 0 {
 		e = append(e, "amount must be greater than 0")
 	}
-	if req.FacilityID == nil || !httpx.ValidUUID(*req.FacilityID) {
+	if targetFacilityID == "" || !httpx.ValidUUID(targetFacilityID) {
 		e = append(e, "facilityId is required")
 	}
 	if len(e) > 0 {
@@ -690,10 +756,12 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c, err := coupon.Load(r.Context(), h.db, req.Code, *req.FacilityID)
-	if err == nil {
-		err = c.Check(req.Amount)
+	if len(codes) > 2 {
+		response.Error(w, http.StatusBadRequest, "Maximum 2 coupons can be applied per booking", "COUPON_LIMIT_EXCEEDED")
+		return
 	}
+
+	applied, totalDiscount, err := coupon.PriceCoupons(r.Context(), h.db, codes, targetFacilityID, req.Amount)
 	var ce *coupon.Error
 	if errors.As(err, &ce) {
 		response.Error(w, ce.Status, ce.Message, ce.Code)
@@ -703,10 +771,43 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	discount := c.Discount(req.Amount)
+
+	var couponsBreakdown []map[string]any
+	var primaryID, primaryCode string
+	var adminCouponID, vendorCouponID *string
+	var adminDiscount, vendorDiscount float64
+	for _, ac := range applied {
+		if primaryID == "" {
+			primaryID = ac.Coupon.ID
+			primaryCode = ac.Coupon.Code
+		}
+		if ac.Scope == coupon.ScopeAdmin {
+			cid := ac.Coupon.ID
+			adminCouponID = &cid
+			adminDiscount = ac.DiscountAmount
+		} else if ac.Scope == coupon.ScopeVendor {
+			cid := ac.Coupon.ID
+			vendorCouponID = &cid
+			vendorDiscount = ac.DiscountAmount
+		}
+		couponsBreakdown = append(couponsBreakdown, map[string]any{
+			"couponId":       ac.Coupon.ID,
+			"code":           ac.Coupon.Code,
+			"scope":          ac.Scope,
+			"discountAmount": ac.DiscountAmount,
+		})
+	}
+
 	response.OK(w, "Coupon applied", map[string]any{
-		"couponId": c.ID, "code": c.Code,
-		"discountAmount": discount, "finalAmount": req.Amount - discount,
+		"couponId":             primaryID,
+		"code":                 primaryCode,
+		"adminCouponId":        adminCouponID,
+		"adminCouponDiscount":  adminDiscount,
+		"vendorCouponId":       vendorCouponID,
+		"vendorCouponDiscount": vendorDiscount,
+		"discountAmount":       totalDiscount,
+		"finalAmount":          req.Amount - totalDiscount,
+		"coupons":              couponsBreakdown,
 	})
 }
 
@@ -759,6 +860,11 @@ func optLocation(r *http.Request) (lat, lng *float64) {
 // 1. User has location AND Facility has location: included ONLY if distance <= 50 km.
 // 2. User has NO location (lat/lng is null) OR Facility has NO location: ALWAYS INCLUDED.
 // 3. Platform-wide coupons (facilityId is null): ALWAYS INCLUDED.
+//
+// Optional query parameter:
+// - venueType=HALL|HOTEL  narrows results to coupons applicable to that venue
+//   type only. Without it every live coupon in range is returned, which is the
+//   historic behaviour preserved for backward compatibility.
 func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserID(r.Context())
 
@@ -782,6 +888,50 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 		radius = km * 1000
 	}
 
+	// venueType narrows the coupon list to coupons that apply to that venue
+	// type. A nil value means "return all" (backward-compatible default).
+	var storedVenueType *string
+	if vt := strings.TrimSpace(r.URL.Query().Get("venueType")); vt != "" {
+		upper := strings.ToUpper(vt)
+		if !venuetype.Valid(upper) {
+			response.Error(w, http.StatusBadRequest,
+				"venueType must be HALL or HOTEL", "VALIDATION_ERROR")
+			return
+		}
+		s := venuetype.Stored(upper)
+		storedVenueType = &s
+	}
+
+	facilityID := strings.TrimSpace(r.URL.Query().Get("facilityId"))
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("venueId"))
+	}
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("hotelId"))
+	}
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("hallId"))
+	}
+	var targetFacilityID *string
+	if facilityID != "" {
+		if !httpx.ValidUUID(facilityID) {
+			response.Error(w, http.StatusBadRequest, "facilityId must be a valid id", "VALIDATION_ERROR")
+			return
+		}
+		var exists bool
+		if err := h.db.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM facilities WHERE id = $1 AND is_deleted = FALSE)`,
+			facilityID).Scan(&exists); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if !exists {
+			response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
+			return
+		}
+		targetFacilityID = &facilityID
+	}
+
 	rows, err := h.db.Query(r.Context(), `
 		WITH me AS (
 		    SELECT COALESCE($3::double precision, up.lat) AS lat,
@@ -803,24 +953,47 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 		  FROM coupons c
 		  CROSS JOIN me
 		  LEFT JOIN facilities f ON f.id = c.facility_id AND `+venuetype.LiveSQL("f")+`
+		  LEFT JOIN facilities target_f ON target_f.id = $6::uuid AND target_f.is_deleted = FALSE
 		 WHERE `+coupon.LiveSQL+`
 		   AND (c.usage_limit IS NULL OR c.used_count < c.usage_limit)
 		   -- A venue coupon whose venue is gone or not live is one checkout
 		   -- refuses; offering it here was a code that could never be used.
 		   AND (c.facility_id IS NULL OR f.id IS NOT NULL)
 		   -- A venue-scoped coupon is hidden only when we can prove it is far
-		   -- away. No location on either side means "not stated", never "no":
-		   -- hiding offers because a phone refused GPS looks like a broken
-		   -- screen, not a filter.
+		   -- away. If target facility is specified, do not hide the venue's own coupon due to remote GPS.
 		   AND (
-		     c.facility_id IS NULL
+		     $6::uuid IS NOT NULL
+		     OR c.facility_id IS NULL
 		     OR me.lat IS NULL OR me.lng IS NULL
 		     OR f.lat IS NULL OR f.lng IS NULL
 		     OR earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision),
 		                       ll_to_earth(me.lat, me.lng)) <= $2
 		   )
+		   -- Target facility coupon scope check
+		   AND (
+		     $6::uuid IS NULL OR (
+		       CASE
+		         WHEN c.vendor_id IS NOT NULL THEN (c.facility_id IS NOT NULL AND c.facility_id = target_f.id)
+		         WHEN c.facility_id IS NOT NULL THEN c.facility_id = target_f.id
+		         WHEN c.facility_type = 'ALL' THEN TRUE
+		         ELSE (c.facility_type = target_f.type OR (c.facility_type = 'HALL' AND target_f.type = 'MARRIAGE_HALL') OR (c.facility_type = 'MARRIAGE_HALL' AND target_f.type = 'HALL'))
+		       END
+		     )
+		   )
+		   -- venueType filter: when $5 is NULL every coupon passes through
+		   -- (backward-compatible). When set, only coupons that can actually be
+		   -- used at that venue type are shown:
+		   --   ALL admin coupons apply everywhere.
+		   --   Type-scoped admin coupons must match the requested type.
+		   --   Venue-specific coupons are filtered by the joined facility's type.
+		   AND (
+		     $5::text IS NULL
+		     OR c.facility_type = 'ALL'
+		     OR c.facility_type = $5
+		     OR (c.facility_id IS NOT NULL AND f.type = $5)
+		   )
 		 ORDER BY distance_km NULLS LAST, c.created_at DESC`,
-		userID, radius, lat, lng)
+		userID, radius, lat, lng, storedVenueType, targetFacilityID)
 	if err != nil {
 		httpx.Fail(w, err)
 		return

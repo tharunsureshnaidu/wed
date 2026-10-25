@@ -2,8 +2,12 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -37,12 +41,14 @@ type BookingUser struct {
 }
 
 type Booking struct {
-	ID         string       `json:"id"`
-	UserID     int64        `json:"userId"`
-	User       *BookingUser `json:"user,omitempty"`
-	TargetType string       `json:"targetType"`
-	TargetID   string       `json:"targetId"`
-	CheckIn    time.Time    `json:"checkIn"`
+	ID               string          `json:"id"`
+	ReferenceID      string          `json:"referenceId"`
+	BookingReference string          `json:"bookingReference,omitempty"`
+	UserID           int64           `json:"userId"`
+	User             *BookingUser    `json:"user,omitempty"`
+	TargetType       string          `json:"targetType"`
+	TargetID         string          `json:"targetId"`
+	CheckIn          time.Time       `json:"checkIn"`
 	// StartDate/EndDate are checkIn/checkOut under the names the booking screen
 	// uses; both spellings are returned so neither client has to translate.
 	StartDate  time.Time `json:"startDate"`
@@ -61,24 +67,59 @@ type Booking struct {
 	// already reviewed this venue. Reviews are unique per (user, facility),
 	// not per booking, so a second booking at the same hall is not a second
 	// chance to review it.
-	CanReview       bool       `json:"canReview"`
-	HasReviewed     bool       `json:"hasReviewed"`
-	MyRating        *int       `json:"myRating"`
-	MyReviewID      *string    `json:"myReviewId"`
-	EventType       *string    `json:"eventType"`
-	SlotType        *string    `json:"slotType,omitempty"`
-	TotalAmount     float64    `json:"totalAmount"`
-	DiscountAmount  float64    `json:"discountAmount"`
-	CouponCode      *string    `json:"couponCode"`
-	PaidAmount      float64    `json:"paidAmount"`
-	Status          string     `json:"status"`
-	RejectionReason *string    `json:"rejectionReason"`
-	IdempotentKey   *string    `json:"idempotentKey,omitempty"`
-	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
-	GuestName       *string    `json:"guestName,omitempty"`
-	GuestEmail      *string    `json:"guestEmail,omitempty"`
-	GuestPhone      *string    `json:"guestPhone,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
+	CanReview       bool            `json:"canReview"`
+	HasReviewed     bool            `json:"hasReviewed"`
+	MyRating        *int            `json:"myRating"`
+	MyReviewID      *string         `json:"myReviewId"`
+	EventType       *string         `json:"eventType"`
+	SlotType        *string         `json:"slotType,omitempty"`
+	TotalAmount          float64          `json:"totalAmount"`
+	DiscountAmount       float64          `json:"discountAmount"`
+	CouponCode           *string          `json:"couponCode"`
+	PaidAmount           float64          `json:"paidAmount"`
+	Status               string           `json:"status"`
+	RejectionReason      *string          `json:"rejectionReason"`
+	IdempotentKey        *string          `json:"idempotentKey,omitempty"`
+	ExpiresAt            *time.Time       `json:"expiresAt,omitempty"`
+	GuestName            *string          `json:"guestName,omitempty"`
+	GuestEmail           *string          `json:"guestEmail,omitempty"`
+	GuestPhone           *string          `json:"guestPhone,omitempty"`
+	CreatedAt            time.Time        `json:"createdAt"`
+	Coupons              []BookingCoupon  `json:"coupons,omitempty"`
+	Payments             []BookingPayment `json:"payments,omitempty"`
+	AdminCouponID        *string          `json:"adminCouponId,omitempty"`
+	AdminCouponDiscount  float64          `json:"adminCouponDiscount"`
+	VendorCouponID       *string          `json:"vendorCouponId,omitempty"`
+	VendorCouponDiscount float64          `json:"vendorCouponDiscount"`
+}
+
+type BookingPayment struct {
+	ID               string    `json:"id"`
+	Amount           float64   `json:"amount"`
+	Currency         string    `json:"currency"`
+	Status           string    `json:"status"`
+	Gateway          string    `json:"gateway"`
+	GatewayOrderID   *string   `json:"gatewayOrderId,omitempty"`
+	GatewayPaymentID *string   `json:"gatewayPaymentId,omitempty"`
+	PaymentType      string    `json:"paymentType"`
+	CreatedAt        time.Time `json:"createdAt"`
+}
+
+// GenerateReferenceID generates a unique, human-readable hash ID for customer support
+// and booking references (e.g. "BK-A8F3D2C1E4").
+func GenerateReferenceID() string {
+	b := make([]byte, 5) // 5 bytes = 10 hex characters
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("BK-%010X", time.Now().UnixNano()%0xFFFFFFFFFF)
+	}
+	return "BK-" + strings.ToUpper(hex.EncodeToString(b))
+}
+
+type BookingCoupon struct {
+	CouponID       string  `json:"couponId"`
+	CouponCode     string  `json:"couponCode"`
+	CouponType     string  `json:"couponType"`
+	DiscountAmount float64 `json:"discountAmount"`
 }
 
 const cols = `id, user_id, target_type, target_id, check_in, check_out, slot_type,
@@ -88,7 +129,9 @@ const cols = `id, user_id, target_type, target_id, check_in, check_out, slot_typ
 	room_count, coupon_code,
 	CASE WHEN status = 'REJECTED' THEN COALESCE(rejection_reason, (
 		SELECT reason FROM booking_status_history WHERE booking_id = bookings.id AND to_status = 'REJECTED' ORDER BY id DESC LIMIT 1
-	)) ELSE NULL END`
+	)) ELSE NULL END, COALESCE(reference_id, ''),
+	admin_coupon_id::text, COALESCE(admin_coupon_discount, 0),
+	vendor_coupon_id::text, COALESCE(vendor_coupon_discount, 0)`
 
 // ownerCols is cols with the bookings alias, for the owner listing's join
 // against facilities. Written out rather than derived: a column added to cols
@@ -101,7 +144,9 @@ const ownerCols = `b.id, b.user_id, b.target_type, b.target_id, b.check_in, b.ch
 	b.room_count, b.coupon_code,
 	CASE WHEN b.status = 'REJECTED' THEN COALESCE(b.rejection_reason, (
 		SELECT reason FROM booking_status_history WHERE booking_id = b.id AND to_status = 'REJECTED' ORDER BY id DESC LIMIT 1
-	)) ELSE NULL END`
+	)) ELSE NULL END, COALESCE(b.reference_id, ''),
+	b.admin_coupon_id::text, COALESCE(b.admin_coupon_discount, 0),
+	b.vendor_coupon_id::text, COALESCE(b.vendor_coupon_discount, 0)`
 
 func scan(row pgx.Row) (*Booking, error) {
 	var b Booking
@@ -109,16 +154,101 @@ func scan(row pgx.Row) (*Booking, error) {
 		&b.SlotType, &b.TotalAmount, &b.DiscountAmount, &b.PaidAmount, &b.Status,
 		&b.IdempotentKey, &b.ExpiresAt, &b.GuestName, &b.GuestEmail, &b.GuestPhone, &b.CreatedAt,
 		&b.StartTime, &b.EndTime, &b.GuestCount, &b.EventType, &b.RoomCount, &b.CouponCode,
-		&b.RejectionReason)
+		&b.RejectionReason, &b.ReferenceID,
+		&b.AdminCouponID, &b.AdminCouponDiscount, &b.VendorCouponID, &b.VendorCouponDiscount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	b.StartDate, b.EndDate = b.CheckIn, b.CheckOut
+	b.BookingReference = b.ReferenceID
 	return &b, err
 }
 
-func (r *Repo) Get(ctx context.Context, id string) (*Booking, error) {
-	return scan(r.db.QueryRow(ctx, `SELECT `+cols+` FROM bookings WHERE id = $1 AND is_deleted = FALSE`, id))
+func (r *Repo) GetCoupons(ctx context.Context, bookingID string) ([]BookingCoupon, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT coupon_id::text, coupon_code, coupon_type, discount_amount
+		  FROM booking_coupons
+		 WHERE booking_id = $1
+		 ORDER BY created_at ASC`, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []BookingCoupon
+	for rows.Next() {
+		var bc BookingCoupon
+		if err := rows.Scan(&bc.CouponID, &bc.CouponCode, &bc.CouponType, &bc.DiscountAmount); err != nil {
+			return nil, err
+		}
+		list = append(list, bc)
+	}
+	return list, nil
+}
+
+func (r *Repo) GetPayments(ctx context.Context, bookingID string) ([]BookingPayment, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, amount, currency, status, gateway, gateway_order_id, gateway_payment_id,
+		       COALESCE(payment_type, 'ONLINE'), created_at
+		  FROM payments
+		 WHERE booking_id = $1
+		 ORDER BY created_at ASC`, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []BookingPayment
+	for rows.Next() {
+		var p BookingPayment
+		if err := rows.Scan(&p.ID, &p.Amount, &p.Currency, &p.Status, &p.Gateway,
+			&p.GatewayOrderID, &p.GatewayPaymentID, &p.PaymentType, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, p)
+	}
+	return list, nil
+}
+
+func (r *Repo) Get(ctx context.Context, idOrRef string) (*Booking, error) {
+	if httpx.ValidUUID(idOrRef) {
+		b, err := scan(r.db.QueryRow(ctx, `SELECT `+cols+` FROM bookings WHERE id = $1 AND is_deleted = FALSE`, idOrRef))
+		if err == nil {
+			if coupons, err := r.GetCoupons(ctx, b.ID); err == nil && len(coupons) > 0 {
+				b.Coupons = coupons
+			}
+			if payments, err := r.GetPayments(ctx, b.ID); err == nil && len(payments) > 0 {
+				b.Payments = payments
+			}
+			return b, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+	return r.GetByReferenceID(ctx, idOrRef)
+}
+
+func (r *Repo) GetByReferenceID(ctx context.Context, ref string) (*Booking, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil, ErrNotFound
+	}
+	b, err := scan(r.db.QueryRow(ctx, `
+		SELECT `+cols+` FROM bookings
+		 WHERE (reference_id = $1 OR UPPER(reference_id) = UPPER($1) OR reference_id = 'BK-' || UPPER($1))
+		   AND is_deleted = FALSE
+		 LIMIT 1`, ref))
+	if err != nil {
+		return nil, err
+	}
+	if coupons, err := r.GetCoupons(ctx, b.ID); err == nil && len(coupons) > 0 {
+		b.Coupons = coupons
+	}
+	if payments, err := r.GetPayments(ctx, b.ID); err == nil && len(payments) > 0 {
+		b.Payments = payments
+	}
+	return b, nil
 }
 
 func (r *Repo) FindByIdempotencyKey(ctx context.Context, key string) (*Booking, error) {
@@ -169,9 +299,15 @@ type HallBookingInput struct {
 	Addons        []AddonLine
 	// DiscountAmount is everything taken off: the venue's advertised discount
 	// plus the coupon. TotalAmount is already net of it.
-	DiscountAmount float64
-	CouponID       string
-	CouponCode     string
+	DiscountAmount       float64
+	CouponID             string
+	CouponCode           string
+	AppliedCoupons       []coupon.AppliedCoupon
+	ReferenceID          string
+	AdminCouponID        *string
+	AdminCouponDiscount  float64
+	VendorCouponID       *string
+	VendorCouponDiscount float64
 }
 
 type AddonLine struct {
@@ -210,18 +346,54 @@ func (r *Repo) CreateHallBooking(ctx context.Context, in HallBookingInput) (*Boo
 		targetType = "HALL"
 	}
 
+	couponID := in.CouponID
+	couponCode := in.CouponCode
+	adminCouponID := in.AdminCouponID
+	adminDiscount := in.AdminCouponDiscount
+	vendorCouponID := in.VendorCouponID
+	vendorDiscount := in.VendorCouponDiscount
+	if len(in.AppliedCoupons) > 0 {
+		var codes []string
+		for _, ac := range in.AppliedCoupons {
+			codes = append(codes, ac.Coupon.Code)
+			if couponID == "" {
+				couponID = ac.Coupon.ID
+			}
+			if ac.Scope == "ADMIN" {
+				if adminCouponID == nil {
+					adminCouponID = &ac.Coupon.ID
+				}
+				adminDiscount = ac.DiscountAmount
+			} else {
+				if vendorCouponID == nil {
+					vendorCouponID = &ac.Coupon.ID
+				}
+				vendorDiscount = ac.DiscountAmount
+			}
+		}
+		couponCode = strings.Join(codes, ", ")
+	}
+
+	refID := in.ReferenceID
+	if refID == "" {
+		refID = GenerateReferenceID()
+	}
+
 	err = tx.QueryRow(ctx,
 		`INSERT INTO bookings (user_id, target_type, target_id, check_in, check_out,
 		    slot_type, total_amount, idempotent_key, expires_at, guest_name, guest_email,
 		    guest_phone, start_time, end_time, guest_count, event_type, room_count,
-		    discount_amount, coupon_id, coupon_code)
+		    discount_amount, coupon_id, coupon_code, reference_id,
+		    admin_coupon_id, admin_coupon_discount, vendor_coupon_id, vendor_coupon_discount)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),$9,$10,$11,$12,
 		         NULLIF($13,'')::time, NULLIF($14,'')::time, $15, $16, $17,
-		         $18, NULLIF($19,'')::uuid, NULLIF($20,'')) RETURNING id`,
+		         $18, NULLIF($19,'')::uuid, NULLIF($20,''), $21,
+		         NULLIF($22,'')::uuid, $23, NULLIF($24,'')::uuid, $25) RETURNING id`,
 		in.UserID, targetType, in.FacilityID, in.EventDate, in.EndDate, in.SlotType, in.TotalAmount,
 		in.IdempotentKey, expiresAt, in.GuestName, in.GuestEmail, in.GuestPhone,
 		in.StartTime, in.EndTime, in.GuestCount, in.EventType, in.RoomCount,
-		in.DiscountAmount, in.CouponID, in.CouponCode).Scan(&bookingID)
+		in.DiscountAmount, couponID, couponCode, refID,
+		adminCouponID, adminDiscount, vendorCouponID, vendorDiscount).Scan(&bookingID)
 	if err != nil {
 		if isUnique(err, "idx_bookings_idempotent") {
 			return nil, ErrDuplicateKey
@@ -300,9 +472,23 @@ func (r *Repo) CreateHallBooking(ctx context.Context, in HallBookingInput) (*Boo
 		 VALUES ($1, 'PENDING', 'Booking created')`, bookingID); err != nil {
 		return nil, err
 	}
-	// Redeemed in this transaction, so a slot clash above - or anything else
-	// that rolls it back - never spends a use.
-	if in.CouponID != "" {
+	if len(in.AppliedCoupons) > 0 {
+		for _, ac := range in.AppliedCoupons {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO booking_coupons (booking_id, coupon_id, coupon_code, coupon_type, discount_amount)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				bookingID, ac.Coupon.ID, ac.Coupon.Code, ac.Scope, ac.DiscountAmount); err != nil {
+				return nil, err
+			}
+			ok, err := coupon.Redeem(ctx, tx, ac.Coupon.ID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrCouponUnavailable
+			}
+		}
+	} else if in.CouponID != "" {
 		ok, err := coupon.Redeem(ctx, tx, in.CouponID)
 		if err != nil {
 			return nil, err
@@ -331,9 +517,15 @@ type HotelBookingInput struct {
 	HoldFor       time.Duration
 	Rooms         []RoomLine
 	// DiscountAmount, CouponID and CouponCode as for a hall booking.
-	DiscountAmount float64
-	CouponID       string
-	CouponCode     string
+	DiscountAmount       float64
+	CouponID             string
+	CouponCode           string
+	AppliedCoupons       []coupon.AppliedCoupon
+	ReferenceID          string
+	AdminCouponID        *string
+	AdminCouponDiscount  float64
+	VendorCouponID       *string
+	VendorCouponDiscount float64
 }
 
 type RoomLine struct {
@@ -360,15 +552,51 @@ func (r *Repo) CreateHotelBooking(ctx context.Context, in HotelBookingInput) (*B
 		expiresAt = &t
 	}
 
+	couponID := in.CouponID
+	couponCode := in.CouponCode
+	adminCouponID := in.AdminCouponID
+	adminDiscount := in.AdminCouponDiscount
+	vendorCouponID := in.VendorCouponID
+	vendorDiscount := in.VendorCouponDiscount
+	if len(in.AppliedCoupons) > 0 {
+		var codes []string
+		for _, ac := range in.AppliedCoupons {
+			codes = append(codes, ac.Coupon.Code)
+			if couponID == "" {
+				couponID = ac.Coupon.ID
+			}
+			if ac.Scope == "ADMIN" {
+				if adminCouponID == nil {
+					adminCouponID = &ac.Coupon.ID
+				}
+				adminDiscount = ac.DiscountAmount
+			} else {
+				if vendorCouponID == nil {
+					vendorCouponID = &ac.Coupon.ID
+				}
+				vendorDiscount = ac.DiscountAmount
+			}
+		}
+		couponCode = strings.Join(codes, ", ")
+	}
+
+	refID := in.ReferenceID
+	if refID == "" {
+		refID = GenerateReferenceID()
+	}
+
 	err = tx.QueryRow(ctx,
 		`INSERT INTO bookings (user_id, target_type, target_id, check_in, check_out,
 		    total_amount, idempotent_key, expires_at, guest_name, guest_email, guest_phone,
-		    discount_amount, coupon_id, coupon_code)
+		    discount_amount, coupon_id, coupon_code, reference_id,
+		    admin_coupon_id, admin_coupon_discount, vendor_coupon_id, vendor_coupon_discount)
 		 VALUES ($1,'HOTEL',$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,
-		         $11, NULLIF($12,'')::uuid, NULLIF($13,'')) RETURNING id`,
+		         $11, NULLIF($12,'')::uuid, NULLIF($13,''), $14,
+		         NULLIF($15,'')::uuid, $16, NULLIF($17,'')::uuid, $18) RETURNING id`,
 		in.UserID, in.FacilityID, in.CheckIn, in.CheckOut, in.TotalAmount,
 		in.IdempotentKey, expiresAt, in.GuestName, in.GuestEmail, in.GuestPhone,
-		in.DiscountAmount, in.CouponID, in.CouponCode).Scan(&bookingID)
+		in.DiscountAmount, couponID, couponCode, refID,
+		adminCouponID, adminDiscount, vendorCouponID, vendorDiscount).Scan(&bookingID)
 	if err != nil {
 		if isUnique(err, "idx_bookings_idempotent") {
 			return nil, ErrDuplicateKey
@@ -419,7 +647,23 @@ func (r *Repo) CreateHotelBooking(ctx context.Context, in HotelBookingInput) (*B
 		 VALUES ($1, 'PENDING', 'Booking created')`, bookingID); err != nil {
 		return nil, err
 	}
-	if in.CouponID != "" {
+	if len(in.AppliedCoupons) > 0 {
+		for _, ac := range in.AppliedCoupons {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO booking_coupons (booking_id, coupon_id, coupon_code, coupon_type, discount_amount)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				bookingID, ac.Coupon.ID, ac.Coupon.Code, ac.Scope, ac.DiscountAmount); err != nil {
+				return nil, err
+			}
+			ok, err := coupon.Redeem(ctx, tx, ac.Coupon.ID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrCouponUnavailable
+			}
+		}
+	} else if in.CouponID != "" {
 		ok, err := coupon.Redeem(ctx, tx, in.CouponID)
 		if err != nil {
 			return nil, err
