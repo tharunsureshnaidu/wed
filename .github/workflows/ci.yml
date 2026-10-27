@@ -1,0 +1,27 @@
+# Build, vet and test on every push and pull request.
+#
+# The tests run with no TEST_DATABASE_URL, so the database-backed ones skip.
+# ponytail: no postgres service yet - add one (and TEST_DATABASE_URL) when the
+# booking, payment and auth DB tests should gate merges too.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: marriage-hall-booking
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: marriage-hall-booking/go.mod
+          cache-dependency-path: marriage-hall-booking/go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...

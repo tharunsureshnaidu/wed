@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 )
 
 // Envelope mirrors the Java service's ApiResponse<T> field-for-field, so existing
@@ -47,10 +49,22 @@ func Error(w http.ResponseWriter, status int, message, errorCode string) {
 	})
 }
 
+// write encodes before sending the status line. Encoding straight into w sent
+// 200 first, so a value JSON cannot hold (a NaN distance) produced a 200 with
+// an empty body and the error went nowhere.
 func write(w http.ResponseWriter, status int, body Envelope) {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		logger.Error("response: encode", "status", status, logger.Err(err))
+		status = http.StatusInternalServerError
+		buf, _ = json.Marshal(Envelope{
+			Success: false, Message: "Something went wrong",
+			ErrorCode: "INTERNAL_ERROR", Timestamp: now(),
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(body)
+	w.Write(append(buf, '\n'))
 }
 
 // Java serialises LocalDateTime without a zone offset; match that format.

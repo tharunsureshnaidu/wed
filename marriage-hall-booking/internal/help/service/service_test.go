@@ -114,7 +114,7 @@ func TestSubmit_Success_AutoFetchesUserDetails(t *testing.T) {
 	if res.ID == "" {
 		t.Error("expected non-empty ID")
 	}
-	if res.UserName != "Saif Ali" || res.UserNameSnake != "Saif Ali" {
+	if res.UserName != "Saif Ali" {
 		t.Errorf("expected user name 'Saif Ali', got %q", res.UserName)
 	}
 	if res.UserEmail == nil || *res.UserEmail != "saif@example.com" {

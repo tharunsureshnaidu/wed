@@ -36,13 +36,17 @@ func TestRevokeThenReLogin(t *testing.T) {
 		t.Error("token issued before logout is still accepted")
 	}
 
-	// A new session clears the cutoff; its token must be accepted even though
-	// it is issued in the same millisecond range as the logout.
-	if err := v.ClearFor(ctx, uid); err != nil {
-		t.Fatal(err)
-	}
+	// A new session waits past the cutoff; its token must be accepted even
+	// though it is issued in the same millisecond range as the logout.
+	v.WaitPast(ctx, uid)
 	if v.Revoked(ctx, uid, time.Now().UnixMilli()) {
 		t.Error("token from a fresh login rejected - user cannot log back in")
+	}
+
+	// ...and the login must not lift the cutoff for tokens from before it:
+	// that is what let a stolen token back in after a password reset.
+	if !v.Revoked(ctx, uid, issued) {
+		t.Error("a new login revived a token issued before the logout")
 	}
 }
 

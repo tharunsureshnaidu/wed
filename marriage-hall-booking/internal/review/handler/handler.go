@@ -64,6 +64,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if req.Rating < 1 || req.Rating > 5 {
 		e = append(e, "rating must be between 1 and 5")
 	}
+	if req.BookingID != nil && *req.BookingID == "" {
+		req.BookingID = nil
+	}
+	if req.BookingID != nil && !httpx.ValidUUID(*req.BookingID) {
+		e = append(e, "bookingId must be a valid id")
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -73,13 +79,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 	// A review must be earned: the reviewer needs a completed or confirmed
 	// booking at this facility. Without that check anyone could rate any venue,
-	// repeatedly, and the ratings would be worthless.
+	// repeatedly, and the ratings would be worthless. A bookingId, when sent,
+	// must be that booking - not someone else's, which the review would then
+	// point at.
 	var stayed bool
 	if err := h.db.QueryRow(r.Context(),
 		`SELECT EXISTS(SELECT 1 FROM bookings
 		   WHERE user_id = $1 AND target_id = $2
-		     AND status IN ('CONFIRMED','COMPLETED') AND is_deleted = FALSE)`,
-		userID, req.FacilityID).Scan(&stayed); err != nil {
+		     AND status IN ('CONFIRMED','COMPLETED') AND is_deleted = FALSE
+		     AND ($3::uuid IS NULL OR id = $3::uuid))`,
+		userID, req.FacilityID, req.BookingID).Scan(&stayed); err != nil {
 		httpx.Fail(w, err)
 		return
 	}
@@ -137,6 +146,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 // review rows here to derive it from, and the first review posted in this
 // system would otherwise replace "4.3 from 218 reviews" with "5.0 from 1".
 func (h *Handler) recalcRating(ctx context.Context, tx pgx.Tx, facilityID string) error {
+	// Lock the venue first. The UPDATE's subqueries read a snapshot taken when
+	// the statement starts; two approvals at one venue each counted without
+	// the other's row and the last write left the count one short. Taking the
+	// lock in its own statement means the UPDATE starts after the other commit.
+	if _, err := tx.Exec(ctx,
+		`SELECT 1 FROM facilities WHERE id = $1 FOR UPDATE`, facilityID); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx,
 		`UPDATE facilities f SET
 		    avg_rating = COALESCE((SELECT round(avg(rating)::numeric, 2) FROM reviews
@@ -191,6 +208,10 @@ func (h *Handler) listForFacility(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, "Reviews retrieved successfully", httpx.NewPaged(out, page, size, total))
 }

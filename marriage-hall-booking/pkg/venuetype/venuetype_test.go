@@ -53,3 +53,18 @@ func TestValid(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveSQLUsesAlias(t *testing.T) {
+	want := "f.is_deleted = FALSE AND f.status = 'APPROVED'"
+	if got := LiveSQL("f"); got != want {
+		t.Fatalf("LiveSQL(f) = %q", got)
+	}
+}
+
+func TestLiveOnlyApproved(t *testing.T) {
+	for status, want := range map[string]bool{"APPROVED": true, "PENDING": false, "BLOCKED": false, "REJECTED": false, "": false} {
+		if Live(status) != want {
+			t.Errorf("Live(%q) = %v, want %v", status, !want, want)
+		}
+	}
+}

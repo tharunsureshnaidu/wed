@@ -118,8 +118,9 @@ Feign client and never routed through the gateway. In a single binary they are
 direct function calls; exposing them would add 25 unauthenticated endpoints
 serving user and revenue data.
 
-**Search** runs on PostgreSQL with trigram indexes rather than Elasticsearch,
-which is not available here; recent searches, recently-viewed and trending use
+**Search** runs on PostgreSQL with `pg_trgm` rather than Elasticsearch: typos
+match (`palce` finds Grand Palace) and results rank by match quality, through
+one shared predicate in `pkg/venuesearch`; recent searches, recently-viewed and trending use
 Redis and `search_events` exactly as the Java service did. Every documented
 parameter — `q`, `city`, `venueType`, capacity and budget ranges, `amenities`
 (AND semantics, by name or code) and all five `sort` modes — is honoured.

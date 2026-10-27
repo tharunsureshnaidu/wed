@@ -49,6 +49,30 @@ const BODIES = {
     title: "Privacy Policy",
     content: "Updated: we now also record the device you signed in from.",
   },
+  "POST /api/v1/admin/faqs": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>To book a marriage hall, follow these steps:</p><ol><li>Browse available venues.</li><li>Select your preferred hall.</li><li>Choose your event date.</li><li>Submit your booking request.</li></ol><p>Our team will help you with the booking process.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "PUT /api/v1/admin/faqs/{faqId}": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>Follow these steps to book your venue:</p><ul><li>Choose a venue.</li><li>Select your event date.</li><li>Submit your booking request.</li></ul><p><strong>Note:</strong> Booking confirmation depends on availability.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "POST /api/admin/faqs": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>To book a marriage hall, follow these steps:</p><ol><li>Browse available venues.</li><li>Select your preferred hall.</li><li>Choose your event date.</li><li>Submit your booking request.</li></ol><p>Our team will help you with the booking process.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "PUT /api/admin/faqs/{faqId}": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>Follow these steps to book your venue:</p><ul><li>Choose a venue.</li><li>Select your event date.</li><li>Submit your booking request.</li></ul><p><strong>Note:</strong> Booking confirmation depends on availability.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
   "POST /api/v1/facilities/compare": {
     type: "hall",
     venue_ids: ["{{hallId}}", "{{hallId2}}"],
@@ -84,12 +108,16 @@ const BODIES = {
     email: "{{customerEmail}}",
     phoneNumber: "{{customerPhone}}",
     password: "SecurePass@123",
+    // Optional: a one-line string, or an object whose every part is optional.
+    address: { street: "12 MG Road", city: "Bengaluru", state: "Karnataka", zipCode: "560001", country: "India" },
   },
   "POST /api/v1/auth/register/vendor": {
     fullName: "Rajesh Kumar",
     email: "{{ownerEmail}}",
     phoneNumber: "{{ownerPhone}}",
     password: "SecurePass@123",
+    // Also seeds the vendor's business_address.
+    address: { street: "45 Brigade Road", city: "Bengaluru", state: "Karnataka", zipCode: "560025", country: "India" },
   },
   "POST /api/v1/auth/register/verify-email": {
     target: "{{customerEmail}}",
@@ -150,6 +178,12 @@ const BODIES = {
     starRating: 4,
     checkInTime: "14:00",
     checkOutTime: "11:00",
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1566073771259-6a8506099945",
+        isCover: true,
+      },
+    ],
   },
   "POST /api/v1/facilities#hall2": {
     name: "Kumar Royal Garden",
@@ -169,6 +203,12 @@ const BODIES = {
     seatingCapacity: 800,
     floatingCapacity: 1200,
     minBookingSize: 150,
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1545232979-fbf68fe9f76a",
+        isCover: true,
+      },
+    ],
   },
   "POST /api/v1/facilities": {
     name: "Kumar Grand Palace",
@@ -188,6 +228,16 @@ const BODIES = {
     seatingCapacity: 600,
     floatingCapacity: 800,
     minBookingSize: 100,
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1519167758481-83f550bb49b3",
+        isCover: true,
+      },
+      {
+        url: "https://images.unsplash.com/photo-1545232979-fbf68fe9f76a",
+        isCover: false,
+      },
+    ],
   },
   "PUT /api/v1/halls/{id}": {
     name: "Kumar Grand Palace (Renovated)",
@@ -275,15 +325,30 @@ const BODIES = {
   },
   "PUT /api/v1/facilities/{id}/images/reorder": { order: ["{{imageId}}"] },
   "PUT /api/v1/facilities/{id}/videos/reorder": { order: ["{{videoId}}"] },
+  "POST /api/v1/bookings/venues": {
+    venueId: "{{hallId}}",
+    startDate: "2027-06-25",
+    endDate: "2027-06-26",
+    startTime: "10:00",
+    endTime: "18:00",
+    slotType: "FULL_DAY",
+    guestCount: 400,
+    eventType: "WEDDING",
+    roomCount: 2,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
+    idempotentKey: "venue-{{runId}}",
+  },
   "POST /api/v1/bookings/halls": {
     hallId: "{{hallId}}",
     startDate: "2027-06-25",
     endDate: "2027-06-26",
-    startTime: "18:00",
-    endTime: "23:00",
+    startTime: "10:00",
+    endTime: "18:00",
+    slotType: "FULL_DAY",
     guestCount: 400,
     eventType: "WEDDING",
-    roomCount: 12,
+    roomCount: 2,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
     idempotentKey: "hall-{{runId}}",
   },
   "PATCH /api/v1/admin/facilities/{id}": {
@@ -292,6 +357,9 @@ const BODIES = {
     basePricePerDay: 125000,
     discountPercent: 15,
     discountLabel: "Monsoon offer",
+    status: "APPROVED",
+    isVerified: true,
+    isFeatured: true,
   },
   "PUT /api/v1/admin/facilities/{id}/rating": {
     avgRating: 4.3,
@@ -332,7 +400,8 @@ const BODIES = {
     isActive: true,
   },
   "POST /api/v1/coupons/validate": {
-    code: "WED{{runId}}",
+    code: "{{couponCode}}",
+    codes: ["{{couponCode}}", "{{adminCouponCode}}"],
     amount: 200000,
     facilityId: "{{hallId}}",
   },
@@ -360,6 +429,7 @@ const BODIES = {
     startTime: "18:00",
     endTime: "23:00",
     guestCount: 400,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
   },
   "POST /api/v1/facilities/{id}/cancellation-policies": {
     policyType: "FLEXIBLE",
@@ -492,7 +562,7 @@ const QUERIES = {
   "GET /api/v1/admin/analytics/decisions": "entity=&from=&until=",
   "GET /api/v1/users/me/dashboard": "lat=12.9716&lng=77.5946",
   "GET /api/v1/facilities": "type=HALL&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
-  "GET /api/v1/venues": "type=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
+  "GET /api/v1/venues": "type=&eventType=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls": "search=&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls/my-halls": "page=0&size=20",
   "GET /api/v1/hotels/my-hotels": "page=0&size=20",
@@ -527,6 +597,8 @@ const QUERIES = {
   "POST /api/v1/admin/facilities/{id}/approve": "status=APPROVED",
   "GET /api/v1/super-admin/help/messages": "search=&status=&page=0&limit=20",
   "GET /api/v1/public/recommendations": "lat=12.9716&lng=77.5946&type=ALL&radiusKm=50",
+  "GET /api/v1/admin/faqs": "page=0&size=20",
+  "GET /api/admin/faqs": "page=0&size=20",
 };
 
 // Which token each folder acts as
@@ -559,6 +631,7 @@ const FOLDER_TOKEN = {
   "Support": null,
   "Help Center": "accessToken",
   "Privacy Policy": "accessToken",
+  "FAQs": "adminToken",
   "Feedback": "accessToken",
   "Search": "accessToken",
   "Admin": "adminToken",
@@ -607,6 +680,16 @@ const REQUEST_TOKEN = {
   "GET /api/admin/feedback/{id}": "adminToken",
   "PUT /api/v1/admin/feedback/{id}": "adminToken",
   "PUT /api/admin/feedback/{id}": "adminToken",
+  "POST /api/v1/admin/faqs": "adminToken",
+  "POST /api/admin/faqs": "adminToken",
+  "GET /api/v1/admin/faqs": "adminToken",
+  "GET /api/admin/faqs": "adminToken",
+  "GET /api/v1/admin/faqs/{faqId}": "adminToken",
+  "GET /api/admin/faqs/{faqId}": "adminToken",
+  "PUT /api/v1/admin/faqs/{faqId}": "adminToken",
+  "PUT /api/admin/faqs/{faqId}": "adminToken",
+  "DELETE /api/v1/admin/faqs/{faqId}": "adminToken",
+  "DELETE /api/admin/faqs/{faqId}": "adminToken",
 };
 
 // Endpoints that are completely public (No Bearer token required)
@@ -624,6 +707,8 @@ const NO_AUTH = new Set([
   "POST /api/v1/auth/reset-password",
   "POST /api/v1/payments/webhook",
   "GET /health",
+  "GET /livez",
+  "GET /readyz",
   "GET /ack/{token}",
   "GET /decline/{token}",
   "GET /api/v1/coupons/available",
@@ -661,6 +746,8 @@ const NO_AUTH = new Set([
   "GET /api/privacy-policy",
   "GET /api/v1/privacy-policy",
   "GET /api/v1/public/recommendations",
+  "GET /api/v1/public/faqs",
+  "GET /api/public/faqs",
 ]);
 
 const MODULE_FOLDER = {
@@ -680,6 +767,7 @@ const MODULE_FOLDER = {
   feedback: "Feedback",
   help: "Help Center",
   privacypolicy: "Privacy Policy",
+  faq: "FAQs",
   recommendation: "Recommendations",
 };
 
@@ -713,6 +801,7 @@ const FOLDER_ORDER = [
   "Help Center",
   "Feedback",
   "Privacy Policy",
+  "FAQs",
   "Search",
   "Admin",
   "Cleanup (destructive)",
@@ -766,6 +855,8 @@ const DESTRUCTIVE = new Set([
   "DELETE /api/v1/super-admin/help/messages/{messageId}",
   "DELETE /api/v1/admin/privacy-policy",
   "DELETE /api/admin/privacy-policy",
+  "DELETE /api/v1/admin/faqs/{faqId}",
+  "DELETE /api/admin/faqs/{faqId}",
 ]);
 
 const REQUEST_ORDER = [
@@ -836,6 +927,7 @@ const REQUEST_ORDER = [
   "POST /api/v1/facilities/{id}/block",
   "POST /api/v1/facilities/{id}/unblock",
 
+  "POST /api/v1/bookings/venues",
   "POST /api/v1/bookings/halls",
   "POST /api/v1/bookings/hotels",
   "GET /api/v1/bookings",
@@ -895,6 +987,14 @@ const REQUEST_ORDER = [
   "GET /api/v1/admin/privacy-policy",
   "PUT /api/v1/admin/privacy-policy",
   "DELETE /api/v1/admin/privacy-policy",
+
+  "GET /api/public/faqs",
+  "GET /api/v1/public/faqs",
+  "POST /api/v1/admin/faqs",
+  "GET /api/v1/admin/faqs",
+  "GET /api/v1/admin/faqs/{faqId}",
+  "PUT /api/v1/admin/faqs/{faqId}",
+  "DELETE /api/v1/admin/faqs/{faqId}",
 
   "GET /api/v1/search/venues",
   "GET /api/v1/search/autocomplete",
@@ -1045,6 +1145,7 @@ const NAMES = {
   "POST /api/v1/facilities/{id}/block": "Block facility",
   "POST /api/v1/facilities/{id}/unblock": "Unblock facility",
 
+  "POST /api/v1/bookings/venues": "Book a venue (hotel or hall)",
   "POST /api/v1/bookings/halls": "Book a hall",
   "POST /api/v1/bookings/hotels": "Book hotel rooms",
   "GET /api/v1/bookings": "My bookings",
@@ -1147,6 +1248,8 @@ const NAMES = {
   "POST /api/v1/admin/fraud-reports": "Create fraud report",
   "POST /api/v1/admin/fraud-reports/{reportId}/resolve": "Resolve fraud report",
   "GET /health": "Health check",
+  "GET /livez": "Liveness probe",
+  "GET /readyz": "Readiness probe",
   "GET /ack/{token}": "One-click booking acknowledgement",
   "GET /decline/{token}": "One-click booking decline",
   "GET /api/v1/coupons/offers": "Available coupon offers",
@@ -1162,14 +1265,24 @@ if (d && d.items && d.items.length) {
 }`,
   "POST /api/v1/facilities/{id}/faqs": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
+  "POST /api/v1/admin/faqs": `const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
+  "POST /api/admin/faqs": `const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
   "POST /api/v1/feedback": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);`,
   "POST /api/feedback": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);`,
   "POST /api/v1/coupons": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("couponId", d.id);`,
+if (d && d.id) {
+  pm.collectionVariables.set("couponId", d.id);
+  if (d.code) pm.collectionVariables.set("couponCode", d.code);
+}`,
   "POST /api/v1/admin/coupons": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("adminCouponId", d.id);`,
+if (d && d.id) {
+  pm.collectionVariables.set("adminCouponId", d.id);
+  if (d.code) pm.collectionVariables.set("adminCouponCode", d.code);
+}`,
   "POST /api/v1/admin/reviews": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("adminReviewId", d.id);`,
   "GET /api/v1/admin/reviews": `const d = pm.response.json().data;
@@ -1242,6 +1355,15 @@ if (d) pm.collectionVariables.set("roomTypeId", d.id);`,
 if (d) pm.collectionVariables.set("imageId", d.id);`,
   "POST /api/v1/facilities/{id}/videos": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("videoId", d.id);`,
+  "POST /api/v1/bookings/venues": `const d = pm.response.json().data;
+if (d) {
+  pm.collectionVariables.set("bookingId", d.id);
+  pm.environment.set("bookingId", d.id);
+  pm.collectionVariables.set("venueBookingId", d.id);
+  pm.environment.set("venueBookingId", d.id);
+  pm.collectionVariables.set("hallBookingId", d.id);
+  pm.environment.set("hallBookingId", d.id);
+}`,
   "POST /api/v1/bookings/halls": `const d = pm.response.json().data;
 if (d) {
   pm.collectionVariables.set("bookingId", d.id);
@@ -1315,7 +1437,14 @@ if (d && d.length) pm.collectionVariables.set("ruleId", d[0].id);`,
   "POST /api/v1/admin/fraud-reports": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("reportId", d.id);`,
   "POST /api/v1/help/messages": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("messageId", d.id);`,
+if (d && d.id) pm.collectionVariables.set("messageId", d.id);
+pm.test("Help message has camelCase fields and no duplicates", function () {
+    pm.expect(d).to.have.property("userId");
+    pm.expect(d).to.have.property("userName");
+    pm.expect(d).to.have.property("createdAt");
+    pm.expect(d).to.not.have.property("user_id");
+    pm.expect(d).to.not.have.property("user_name");
+});`,
   "GET /api/v1/super-admin/help/messages": `const d = pm.response.json().data;
 const list = d && d.messages ? d.messages : (d && d.content ? d.content : (Array.isArray(d) ? d : []));
 if (list.length > 0 && list[0].id) {
@@ -1495,7 +1624,13 @@ function collectRoutes() {
   const pat = /(?:mux\.(?:HandleFunc|Handle)\("|get\(")(GET|POST|PUT|PATCH|DELETE) ([^"]+)"/g;
   const seen = new Set();
   const routes = [];
-  const skipRoutes = new Set(["GET /uploads/"]);
+  const skipRoutes = new Set([
+    "GET /uploads/",
+    // Same handler as POST /api/v1/auth/refresh under the old spec path. Still
+    // served, but a second refresh in the run only adds a chance to replay a
+    // rotated token, which revokes every session.
+    "POST /api/v1/auth/login/refresh",
+  ]);
 
   function walk(dir) {
     for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -1674,6 +1809,12 @@ function main() {
           desc: "Public access test without sending any Authorization header.",
           expectedStatus: 200,
         },
+        {
+          name: "Test 9 - Event Type Filter (eventType=WEDDING)",
+          query: "lat=12.9716&lng=77.5946&type=ALL&radiusKm=50&eventType=WEDDING",
+          desc: "Filters recommendations for WEDDING event type (or venues without configured events).",
+          expectedStatus: 200,
+        },
       ];
 
       for (const tc of testCases) {
@@ -1712,11 +1853,18 @@ function main() {
             `pm.test("Status code is 200", function () {`,
             `    pm.response.to.have.status(200);`,
             `});`,
-            `pm.test("returns recommendations list", function () {`,
+            `pm.test("returns recommendations list with venue format", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data).to.have.property("items");`,
-            `    pm.expect(b.data.items).to.be.an("array");`,
+            `    pm.expect(b.data).to.have.property("content");`,
+            `    pm.expect(b.data.content).to.be.an("array");`,
+            `    if (b.data.content.length > 0) {`,
+            `        const v = b.data.content[0];`,
+            `        pm.expect(v).to.have.property("id");`,
+            `        pm.expect(v).to.have.property("name");`,
+            `        pm.expect(v).to.have.property("type");`,
+            `        pm.expect(v).to.have.property("distanceKm");`,
+            `    }`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1728,7 +1876,7 @@ function main() {
             `pm.test("all items are HALL", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.type === "HALL")).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.type === "HALL")).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1740,7 +1888,7 @@ function main() {
             `pm.test("all items are HOTEL", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.type === "HOTEL")).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.type === "HOTEL")).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1752,7 +1900,7 @@ function main() {
             `pm.test("all items are within 5 km", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.distanceKm <= 5)).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.distanceKm <= 5)).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1764,8 +1912,21 @@ function main() {
             `pm.test("pagination metadata is correct", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.pagination.page).to.eql(1);`,
-            `    pm.expect(b.data.pagination.size).to.eql(20);`,
+            `    pm.expect(b.data.page).to.eql(1);`,
+            `    pm.expect(b.data.size).to.eql(20);`,
+            `});`,
+            COMMON_TEST
+          ].join("\n");
+        } else if (tc.name.includes("Event Type Filter")) {
+          testScript = [
+            `pm.test("Status code is 200", function () {`,
+            `    pm.response.to.have.status(200);`,
+            `});`,
+            `pm.test("returns recommendations matching event type filter", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.true;`,
+            `    pm.expect(b.data).to.have.property("content");`,
+            `    pm.expect(b.data.content).to.be.an("array");`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1831,6 +1992,54 @@ if (d) {
       hall2.request.description =
         "Creates a second HALL facility so hallId2 is captured for side-by-side venue comparison.";
       sub.splice(2, 0, hall2);
+
+      // Event filtering test requests
+      const venueEventTests = [
+        {
+          name: "List venues - filter by eventType=WEDDING & type=HOTEL",
+          query: "type=HOTEL&eventType=WEDDING&search=&city=&page=0&size=20",
+          desc: "Filters hotels by WEDDING. Returns hotels supporting WEDDING plus hotels with no configured events.",
+        },
+        {
+          name: "List venues - filter by eventType=WEDDING & type=HALL",
+          query: "type=HALL&eventType=WEDDING&search=&city=&page=0&size=20",
+          desc: "Filters halls by WEDDING. Returns halls supporting WEDDING plus halls with no configured events.",
+        },
+        {
+          name: "List venues - filter by eventType=BIRTHDAY",
+          query: "eventType=BIRTHDAY&page=0&size=20",
+          desc: "Filters all venues by BIRTHDAY. Venues configured exclusively for other events are excluded.",
+        },
+      ];
+      for (const vet of venueEventTests) {
+        const segs = ["api", "v1", "venues"];
+        const queryParams = vet.query.split("&").map((p) => {
+          const idx = p.indexOf("=");
+          return idx >= 0 ? { key: p.slice(0, idx), value: p.slice(idx + 1) } : { key: p, value: "" };
+        });
+        sub.push({
+          name: vet.name,
+          request: {
+            method: "GET",
+            header: [],
+            url: {
+              raw: "{{baseUrl}}/api/v1/venues?" + vet.query,
+              host: ["{{baseUrl}}"],
+              path: segs,
+              query: queryParams,
+            },
+            description: vet.desc,
+            auth: { type: "noauth" },
+          },
+          response: [],
+          event: [
+            {
+              listen: "test",
+              script: { type: "text/javascript", exec: COMMON_TEST.split("\n") },
+            },
+          ],
+        });
+      }
     }
 
     // Add multipart media uploads
@@ -1945,6 +2154,7 @@ const FOLDER_DESC = {
   "Help Center": "Customer support messages, inquiry submission, and admin message handling.",
   Feedback: "Customer app feedback, ratings, and issue reporting.",
   "Privacy Policy": "Public privacy policy reading and admin version publishing.",
+  FAQs: "Platform Frequently Asked Questions (FAQ) management with rich HTML editor support and public browsing.",
   Search: "Advanced multi-criteria search, autocomplete, trending searches, and geolocation.",
   Admin: "Platform administration, KYC approvals, user moderation, review approval, and analytics.",
   "Cleanup (destructive)": "Deletes and cancellations kept last to maintain test isolation and idempotency.",
@@ -2021,13 +2231,16 @@ const FOLDER_DESC = {
       { key: "videoId", value: "" },
       { key: "videoId2", value: "" },
       { key: "bookingId", value: "" },
+      { key: "venueBookingId", value: "", description: "Captured from POST /bookings/venues" },
       { key: "hallBookingId", value: "", description: "Captured from POST /bookings/halls" },
       { key: "hotelBookingId", value: "", description: "Captured from POST /bookings/hotels" },
       { key: "faqId", value: "" },
       { key: "feedbackId", value: "" },
       { key: "messageId", value: "", description: "Help Center message UUID" },
       { key: "couponId", value: "00000000-0000-0000-0000-000000000000" },
+      { key: "couponCode", value: "WEDDING15" },
       { key: "adminCouponId", value: "00000000-0000-0000-0000-000000000000" },
+      { key: "adminCouponCode", value: "ALLHALLS10" },
       { key: "notificationId", value: "" },
       { key: "paymentId", value: "" },
       { key: "gatewayOrderId", value: "" },
@@ -2046,15 +2259,9 @@ const FOLDER_DESC = {
     ],
   };
 
-  const outPaths = [
-    path.join(ROOT, "postman_collection.json"),
-    path.join(ROOT, "..", "..", "postman_collection.json"),
-  ];
-
-  for (const outPath of outPaths) {
-    fs.writeFileSync(outPath, JSON.stringify(collection, null, 2) + "\n", "utf8");
-    console.error(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
-  }
+  const outPath = path.join(ROOT, "postman_collection.json");
+  fs.writeFileSync(outPath, JSON.stringify(collection, null, 2) + "\n", "utf8");
+  console.error(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
 }
 
 main();
