@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/service"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
@@ -43,7 +44,10 @@ type quoteReq struct {
 	GuestCount *int     `json:"guestCount"`
 	PackageIDs []string `json:"packageIds"`
 	// CouponCode is optional, priced exactly as the booking will price it.
-	CouponCode string `json:"couponCode"`
+	CouponCode       string   `json:"couponCode"`
+	CouponCodes      []string `json:"couponCodes"`
+	AdminCouponCode  string   `json:"adminCouponCode"`
+	VendorCouponCode string   `json:"vendorCouponCode"`
 }
 
 func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
@@ -179,20 +183,68 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 		hallPrice += price
 	}
 
-	// The coupon comes off after the venue discount and before fee and tax, in
-	// the order the booking applies them. An unusable code fails the preview
-	// with the same error the booking would give, rather than quietly pricing
-	// without it.
+	// The coupons come off after the venue discount and before fee and tax, in
+	// the order the booking applies them: Hall Owner coupon first, then Admin coupon.
+	// An unusable code fails the preview with the same error the booking would give.
+	codes := req.CouponCodes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(c, trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.CouponCode)
+	addCode(req.AdminCouponCode)
+	addCode(req.VendorCouponCode)
+
+	if len(codes) > 2 {
+		response.Error(w, http.StatusBadRequest, "Maximum 2 coupons can be applied per booking", "COUPON_LIMIT_EXCEEDED")
+		return
+	}
+
 	var couponCode *string
 	couponDiscount := 0.0
-	if code := strings.TrimSpace(req.CouponCode); code != "" {
-		c, d, err := h.svc.PriceCoupon(r.Context(), code, facilityID, hallPrice)
+	var couponsBreakdown []map[string]any
+	var adminCouponID, vendorCouponID *string
+	var adminDiscount, vendorDiscount float64
+
+	if len(codes) > 0 {
+		applied, d, err := h.svc.PriceCoupons(r.Context(), codes, facilityID, hallPrice)
 		if err != nil {
 			httpx.Fail(w, err)
 			return
 		}
-		couponCode, couponDiscount = &c.Code, d
+		couponDiscount = d
 		hallPrice -= d
+		var cs []string
+		for _, ac := range applied {
+			cs = append(cs, ac.Coupon.Code)
+			if ac.Scope == coupon.ScopeAdmin {
+				cid := ac.Coupon.ID
+				adminCouponID = &cid
+				adminDiscount = ac.DiscountAmount
+			} else if ac.Scope == coupon.ScopeVendor {
+				cid := ac.Coupon.ID
+				vendorCouponID = &cid
+				vendorDiscount = ac.DiscountAmount
+			}
+			couponsBreakdown = append(couponsBreakdown, map[string]any{
+				"couponId":       ac.Coupon.ID,
+				"code":           ac.Coupon.Code,
+				"scope":          ac.Scope,
+				"discountAmount": round2(ac.DiscountAmount),
+			})
+		}
+		if len(cs) > 0 {
+			joined := strings.Join(cs, ", ")
+			couponCode = &joined
+		}
 	}
 
 	serviceFee := round2(hallPrice * serviceFeeRate)
@@ -239,14 +291,19 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 		"exceedsCapacity": overCapacity,
 		"packages":        packages,
 		"priceBreakdown": map[string]any{
-			"hallPrice":      round2(hallPrice),
-			"venueDiscount":  round2(venueDiscount),
-			"couponDiscount": round2(couponDiscount),
-			"couponCode":     couponCode,
-			"serviceFee":     serviceFee,
-			"taxes":          taxes,
-			"total":          total,
-			"currency":       "INR",
+			"hallPrice":            round2(hallPrice),
+			"venueDiscount":        round2(venueDiscount),
+			"couponDiscount":       round2(couponDiscount),
+			"adminCouponId":        adminCouponID,
+			"adminCouponDiscount":  round2(adminDiscount),
+			"vendorCouponId":       vendorCouponID,
+			"vendorCouponDiscount": round2(vendorDiscount),
+			"couponCode":           couponCode,
+			"coupons":              couponsBreakdown,
+			"serviceFee":           serviceFee,
+			"taxes":                taxes,
+			"total":                total,
+			"currency":             "INR",
 		},
 		"available":            available,
 		"cancellationPolicies": policies,

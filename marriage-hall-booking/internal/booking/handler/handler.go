@@ -65,6 +65,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/bookings/halls", customer(h.createVenue))
 	mux.Handle("POST /api/v1/bookings/hotels", customer(h.createHotel))
 	mux.Handle("GET /api/v1/bookings", auth(http.HandlerFunc(h.list)))
+	mux.Handle("GET /api/v1/bookings/reference/{ref}", auth(http.HandlerFunc(h.getByReference)))
 	mux.Handle("GET /api/v1/bookings/{id}", auth(http.HandlerFunc(h.get)))
 	mux.Handle("POST /api/v1/bookings/{id}/cancel", auth(http.HandlerFunc(h.cancel)))
 
@@ -107,9 +108,12 @@ type venueReq struct {
 	// the venue. Not priced - the owner arranges it offline.
 	RoomCount *int `json:"roomCount"`
 
-	EventType  *string  `json:"eventType"`  // optional
-	PackageIDs []string `json:"packageIds"` // optional
-	CouponCode string   `json:"couponCode"` // optional
+	EventType   *string  `json:"eventType"`  // optional
+	PackageIDs  []string `json:"packageIds"` // optional
+	CouponCode       string   `json:"couponCode"`       // optional
+	CouponCodes      []string `json:"couponCodes"`      // optional
+	AdminCouponCode  string   `json:"adminCouponCode"`  // optional
+	VendorCouponCode string   `json:"vendorCouponCode"` // optional
 
 	IdempotentKey string `json:"idempotentKey"`
 }
@@ -291,13 +295,38 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	codes := req.CouponCodes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(c, trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.CouponCode)
+	addCode(req.AdminCouponCode)
+	addCode(req.VendorCouponCode)
+
+	if len(codes) > 2 {
+		response.Error(w, http.StatusBadRequest, "Maximum 2 coupons can be applied per booking", "COUPON_LIMIT_EXCEEDED")
+		return
+	}
+
 	userID, _ := middleware.UserID(r.Context())
 	b, err := h.svc.CreateVenueBooking(r.Context(), userID, service.VenueBookingRequest{
 		FacilityID: facilityID, EventDate: startDate, EndDate: endDate,
 		StartTime: startTime, EndTime: endTime,
 		GuestCount: req.GuestCount, RoomCount: req.RoomCount, EventType: eventType,
 		SlotType: slot, PackageIDs: req.PackageIDs, IdempotentKey: req.IdempotentKey,
-		CouponCode: strings.TrimSpace(req.CouponCode),
+		CouponCode:       strings.TrimSpace(req.CouponCode),
+		CouponCodes:      codes,
+		AdminCouponCode:  strings.TrimSpace(req.AdminCouponCode),
+		VendorCouponCode: strings.TrimSpace(req.VendorCouponCode),
 	})
 	if err != nil {
 		httpx.Fail(w, err)
@@ -325,7 +354,10 @@ type hotelReq struct {
 	GuestEmail    *string `json:"guestEmail"`
 	GuestPhone    *string `json:"guestPhone"`
 	// CouponCode is optional; the discount is computed server-side.
-	CouponCode string `json:"couponCode"`
+	CouponCode       string   `json:"couponCode"`
+	CouponCodes      []string `json:"couponCodes"`
+	AdminCouponCode  string   `json:"adminCouponCode"`
+	VendorCouponCode string   `json:"vendorCouponCode"`
 }
 
 func (h *Handler) createHotel(w http.ResponseWriter, r *http.Request) {
@@ -366,12 +398,37 @@ func (h *Handler) createHotel(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	codes := req.CouponCodes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(c, trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.CouponCode)
+	addCode(req.AdminCouponCode)
+	addCode(req.VendorCouponCode)
+
+	if len(codes) > 2 {
+		response.Error(w, http.StatusBadRequest, "Maximum 2 coupons can be applied per booking", "COUPON_LIMIT_EXCEEDED")
+		return
+	}
+
 	userID, _ := middleware.UserID(r.Context())
 	b, err := h.svc.CreateHotelBooking(r.Context(), userID, service.HotelBookingRequest{
 		FacilityID: facilityID, CheckIn: checkIn, CheckOut: checkOut, Rooms: rooms,
 		IdempotentKey: req.IdempotentKey, GuestName: req.GuestName,
 		GuestEmail: req.GuestEmail, GuestPhone: req.GuestPhone,
-		CouponCode: strings.TrimSpace(req.CouponCode),
+		CouponCode:       strings.TrimSpace(req.CouponCode),
+		CouponCodes:      codes,
+		AdminCouponCode:  strings.TrimSpace(req.AdminCouponCode),
+		VendorCouponCode: strings.TrimSpace(req.VendorCouponCode),
 	})
 	if err != nil {
 		httpx.Fail(w, err)
@@ -381,13 +438,30 @@ func (h *Handler) createHotel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !httpx.ValidUUID(id) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
 		response.Error(w, http.StatusBadRequest, "Invalid booking id", "VALIDATION_ERROR")
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	b, err := h.svc.Get(r.Context(), id, userID, middleware.HasRole(r.Context(), domain.RoleAdmin))
+	isAdmin := middleware.HasRole(r.Context(), domain.RoleAdmin) || middleware.HasRole(r.Context(), domain.RoleSuperAdmin)
+	b, err := h.svc.Get(r.Context(), id, userID, isAdmin)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	response.OK(w, "Booking retrieved successfully", b)
+}
+
+func (h *Handler) getByReference(w http.ResponseWriter, r *http.Request) {
+	ref := strings.TrimSpace(r.PathValue("ref"))
+	if ref == "" {
+		response.Error(w, http.StatusBadRequest, "Booking reference is required", "VALIDATION_ERROR")
+		return
+	}
+	userID, _ := middleware.UserID(r.Context())
+	isAdmin := middleware.HasRole(r.Context(), domain.RoleAdmin) || middleware.HasRole(r.Context(), domain.RoleSuperAdmin)
+	b, err := h.svc.Get(r.Context(), ref, userID, isAdmin)
 	if err != nil {
 		httpx.Fail(w, err)
 		return
@@ -396,8 +470,26 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	page, size := httpx.Page(r)
 	userID, _ := middleware.UserID(r.Context())
+	ref := strings.TrimSpace(r.URL.Query().Get("referenceId"))
+	if ref == "" {
+		ref = strings.TrimSpace(r.URL.Query().Get("bookingReference"))
+	}
+	if ref == "" {
+		ref = strings.TrimSpace(r.URL.Query().Get("reference"))
+	}
+	if ref != "" {
+		isAdmin := middleware.HasRole(r.Context(), domain.RoleAdmin) || middleware.HasRole(r.Context(), domain.RoleSuperAdmin)
+		b, err := h.svc.Get(r.Context(), ref, userID, isAdmin)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		response.OK(w, "Bookings retrieved successfully", httpx.NewPaged([]repository.Booking{*b}, 1, 1, 1))
+		return
+	}
+
+	page, size := httpx.Page(r)
 	items, total, err := h.svc.List(r.Context(), userID, page, size)
 	if err != nil {
 		httpx.Fail(w, err)
@@ -407,13 +499,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !httpx.ValidUUID(id) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
 		response.Error(w, http.StatusBadRequest, "Invalid booking id", "VALIDATION_ERROR")
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	if err := h.svc.Cancel(r.Context(), id, userID, middleware.HasRole(r.Context(), domain.RoleAdmin)); err != nil {
+	isAdmin := middleware.HasRole(r.Context(), domain.RoleAdmin) || middleware.HasRole(r.Context(), domain.RoleSuperAdmin)
+	if err := h.svc.Cancel(r.Context(), id, userID, isAdmin); err != nil {
 		httpx.Fail(w, err)
 		return
 	}

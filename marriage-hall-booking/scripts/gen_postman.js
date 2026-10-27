@@ -178,6 +178,12 @@ const BODIES = {
     starRating: 4,
     checkInTime: "14:00",
     checkOutTime: "11:00",
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1566073771259-6a8506099945",
+        isCover: true,
+      },
+    ],
   },
   "POST /api/v1/facilities#hall2": {
     name: "Kumar Royal Garden",
@@ -197,6 +203,12 @@ const BODIES = {
     seatingCapacity: 800,
     floatingCapacity: 1200,
     minBookingSize: 150,
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1545232979-fbf68fe9f76a",
+        isCover: true,
+      },
+    ],
   },
   "POST /api/v1/facilities": {
     name: "Kumar Grand Palace",
@@ -216,6 +228,16 @@ const BODIES = {
     seatingCapacity: 600,
     floatingCapacity: 800,
     minBookingSize: 100,
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1519167758481-83f550bb49b3",
+        isCover: true,
+      },
+      {
+        url: "https://images.unsplash.com/photo-1545232979-fbf68fe9f76a",
+        isCover: false,
+      },
+    ],
   },
   "PUT /api/v1/halls/{id}": {
     name: "Kumar Grand Palace (Renovated)",
@@ -313,6 +335,7 @@ const BODIES = {
     guestCount: 400,
     eventType: "WEDDING",
     roomCount: 2,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
     idempotentKey: "venue-{{runId}}",
   },
   "POST /api/v1/bookings/halls": {
@@ -325,6 +348,7 @@ const BODIES = {
     guestCount: 400,
     eventType: "WEDDING",
     roomCount: 2,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
     idempotentKey: "hall-{{runId}}",
   },
   "PATCH /api/v1/admin/facilities/{id}": {
@@ -333,6 +357,9 @@ const BODIES = {
     basePricePerDay: 125000,
     discountPercent: 15,
     discountLabel: "Monsoon offer",
+    status: "APPROVED",
+    isVerified: true,
+    isFeatured: true,
   },
   "PUT /api/v1/admin/facilities/{id}/rating": {
     avgRating: 4.3,
@@ -373,7 +400,8 @@ const BODIES = {
     isActive: true,
   },
   "POST /api/v1/coupons/validate": {
-    code: "WED{{runId}}",
+    code: "{{couponCode}}",
+    codes: ["{{couponCode}}", "{{adminCouponCode}}"],
     amount: 200000,
     facilityId: "{{hallId}}",
   },
@@ -401,6 +429,7 @@ const BODIES = {
     startTime: "18:00",
     endTime: "23:00",
     guestCount: 400,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
   },
   "POST /api/v1/facilities/{id}/cancellation-policies": {
     policyType: "FLEXIBLE",
@@ -1245,9 +1274,15 @@ if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);`,
   "POST /api/feedback": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);`,
   "POST /api/v1/coupons": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("couponId", d.id);`,
+if (d && d.id) {
+  pm.collectionVariables.set("couponId", d.id);
+  if (d.code) pm.collectionVariables.set("couponCode", d.code);
+}`,
   "POST /api/v1/admin/coupons": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("adminCouponId", d.id);`,
+if (d && d.id) {
+  pm.collectionVariables.set("adminCouponId", d.id);
+  if (d.code) pm.collectionVariables.set("adminCouponCode", d.code);
+}`,
   "POST /api/v1/admin/reviews": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("adminReviewId", d.id);`,
   "GET /api/v1/admin/reviews": `const d = pm.response.json().data;
@@ -2203,7 +2238,9 @@ const FOLDER_DESC = {
       { key: "feedbackId", value: "" },
       { key: "messageId", value: "", description: "Help Center message UUID" },
       { key: "couponId", value: "00000000-0000-0000-0000-000000000000" },
+      { key: "couponCode", value: "WEDDING15" },
       { key: "adminCouponId", value: "00000000-0000-0000-0000-000000000000" },
+      { key: "adminCouponCode", value: "ALLHALLS10" },
       { key: "notificationId", value: "" },
       { key: "paymentId", value: "" },
       { key: "gatewayOrderId", value: "" },

@@ -1625,7 +1625,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Kumar Grand Palace\",\n  \"type\": \"HALL\",\n  \"description\": \"Premium wedding venue with lawn and banquet hall\",\n  \"city\": \"Bengaluru\",\n  \"fullAddress\": \"42 MG Road\",\n  \"state\": \"Karnataka\",\n  \"zipcode\": \"560001\",\n  \"country\": \"India\",\n  \"lat\": 12.9716,\n  \"lng\": 77.5946,\n  \"amenityIds\": [\n    \"PARKING\",\n    \"AIR_CONDITIONING\",\n    \"CATERING\"\n  ],\n  \"capacityPax\": 800,\n  \"areaSqft\": 12000,\n  \"basePricePerDay\": 150000,\n  \"seatingCapacity\": 600,\n  \"floatingCapacity\": 800,\n  \"minBookingSize\": 100\n}",
+              "raw": "{\n  \"name\": \"Kumar Grand Palace\",\n  \"type\": \"HALL\",\n  \"description\": \"Premium wedding venue with lawn and banquet hall\",\n  \"city\": \"Bengaluru\",\n  \"fullAddress\": \"42 MG Road\",\n  \"state\": \"Karnataka\",\n  \"zipcode\": \"560001\",\n  \"country\": \"India\",\n  \"lat\": 12.9716,\n  \"lng\": 77.5946,\n  \"amenityIds\": [\n    \"PARKING\",\n    \"AIR_CONDITIONING\",\n    \"CATERING\"\n  ],\n  \"capacityPax\": 800,\n  \"areaSqft\": 12000,\n  \"basePricePerDay\": 150000,\n  \"seatingCapacity\": 600,\n  \"floatingCapacity\": 800,\n  \"minBookingSize\": 100,\n  \"images\": [\n    {\n      \"url\": \"https://images.unsplash.com/photo-1519167758481-83f550bb49b3\",\n      \"isCover\": true\n    },\n    {\n      \"url\": \"https://images.unsplash.com/photo-1545232979-fbf68fe9f76a\",\n      \"isCover\": false\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1711,7 +1711,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Grand Residency\",\n  \"type\": \"HOTEL\",\n  \"description\": \"4-star business hotel near the venue\",\n  \"city\": \"Bengaluru\",\n  \"fullAddress\": \"9 Residency Road\",\n  \"state\": \"Karnataka\",\n  \"zipcode\": \"560025\",\n  \"country\": \"India\",\n  \"lat\": 12.9716,\n  \"lng\": 77.5946,\n  \"amenityIds\": [\n    \"PARKING\",\n    \"AIR_CONDITIONING\",\n    \"BREAKFAST_INCLUDED\"\n  ],\n  \"starRating\": 4,\n  \"checkInTime\": \"14:00\",\n  \"checkOutTime\": \"11:00\"\n}",
+              "raw": "{\n  \"name\": \"Grand Residency\",\n  \"type\": \"HOTEL\",\n  \"description\": \"4-star business hotel near the venue\",\n  \"city\": \"Bengaluru\",\n  \"fullAddress\": \"9 Residency Road\",\n  \"state\": \"Karnataka\",\n  \"zipcode\": \"560025\",\n  \"country\": \"India\",\n  \"lat\": 12.9716,\n  \"lng\": 77.5946,\n  \"amenityIds\": [\n    \"PARKING\",\n    \"AIR_CONDITIONING\",\n    \"BREAKFAST_INCLUDED\"\n  ],\n  \"starRating\": 4,\n  \"checkInTime\": \"14:00\",\n  \"checkOutTime\": \"11:00\",\n  \"images\": [\n    {\n      \"url\": \"https://images.unsplash.com/photo-1566073771259-6a8506099945\",\n      \"isCover\": true\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1797,7 +1797,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Kumar Royal Garden\",\n  \"type\": \"HALL\",\n  \"description\": \"Spacious open lawn venue for royal weddings\",\n  \"city\": \"Bengaluru\",\n  \"fullAddress\": \"88 Outer Ring Road\",\n  \"state\": \"Karnataka\",\n  \"zipcode\": \"560103\",\n  \"country\": \"India\",\n  \"lat\": 12.978,\n  \"lng\": 77.64,\n  \"amenityIds\": [\n    \"PARKING\",\n    \"AIR_CONDITIONING\",\n    \"CATERING\"\n  ],\n  \"capacityPax\": 1200,\n  \"areaSqft\": 20000,\n  \"basePricePerDay\": 200000,\n  \"seatingCapacity\": 800,\n  \"floatingCapacity\": 1200,\n  \"minBookingSize\": 150\n}",
+              "raw": "{\n  \"name\": \"Kumar Royal Garden\",\n  \"type\": \"HALL\",\n  \"description\": \"Spacious open lawn venue for royal weddings\",\n  \"city\": \"Bengaluru\",\n  \"fullAddress\": \"88 Outer Ring Road\",\n  \"state\": \"Karnataka\",\n  \"zipcode\": \"560103\",\n  \"country\": \"India\",\n  \"lat\": 12.978,\n  \"lng\": 77.64,\n  \"amenityIds\": [\n    \"PARKING\",\n    \"AIR_CONDITIONING\",\n    \"CATERING\"\n  ],\n  \"capacityPax\": 1200,\n  \"areaSqft\": 20000,\n  \"basePricePerDay\": 200000,\n  \"seatingCapacity\": 800,\n  \"floatingCapacity\": 1200,\n  \"minBookingSize\": 150,\n  \"images\": [\n    {\n      \"url\": \"https://images.unsplash.com/photo-1545232979-fbf68fe9f76a\",\n      \"isCover\": true\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -7317,7 +7317,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"venueId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"10:00\",\n  \"endTime\": \"18:00\",\n  \"slotType\": \"FULL_DAY\",\n  \"guestCount\": 400,\n  \"eventType\": \"WEDDING\",\n  \"roomCount\": 2,\n  \"idempotentKey\": \"venue-{{runId}}\"\n}",
+              "raw": "{\n  \"venueId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"10:00\",\n  \"endTime\": \"18:00\",\n  \"slotType\": \"FULL_DAY\",\n  \"guestCount\": 400,\n  \"eventType\": \"WEDDING\",\n  \"roomCount\": 2,\n  \"couponCodes\": [\n    \"{{couponCode}}\",\n    \"{{adminCouponCode}}\"\n  ],\n  \"idempotentKey\": \"venue-{{runId}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -7400,7 +7400,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"hallId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"10:00\",\n  \"endTime\": \"18:00\",\n  \"slotType\": \"FULL_DAY\",\n  \"guestCount\": 400,\n  \"eventType\": \"WEDDING\",\n  \"roomCount\": 2,\n  \"idempotentKey\": \"hall-{{runId}}\"\n}",
+              "raw": "{\n  \"hallId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"10:00\",\n  \"endTime\": \"18:00\",\n  \"slotType\": \"FULL_DAY\",\n  \"guestCount\": 400,\n  \"eventType\": \"WEDDING\",\n  \"roomCount\": 2,\n  \"couponCodes\": [\n    \"{{couponCode}}\",\n    \"{{adminCouponCode}}\"\n  ],\n  \"idempotentKey\": \"hall-{{runId}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -8166,7 +8166,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"hallId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"18:00\",\n  \"endTime\": \"23:00\",\n  \"guestCount\": 400\n}",
+              "raw": "{\n  \"hallId\": \"{{hallId}}\",\n  \"startDate\": \"2027-06-25\",\n  \"endDate\": \"2027-06-26\",\n  \"startTime\": \"18:00\",\n  \"endTime\": \"23:00\",\n  \"guestCount\": 400,\n  \"couponCodes\": [\n    \"{{couponCode}}\",\n    \"{{adminCouponCode}}\"\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -10667,7 +10667,10 @@
                 "type": "text/javascript",
                 "exec": [
                   "const d = pm.response.json().data;",
-                  "if (d && d.id) pm.collectionVariables.set(\"couponId\", d.id);",
+                  "if (d && d.id) {",
+                  "  pm.collectionVariables.set(\"couponId\", d.id);",
+                  "  if (d.code) pm.collectionVariables.set(\"couponCode\", d.code);",
+                  "}",
                   "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -10864,7 +10867,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"code\": \"WED{{runId}}\",\n  \"amount\": 200000,\n  \"facilityId\": \"{{hallId}}\"\n}",
+              "raw": "{\n  \"code\": \"{{couponCode}}\",\n  \"codes\": [\n    \"{{couponCode}}\",\n    \"{{adminCouponCode}}\"\n  ],\n  \"amount\": 200000,\n  \"facilityId\": \"{{hallId}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -10953,7 +10956,10 @@
                 "type": "text/javascript",
                 "exec": [
                   "const d = pm.response.json().data;",
-                  "if (d && d.id) pm.collectionVariables.set(\"adminCouponId\", d.id);",
+                  "if (d && d.id) {",
+                  "  pm.collectionVariables.set(\"adminCouponId\", d.id);",
+                  "  if (d.code) pm.collectionVariables.set(\"adminCouponCode\", d.code);",
+                  "}",
                   "",
                   "if (pm.response.code === 201) {",
                   "    pm.test(\"201 carries a Location header\", function () {",
@@ -15778,7 +15784,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Royal Grand Palace\",\n  \"contactPhone\": \"+919876543210\",\n  \"basePricePerDay\": 125000,\n  \"discountPercent\": 15,\n  \"discountLabel\": \"Monsoon offer\"\n}",
+              "raw": "{\n  \"name\": \"Royal Grand Palace\",\n  \"contactPhone\": \"+919876543210\",\n  \"basePricePerDay\": 125000,\n  \"discountPercent\": 15,\n  \"discountLabel\": \"Monsoon offer\",\n  \"status\": \"APPROVED\",\n  \"isVerified\": true,\n  \"isFeatured\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -17836,8 +17842,16 @@
       "value": "00000000-0000-0000-0000-000000000000"
     },
     {
+      "key": "couponCode",
+      "value": "WEDDING15"
+    },
+    {
       "key": "adminCouponId",
       "value": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "key": "adminCouponCode",
+      "value": "ALLHALLS10"
     },
     {
       "key": "notificationId",
