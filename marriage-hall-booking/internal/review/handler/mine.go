@@ -1,8 +1,12 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
@@ -98,4 +102,100 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
 		"totalReviews":   total,
 		"avgRatingGiven": avg,
 	})
+}
+
+// myEntityReview is the response shape for GET /api/v1/reviews/me?type=hotel|hall&id={id}.
+type myEntityReview struct {
+	ID           string     `json:"id"`
+	EntityID     string     `json:"entityId"`
+	FacilityID   string     `json:"facilityId"`
+	EntityType   string     `json:"entityType"`
+	FacilityName string     `json:"facilityName"`
+	FacilityCity *string    `json:"facilityCity,omitempty"`
+	Rating       int        `json:"rating"`
+	Title        *string    `json:"title"`
+	Comment      *string    `json:"comment"`
+	Status       string     `json:"status"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    *time.Time `json:"updatedAt,omitempty"`
+}
+
+// getMineForEntity handles GET /api/v1/reviews/me?type=hotel&id={id}
+// and GET /api/v1/reviews/me?type=hall&id={id}.
+func (h *Handler) getMineForEntity(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "Authentication required", "UNAUTHORIZED")
+		return
+	}
+
+	entityType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	if entityType != "hotel" && entityType != "hall" {
+		response.Error(w, http.StatusBadRequest, "type parameter is required and must be either 'hotel' or 'hall'", "VALIDATION_ERROR")
+		return
+	}
+
+	entityID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if entityID == "" || !httpx.ValidUUID(entityID) {
+		response.Error(w, http.StatusBadRequest, "A valid id is required", "VALIDATION_ERROR")
+		return
+	}
+
+	dbType := "HOTEL"
+	entityLabel := "Hotel"
+	if entityType == "hall" {
+		dbType = "MARRIAGE_HALL"
+		entityLabel = "Hall"
+	}
+
+	// 1. Verify that the specified hotel or hall exists.
+	var facilityName string
+	err := h.db.QueryRow(r.Context(), `
+		SELECT name
+		  FROM facilities
+		 WHERE id = $1 AND type = $2 AND is_deleted = FALSE`,
+		entityID, dbType).Scan(&facilityName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		response.Error(w, http.StatusNotFound, entityLabel+" not found", "NOT_FOUND")
+		return
+	}
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	// 2. Fetch the user's review for this entity.
+	var rev myEntityReview
+	rev.EntityID = entityID
+	rev.FacilityID = entityID
+	rev.EntityType = entityType
+	rev.FacilityName = facilityName
+
+	err = h.db.QueryRow(r.Context(), `
+		SELECT r.id::text, f.city, r.rating, r.title, r.comment, r.status, r.created_at, r.updated_at
+		  FROM reviews r
+		  JOIN facilities f ON f.id = r.facility_id
+		 WHERE r.facility_id = $1
+		   AND r.user_id = $2
+		   AND r.is_deleted = FALSE`,
+		entityID, userID).Scan(
+		&rev.ID,
+		&rev.FacilityCity,
+		&rev.Rating,
+		&rev.Title,
+		&rev.Comment,
+		&rev.Status,
+		&rev.CreatedAt,
+		&rev.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		response.Error(w, http.StatusNotFound, "Review not found for this "+entityType, "REVIEW_NOT_FOUND")
+		return
+	}
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+
+	response.OK(w, "Review retrieved successfully", rev)
 }

@@ -26,17 +26,18 @@ func TestGenerateReferenceID(t *testing.T) {
 
 func TestBookingJSONContainsReferenceID(t *testing.T) {
 	b := Booking{
-		ID:               "11111111-2222-3333-4444-555555555555",
-		ReferenceID:      "BK-A1B2C3D4E5",
-		BookingReference: "BK-A1B2C3D4E5",
-		UserID:           100,
-		TargetType:       "HALL",
-		TargetID:         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-		CheckIn:          time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC),
-		CheckOut:         time.Date(2027, 5, 2, 0, 0, 0, 0, time.UTC),
-		TotalAmount:      150000,
-		PaidAmount:       50000,
-		Status:           "CONFIRMED",
+		ID:          "11111111-2222-3333-4444-555555555555",
+		ReferenceID: "BK-A1B2C3D4E5",
+		UserID:      100,
+		TargetType:  "HALL",
+		TargetID:    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		CheckIn:     time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC),
+		StartDate:   time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC),
+		CheckOut:    time.Date(2027, 5, 2, 0, 0, 0, 0, time.UTC),
+		EndDate:     time.Date(2027, 5, 2, 0, 0, 0, 0, time.UTC),
+		TotalAmount: 150000,
+		PaidAmount:  50000,
+		Status:      "CONFIRMED",
 		Payments: []BookingPayment{
 			{
 				ID:          "pay-123",
@@ -58,8 +59,20 @@ func TestBookingJSONContainsReferenceID(t *testing.T) {
 	if !strings.Contains(raw, `"referenceId":"BK-A1B2C3D4E5"`) {
 		t.Errorf("expected JSON to contain referenceId, got: %s", raw)
 	}
-	if !strings.Contains(raw, `"bookingReference":"BK-A1B2C3D4E5"`) {
-		t.Errorf("expected JSON to contain bookingReference, got: %s", raw)
+	if !strings.Contains(raw, `"startDate":"2027-05-01T00:00:00Z"`) {
+		t.Errorf("expected JSON to contain startDate, got: %s", raw)
+	}
+	if !strings.Contains(raw, `"endDate":"2027-05-02T00:00:00Z"`) {
+		t.Errorf("expected JSON to contain endDate, got: %s", raw)
+	}
+	if strings.Contains(raw, `"bookingReference"`) {
+		t.Errorf("expected JSON to omit duplicate bookingReference, got: %s", raw)
+	}
+	if strings.Contains(raw, `"checkIn"`) {
+		t.Errorf("expected JSON to omit duplicate checkIn, got: %s", raw)
+	}
+	if strings.Contains(raw, `"checkOut"`) {
+		t.Errorf("expected JSON to omit duplicate checkOut, got: %s", raw)
 	}
 	if !strings.Contains(raw, `"payments":[`) {
 		t.Errorf("expected JSON to contain payments, got: %s", raw)

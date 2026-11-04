@@ -40,6 +40,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// Registered before the facility routes so the literal path wins; a user
 	// reading their own reviews needs no facility id.
 	mux.Handle("GET /api/v1/reviews/my-reviews", auth(http.HandlerFunc(h.listMine)))
+	mux.Handle("GET /api/v1/reviews/me", auth(http.HandlerFunc(h.getMineForEntity)))
 	mux.Handle("POST /api/v1/reviews", auth(http.HandlerFunc(h.create)))
 	mux.Handle("DELETE /api/v1/reviews/{id}", auth(http.HandlerFunc(h.delete)))
 }

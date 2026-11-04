@@ -336,7 +336,6 @@ const BODIES = {
     eventType: "WEDDING",
     roomCount: 2,
     couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
-    idempotentKey: "venue-{{runId}}",
   },
   "POST /api/v1/bookings/halls": {
     hallId: "{{hallId}}",
@@ -349,7 +348,6 @@ const BODIES = {
     eventType: "WEDDING",
     roomCount: 2,
     couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
-    idempotentKey: "hall-{{runId}}",
   },
   "PATCH /api/v1/admin/facilities/{id}": {
     name: "Royal Grand Palace",
@@ -452,7 +450,6 @@ const BODIES = {
     checkIn: "2027-05-01",
     checkOut: "2027-05-03",
     rooms: [{ roomTypeId: "{{roomTypeId}}", quantity: 2 }],
-    idempotentKey: "hotel-{{runId}}",
     guestName: "Priya Sharma",
     guestEmail: "{{customerEmail}}",
     guestPhone: "{{customerPhone}}",
@@ -557,21 +554,90 @@ const BODIES = {
   },
 };
 
-// Query strings worth pre-filling
+// Comprehensive descriptions for query parameters accepted during API testing
+const PARAM_DESCRIPTIONS = {
+  category: "Filter event types by category (Allowed: WEDDING, SOCIAL, CORPORATE, OTHER)",
+  type: "Filter by venue/facility/amenity type (Allowed: ALL, HALL, HOTEL)",
+  venueType: "Target venue type (Allowed: ALL, HALL, HOTEL)",
+  eventType: "Filter venues hosting this event type (e.g. WEDDING, RECEPTION, BIRTHDAY)",
+  search: "Full-text search keyword for name, address, or business",
+  q: "Search query or autocomplete keyword prefix",
+  city: "City name filter (e.g. Bengaluru, Mumbai, Delhi)",
+  page: "0-indexed page number for pagination (default: 0)",
+  size: "Page size limit (default: 20, max: 100)",
+  limit: "Maximum number of items to return (default: 20)",
+  lat: "User/caller latitude coordinate for distance calculation",
+  lng: "User/caller longitude coordinate for distance calculation",
+  radiusKm: "Search/coupon radius in kilometers (default: 50, max: 500)",
+  status: "Filter by status (e.g. PENDING, CONFIRMED, CANCELLED, COMPLETED, REJECTED, EXPIRED)",
+  ref: "Search by unique Booking Reference ID (e.g. BK-B0ED430951)",
+  bookingReference: "Search by unique Booking Reference ID (alias for ref)",
+  facilityId: "Specific facility/venue UUID to evaluate scope or eligibility",
+  hotelId: "Specific hotel UUID",
+  hallId: "Specific marriage hall UUID",
+  venueId: "Specific venue UUID",
+  ids: "Comma-separated facility UUIDs (e.g. {{hallId}},{{hallId2}} for comparison)",
+  venue_ids: "Comma-separated facility UUIDs for comparison",
+  minCapacity: "Minimum guest capacity (e.g. 100)",
+  maxCapacity: "Maximum guest capacity (e.g. 1000)",
+  minBudget: "Minimum budget/price in INR (e.g. 100000)",
+  maxBudget: "Maximum budget/price in INR (e.g. 500000)",
+  amenities: "Comma-separated amenities (e.g. PARKING, AIR_CONDITIONING, CATERING)",
+  sort: "Sort order: PRICE_LOW_TO_HIGH, PRICE_HIGH_TO_LOW, RATING_DESC, DISTANCE_ASC",
+  unreadOnly: "Filter unread notifications only (true/false)",
+  before: "RFC3339 cursor timestamp for notification feed pagination",
+  entity: "Decision entity type (BOOKING, KYC, FACILITY, REVIEW)",
+  from: "RFC3339 start timestamp for analytics range",
+  until: "RFC3339 end timestamp for analytics range",
+  role: "User role filter (ROLE_CUSTOMER, ROLE_VENDOR, ROLE_ADMIN, ROLE_SUPER_ADMIN)",
+  amount: "Transaction amount in INR",
+  reason: "Reason for cancellation, rejection, or refund",
+  note: "Internal administrative note or resolution comment",
+  searchId: "Search tracking UUID for view attribution",
+};
+
+// Descriptions for URL path variables (e.g. :id, :facilityId)
+const PATH_DESCRIPTIONS = {
+  id: "Target resource UUID or identifier",
+  facilityId: "Facility / Venue UUID",
+  hallId: "Marriage Hall UUID",
+  hotelId: "Hotel UUID",
+  bookingId: "Booking UUID or Reference ID",
+  paymentId: "Payment UUID",
+  vendorId: "Vendor business UUID",
+  quoteId: "Quote request UUID",
+  reportId: "Fraud report UUID",
+  token: "One-click action token from SMS/Email",
+  filename: "Uploaded media file name (e.g. photo.jpg)",
+  faqId: "FAQ record ID",
+  amenityId: "Amenity code or ID",
+  policyId: "Policy UUID",
+  ruleId: "Rule UUID",
+  packageId: "Hall package UUID",
+  addonId: "Add-on service UUID",
+  roomTypeId: "Hotel room type UUID",
+  imageId: "Venue gallery image UUID",
+  videoId: "Venue gallery video UUID",
+  messageId: "Help message UUID",
+  userId: "User ID",
+};
+
+// Query strings pre-filling all accepted parameters for API testing
 const QUERIES = {
+  "GET /api/v1/events": "category=WEDDING",
   "GET /api/v1/admin/analytics/decisions": "entity=&from=&until=",
   "GET /api/v1/users/me/dashboard": "lat=12.9716&lng=77.5946",
-  "GET /api/v1/facilities": "type=HALL&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
-  "GET /api/v1/venues": "type=&eventType=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
+  "GET /api/v1/facilities": "type=HALL&eventType=WEDDING&search=&city=Bengaluru&page=0&size=20&lat=12.9716&lng=77.5946",
+  "GET /api/v1/venues": "type=HALL&eventType=WEDDING&search=&city=Bengaluru&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls": "search=&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls/my-halls": "page=0&size=20",
   "GET /api/v1/hotels/my-hotels": "page=0&size=20",
-  "GET /api/v1/amenities": "",
-  "GET /api/v1/bookings": "page=0&size=20",
-  "GET /api/v1/bookings/owner": "status=&page=0&size=20",
-  "GET /api/v1/coupons/available": "lat=12.9716&lng=77.5946&radiusKm=50",
-  "GET /api/v1/coupons/offers": "lat=12.9716&lng=77.5946&radiusKm=50",
-  "GET /api/v1/notifications": "limit=20&unreadOnly=&before=",
+  "GET /api/v1/amenities": "type=ALL",
+  "GET /api/v1/bookings": "page=0&size=20&status=&ref=",
+  "GET /api/v1/bookings/owner": "status=&page=0&size=20&ref=",
+  "GET /api/v1/coupons/available": "facilityId={{hallId}}&venueType=ALL&lat=12.9716&lng=77.5946&radiusKm=50",
+  "GET /api/v1/coupons/offers": "facilityId={{hallId}}&venueType=ALL&lat=12.9716&lng=77.5946&radiusKm=50",
+  "GET /api/v1/notifications": "limit=20&unreadOnly=false&before=",
   "GET /api/v1/facilities/compare": "type=hall&ids={{hallId}},{{hallId2}}&lat=12.9716&lng=77.5946",
   "GET /api/v1/venues/compare": "type=hall&ids={{hallId}},{{hallId2}}&lat=12.9716&lng=77.5946",
   "GET /api/v1/users/me/favourites": "",
@@ -580,11 +646,11 @@ const QUERIES = {
   "GET /api/v1/quotes/owner": "status=&page=0&size=20",
   "GET /api/v1/reviews/facility/{facilityId}": "page=0&size=20",
   "GET /api/v1/admin/reviews": "status=PENDING&page=0&size=20",
-  "GET /api/v1/admin/users": "search=&page=0&size=20",
-  "GET /api/v1/admin/vendors": "status=PENDING&page=0&size=20",
-  "GET /api/v1/admin/facilities": "type=&search=&page=0&size=20",
+  "GET /api/v1/admin/users": "search=&role=&status=&page=0&size=20",
+  "GET /api/v1/admin/vendors": "status=PENDING&search=&page=0&size=20",
+  "GET /api/v1/admin/facilities": "type=&status=&search=&page=0&size=20",
   "GET /api/v1/admin/dashboard": "",
-  "GET /api/v1/search/venues": "city=Bengaluru&venueType=HALL&minCapacity=100&maxCapacity=1000&minBudget=100000&maxBudget=500000&amenities=Parking&sort=PRICE_LOW_TO_HIGH&page=0&size=20",
+  "GET /api/v1/search/venues": "city=Bengaluru&venueType=HALL&eventType=WEDDING&minCapacity=100&maxCapacity=1000&minBudget=100000&maxBudget=500000&amenities=PARKING&sort=PRICE_LOW_TO_HIGH&page=0&size=20",
   "GET /api/v1/search/autocomplete": "q=Kum",
   "GET /api/v1/search/suggestions": "q=Beng",
   "GET /api/v1/search/venues/{id}/similar": "limit=10",
@@ -1531,16 +1597,64 @@ function requestName(method, p) {
 }
 
 function describe(method, p, folder) {
-  const resource = folder.replace(/s$/i, "").toLowerCase();
-  if (method === "GET") {
-    const what = p.includes("{") ? "Fetches" : "Lists";
-    return `${what} ${resource} data. See response for shape.`;
+  const key = `${method} ${p}`;
+  const token = REQUEST_TOKEN[key] || FOLDER_TOKEN[folder];
+  let authDesc = "Public Endpoint (No Token Required)";
+  if (NO_AUTH.has(key)) {
+    authDesc = "Public Endpoint (No Token Required)";
+  } else if (token === "adminToken") {
+    authDesc = "Admin / Super Admin Bearer JWT (`Authorization: Bearer {{adminToken}}`)";
+  } else if (token === "ownerToken") {
+    authDesc = "Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)";
+  } else if (token === "accessToken") {
+    authDesc = "Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)";
   }
-  if (method === "POST") return `Creates or acts on a ${resource} record.`;
-  if (method === "PUT") return `Updates ${resource}. Send full object.`;
-  if (method === "PATCH") return `Partially updates ${resource}. Omitted fields remain untouched.`;
-  if (method === "DELETE") return `Deletes ${resource} record.`;
-  return "";
+
+  let lines = [];
+  lines.push(`## ${method} ${p}`);
+  lines.push(`- **Module:** ${folder}`);
+  lines.push(`- **Authentication:** ${authDesc}`);
+  lines.push("");
+
+  const query = QUERIES[key];
+  if (query) {
+    lines.push(`### 🔍 Accepted Query Parameters (Params Tab):`);
+    const qParts = query.split("&");
+    for (const q of qParts) {
+      const idx = q.indexOf("=");
+      const qKey = idx >= 0 ? q.slice(0, idx) : q;
+      const qVal = idx >= 0 ? q.slice(idx + 1) : "";
+      const qDesc = PARAM_DESCRIPTIONS[qKey] || "Optional query filter";
+      lines.push(`- **\`${qKey}\`** (Sample: \`${qVal || "(empty)"}\`) — ${qDesc}`);
+    }
+    lines.push("");
+  }
+
+  const pathVars = (p.match(/\{[^}]+\}/g) || []).map((v) => v.slice(1, -1));
+  if (pathVars.length > 0) {
+    lines.push(`### 📌 Accepted Path Variables (URL Path):`);
+    for (const pv of pathVars) {
+      const pvDesc = PATH_DESCRIPTIONS[pv] || "Target identifier";
+      lines.push(`- **\`:${pv}\`** — ${pvDesc}`);
+    }
+    lines.push("");
+  }
+
+  const body = BODIES[key];
+  if (body) {
+    lines.push(`### 📦 Accepted Request Body Fields (JSON):`);
+    for (const [k, v] of Object.entries(body)) {
+      const type = Array.isArray(v) ? "Array" : typeof v;
+      lines.push(`- **\`${k}\`** (${type}) — Sample value: \`${JSON.stringify(v)}\``);
+    }
+    lines.push("");
+  }
+
+  lines.push(`### 🧪 Testing Notes:`);
+  lines.push(`- Pre-configured with collection variables like \`{{baseUrl}}\`, \`{{accessToken}}\`, \`{{ownerToken}}\`, \`{{adminToken}}\`.`);
+  lines.push(`- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.`);
+
+  return lines.join("\n");
 }
 
 function buildRequest(folder, method, p) {
@@ -1554,18 +1668,29 @@ function buildRequest(folder, method, p) {
   if (query) {
     url.query = query.split("&").map((param) => {
       const idx = param.indexOf("=");
-      return idx >= 0
-        ? { key: param.slice(0, idx), value: param.slice(idx + 1) }
-        : { key: param, value: "" };
+      const qKey = idx >= 0 ? param.slice(0, idx) : param;
+      const qVal = idx >= 0 ? param.slice(idx + 1) : "";
+      const desc = PARAM_DESCRIPTIONS[qKey] || "Query parameter";
+      return {
+        key: qKey,
+        value: qVal,
+        description: desc,
+      };
     });
   }
 
   const variables = segs
     .filter((s) => s.startsWith(":"))
-    .map((s) => ({
-      key: s.slice(1),
-      value: `{{${pathVar(p, s.slice(1))}}}`,
-    }));
+    .map((s) => {
+      const varKey = s.slice(1);
+      const varName = pathVar(p, varKey);
+      const desc = PATH_DESCRIPTIONS[varKey] || PATH_DESCRIPTIONS[varName] || "Path parameter";
+      return {
+        key: varKey,
+        value: `{{${varName}}}`,
+        description: desc,
+      };
+    });
   if (variables.length > 0) url.variable = variables;
 
   const headers = [];
@@ -2259,9 +2384,20 @@ const FOLDER_DESC = {
     ],
   };
 
+  const jsonStr = JSON.stringify(collection, null, 2) + "\n";
   const outPath = path.join(ROOT, "postman_collection.json");
-  fs.writeFileSync(outPath, JSON.stringify(collection, null, 2) + "\n", "utf8");
+  fs.writeFileSync(outPath, jsonStr, "utf8");
   console.error(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
+
+  // Save to workspace root d:/Codes/venue
+  const parentRoot = path.resolve(ROOT, "..", "..");
+  const parentOutPath = path.join(parentRoot, "postman_collection.json");
+  fs.writeFileSync(parentOutPath, jsonStr, "utf8");
+  console.error(`Also updated parent postman_collection.json -> ${parentOutPath}`);
+
+  const dedicatedPath = path.join(parentRoot, "POSTMAN_COLLECTION_WITH_PARAMS.json");
+  fs.writeFileSync(dedicatedPath, jsonStr, "utf8");
+  console.error(`Created new dedicated collection -> ${dedicatedPath}`);
 }
 
 main();

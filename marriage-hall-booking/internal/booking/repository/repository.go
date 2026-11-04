@@ -41,23 +41,20 @@ type BookingUser struct {
 }
 
 type Booking struct {
-	ID               string          `json:"id"`
-	ReferenceID      string          `json:"referenceId"`
-	BookingReference string          `json:"bookingReference,omitempty"`
-	UserID           int64           `json:"userId"`
-	User             *BookingUser    `json:"user,omitempty"`
-	TargetType       string          `json:"targetType"`
-	TargetID         string          `json:"targetId"`
-	CheckIn          time.Time       `json:"checkIn"`
-	// StartDate/EndDate are checkIn/checkOut under the names the booking screen
-	// uses; both spellings are returned so neither client has to translate.
-	StartDate  time.Time `json:"startDate"`
-	CheckOut   time.Time `json:"checkOut"`
-	EndDate    time.Time `json:"endDate"`
-	StartTime  *string   `json:"startTime"`
-	EndTime    *string   `json:"endTime"`
-	GuestCount *int      `json:"guestCount"`
-	RoomCount  *int      `json:"roomCount"`
+	ID          string       `json:"id"`
+	ReferenceID string       `json:"referenceId"`
+	UserID      int64        `json:"userId"`
+	User        *BookingUser `json:"user,omitempty"`
+	TargetType  string       `json:"targetType"`
+	TargetID    string       `json:"targetId"`
+	CheckIn     time.Time    `json:"-"`
+	StartDate   time.Time    `json:"startDate"`
+	CheckOut    time.Time    `json:"-"`
+	EndDate     time.Time    `json:"endDate"`
+	StartTime   *string      `json:"startTime"`
+	EndTime     *string      `json:"endTime"`
+	GuestCount  *int         `json:"guestCount"`
+	RoomCount   *int         `json:"roomCount"`
 
 	// Facility and review state are joined in for the "my bookings" screen:
 	// without them a client holds a bare targetId and has to fetch each venue
@@ -160,7 +157,6 @@ func scan(row pgx.Row) (*Booking, error) {
 		return nil, ErrNotFound
 	}
 	b.StartDate, b.EndDate = b.CheckIn, b.CheckOut
-	b.BookingReference = b.ReferenceID
 	return &b, err
 }
 
