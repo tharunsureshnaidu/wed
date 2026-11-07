@@ -38,9 +38,10 @@ type AuthService struct {
 	otp      *OtpService
 	tokens   *TokenService
 	resetURL string
-	// OnUserCreated creates the matching user_profiles row. A func rather than a
+	// OnUserCreated creates the matching user_profiles row, plus an addresses
+	// row when the signup gave one (addr is nil otherwise). A func rather than a
 	// package dependency so auth does not import the user module.
-	OnUserCreated func(ctx context.Context, userID int64, firstName string, lastName *string) error
+	OnUserCreated func(ctx context.Context, userID int64, firstName string, lastName *string, addr *Address) error
 
 	// OnVendorCreated creates the vendors row behind a vendor signup. Without
 	// it /auth/register/vendor produced an account that could not act as a
@@ -48,7 +49,9 @@ type AuthService struct {
 	// next call - POST /facilities - returned 403 VENDOR_REQUIRED telling the
 	// user to "create your vendor business first", which is exactly what they
 	// believed registering had done.
-	OnVendorCreated func(ctx context.Context, userID int64, businessName string) error
+	//
+	// businessAddress is the signup address on one line, nil when none was given.
+	OnVendorCreated func(ctx context.Context, userID int64, businessName string, businessAddress *string) error
 }
 
 func NewAuthService(repo *repository.Repo, otp *OtpService, tokens *TokenService, resetURL string) *AuthService {
@@ -64,7 +67,6 @@ type AuthResult struct {
 type UserView struct {
 	ID          int64    `json:"id"`
 	FullName    string   `json:"fullName"`
-	Name        string   `json:"name,omitempty"`
 	Email       *string  `json:"email"`
 	PhoneNumber *string  `json:"phoneNumber"`
 	Address     *string  `json:"address"`
@@ -76,8 +78,39 @@ type RegisterInput struct {
 	FullName    string
 	Email       *string
 	PhoneNumber *string
-	Address     *string
+	Address     *string // one line, stored in users.address
 	Password    string
+	// AddressParts is the structured form, saved to the addresses table; its
+	// joined line fills users.address when Address is nil. Nil means none given.
+	AddressParts *Address
+}
+
+// Address is the optional signup address, in the shape of the addresses table.
+// Every part is optional: a signup form asking only for a city is still useful.
+type Address struct {
+	Street  *string `json:"street"`
+	City    *string `json:"city"`
+	State   *string `json:"state"`
+	ZipCode *string `json:"zipCode"`
+	Country *string `json:"country"`
+}
+
+// Line joins the parts that are present, for the free-text vendors.business_address.
+func (a *Address) Line() *string {
+	if a == nil {
+		return nil
+	}
+	var parts []string
+	for _, p := range []*string{a.Street, a.City, a.State, a.ZipCode, a.Country} {
+		if p != nil && *p != "" {
+			parts = append(parts, *p)
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	line := strings.Join(parts, ", ")
+	return &line
 }
 
 func (s *AuthService) Register(ctx context.Context, in RegisterInput, ip string) error {
@@ -133,11 +166,15 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 		return nil, err
 	}
 
+	line := in.Address
+	if line == nil {
+		line = in.AddressParts.Line()
+	}
 	u := &domain.User{
 		FullName:     in.FullName,
 		Email:        in.Email,
 		PhoneNumber:  in.PhoneNumber,
-		Address:      in.Address,
+		Address:      line,
 		PasswordHash: string(hash),
 		Status:       domain.StatusPendingVerification,
 		Roles:        []string{role},
@@ -151,20 +188,20 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 
 	if s.OnUserCreated != nil {
 		first, last := splitName(in.FullName)
-		if err := s.OnUserCreated(ctx, id, first, last); err != nil {
+		if err := s.OnUserCreated(ctx, id, first, last, in.AddressParts); err != nil {
 			logger.Error("create profile", "userId", id, logger.Err(err))
 		}
 	}
 
 	// A vendor signup gets its business straight away, seeded with the name
 	// they registered under. business_name is the only field the table
-	// requires, and PUT /api/v1/vendors/me remains how the real address, phone
-	// and KYC details are filled in.
+	// requires. The signup address, if any, seeds business_address the same
+	// way; PUT /api/v1/vendors/me remains how phone and KYC details are filled in.
 	//
 	// Best-effort like the profile above: a failed insert must not roll back a
 	// created account. The user can still call PUT /vendors/me themselves.
 	if role == domain.RoleHallOwner && s.OnVendorCreated != nil {
-		if err := s.OnVendorCreated(ctx, id, in.FullName); err != nil {
+		if err := s.OnVendorCreated(ctx, id, in.FullName, line); err != nil {
 			logger.Error("create vendor business", "userId", id, logger.Err(err))
 		}
 	}
@@ -184,7 +221,7 @@ func (s *AuthService) createAccount(ctx context.Context, in RegisterInput, ip, r
 	return u, nil
 }
 
-// Login checks the password before any account-state check, so that lock,
+// Login checks the password before any account state except the lock, so
 // suspension and verification states are only learnable by someone who already
 // proved they know the password.
 func (s *AuthService) Login(ctx context.Context, identifier, password, ip, device string) (*AuthResult, error) {
@@ -198,45 +235,65 @@ func (s *AuthService) Login(ctx context.Context, identifier, password, ip, devic
 		return nil, err
 	}
 
+	// A lock is refused before the password is looked at, with the same 401 as
+	// a wrong one. Checked after the password, it never slowed guessing - it
+	// only told a distributed guesser, by a 423, exactly which guess was right.
+	// The decoy compare keeps this path as slow as a real one.
+	if u.AccountLockedUntil != nil && u.AccountLockedUntil.After(time.Now()) {
+		bcrypt.CompareHashAndPassword(decoyHash, []byte(password))
+		s.recordFailure(ctx, identifier, ip, "Account locked")
+		return nil, apperr.Unauthorized("INVALID_CREDENTIALS", invalidCredentials)
+	}
+
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
 		s.recordFailure(ctx, identifier, ip, "Invalid password")
 		return nil, apperr.Unauthorized("INVALID_CREDENTIALS", invalidCredentials)
 	}
 
 	if u.AccountLockedUntil != nil {
-		if u.AccountLockedUntil.After(time.Now()) {
-			return nil, apperr.New(423, "ACCOUNT_LOCKED", "Account is locked")
-		}
 		// Lock elapsed - clear it so the counter starts fresh.
 		if err := s.repo.ClearExpiredLock(ctx, u.ID); err != nil {
 			return nil, err
 		}
 	}
-	if u.IsDeleted {
-		return nil, apperr.Forbidden("ACCOUNT_DELETED", "Account has been deleted")
-	}
-	if u.Status == domain.StatusSuspended {
-		return nil, apperr.Forbidden("ACCOUNT_SUSPENDED", "Account is suspended")
-	}
-	// Verification gates vendors, not customers. A customer who signed up and
-	// has not yet opened the OTP mail should still be able to browse and book;
-	// locking them out of an account they just created is the surest way to
-	// lose them. A vendor is different: their listing carries a contact that
-	// real customers will rely on, so the contact is confirmed before they can
-	// publish one.
-	//
-	// The status is left as PENDING_VERIFICATION rather than flipped to ACTIVE,
-	// so "never verified" stays visible to ops and can gate a future action.
-	if u.Status == domain.StatusPendingVerification &&
-		u.HasRole(domain.RoleHallOwner) && !u.IsVerified() {
-		return nil, apperr.Forbidden("UNVERIFIED_ACCOUNT",
-			"Verify your email or phone to access your vendor account")
+	if err := canSignIn(u); err != nil {
+		return nil, err
 	}
 
 	if err := s.repo.RecordSuccessfulAttempt(ctx, identifier, ip); err != nil {
 		return nil, err
 	}
 	return s.issue(ctx, u, ip, device)
+}
+
+// canSignIn is the one account-state gate for issuing a session from a
+// password or a refresh token. Login and Refresh used to carry their own copies
+// and drifted: an INACTIVE user could log in, then was signed out at the first
+// refresh - the worst of both behaviours.
+//
+// Verification gates vendors, not customers. A customer who signed up and has
+// not yet opened the OTP mail should still be able to browse and book; locking
+// them out of an account they just created is the surest way to lose them. A
+// vendor's listing carries a contact real customers will rely on, so it is
+// confirmed first. The status is left as PENDING_VERIFICATION rather than
+// flipped to ACTIVE, so "never verified" stays visible to ops.
+func canSignIn(u *domain.User) error {
+	switch {
+	case u.IsDeleted:
+		return apperr.Forbidden("ACCOUNT_DELETED", "Account has been deleted")
+	case u.Status == domain.StatusSuspended:
+		return apperr.Forbidden("ACCOUNT_SUSPENDED", "Account is suspended")
+	case u.Status == domain.StatusPendingVerification:
+		if u.HasRole(domain.RoleHallOwner) && !u.IsVerified() {
+			return apperr.Forbidden("UNVERIFIED_ACCOUNT",
+				"Verify your email or phone to access your vendor account")
+		}
+		return nil
+	case u.Status == domain.StatusActive:
+		return nil
+	default: // INACTIVE, or a status added later: closed until someone opens it
+		return apperr.Forbidden("USER_INACTIVE", "User account is inactive or disabled")
+	}
 }
 
 func (s *AuthService) recordFailure(ctx context.Context, identifier, ip, reason string) {
@@ -296,13 +353,8 @@ func (s *AuthService) Refresh(ctx context.Context, raw, ip, device string) (*Aut
 	if err != nil {
 		return nil, err
 	}
-	// Mirrors the login gate exactly. Allowing an unverified customer to log in
-	// but not to refresh would sign them out an hour later with no explanation
-	// - the worst of both behaviours.
-	pendingOnly := u.Status == domain.StatusPendingVerification &&
-		!u.HasRole(domain.RoleHallOwner)
-	if (u.Status != domain.StatusActive && !pendingOnly) || u.IsDeleted {
-		return nil, apperr.Forbidden("USER_INACTIVE", "User account is inactive or disabled")
+	if err := canSignIn(u); err != nil {
+		return nil, err
 	}
 	return s.issue(ctx, u, ip, device)
 }
@@ -331,9 +383,15 @@ func (s *AuthService) ForgotPassword(ctx context.Context, identifier, ip string)
 		logger.Warn("password reset token not issued", "identifier", identifier, logger.Err(err))
 		return nil
 	}
-	logger.Warn("password reset link logged instead of emailed",
-		"identifier", identifier,
-		"link", fmt.Sprintf("%s?identifier=%s&token=%s", s.resetURL, url.QueryEscape(identifier), token))
+	link := fmt.Sprintf("%s?identifier=%s&token=%s", s.resetURL, url.QueryEscape(identifier), token)
+	// The link is a password reset for this account: anyone who can read the
+	// log could take it over. Logged only under the same dev switch as OTPs.
+	if s.otp.LogCodes {
+		logger.Warn("password reset link logged (LOG_OTP_CODES=true)", "identifier", identifier, "link", link)
+	}
+	s.otp.deliver(ctx, identifier, "Reset your password",
+		fmt.Sprintf("Use this link to reset your password. It expires in %d minutes and works once. "+
+			"If you did not ask for it, ignore this message.\n\n%s", int(otpExpiry.Minutes()), link))
 	return nil
 }
 
@@ -393,7 +451,6 @@ func view(u *domain.User) UserView {
 	return UserView{
 		ID:          u.ID,
 		FullName:    u.FullName,
-		Name:        u.FullName,
 		Email:       u.Email,
 		PhoneNumber: u.PhoneNumber,
 		Address:     u.Address,

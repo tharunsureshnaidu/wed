@@ -55,6 +55,16 @@ func TestHandleWithRetry(t *testing.T) {
 	if calls != 0 || !errors.Is(err, events.ErrPermanent) {
 		t.Errorf("malformed message: calls=%d err=%v, want 0 calls and a permanent error", calls, err)
 	}
+
+	// A panicking handler must not crash the worker: one attempt, then the DLQ.
+	calls = 0
+	err = handleWithRetry(context.Background(), "t", msg, func(context.Context, events.Envelope) error {
+		calls++
+		panic("boom")
+	})
+	if calls != 1 || !errors.Is(err, events.ErrPermanent) {
+		t.Errorf("panic: calls=%d err=%v, want 1 call and a permanent error", calls, err)
+	}
 }
 
 // Shutdown mid-retry must return promptly, not sit out the backoff - the

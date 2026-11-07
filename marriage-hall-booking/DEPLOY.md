@@ -159,8 +159,10 @@ Topics are created on demand — there is no separate topic-creation step.
 **Running without Kafka is supported.** Set `KAFKA_BROKERS=` (empty) in `.env`
 and publishing becomes a no-op: no connection attempts, no retry warnings, no
 errors on the request path (verified with the full 134-request suite — 0
-failures, 0 Kafka lines logged). Don't run `cmd/worker` in that case; it only
-consumes topics.
+failures, 0 Kafka lines logged). **Still run `cmd/worker`**: besides consuming
+topics it is what actually sends every notification, expires unpaid holds and
+sends booking reminders. Without it nothing is ever delivered and an abandoned
+booking holds its date forever.
 
 It must be set **in `.env`**, not exported in the shell: `.env` deliberately
 overrides the process environment, so an exported value is ignored.
@@ -181,18 +183,27 @@ sudo -u venue /usr/local/go/bin/go build -o bin/worker ./cmd/worker
 ### Configuration
 
 ```bash
-sudo -u venue cp .env.example .env
+sudo -u venue cp .env.production.example .env
 sudo -u venue chmod 600 .env
 sudo -u venue vi /opt/venue/app/.env
 ```
 
+Start from `.env.production.example`, not `.env.example`: the development
+template carries dev values (a fixed OTP, OTP logging) and key names the
+production checks expect you to fill. With `APP_ENV=production` both binaries
+**refuse to start** while anything below is still unsafe, and log which one.
+
 | Variable | Value |
 |---|---|
-| `DB_PASSWORD` | as set in §2 |
+| `DB_PASSWORD` | as set in §2 — the default `postgres` is refused |
+| `TRUSTED_PROXIES` | `127.0.0.1` for nginx on the same host (§8); without it every user shares one rate-limit bucket |
+| `SMTP_*` or `TWILIO_*` | at least one — OTPs and password-reset links have no other way to arrive |
+| `FRONTEND_RESET_PASSWORD_URL` | your frontend's reset page, not localhost |
+| `REDIS_ADDR` | Redis 7+ or Valkey — the rate limiter uses `EXPIRE ... NX` |
 | `JWT_SECRET` | **start-up fails without it** — `openssl rand -base64 48` |
 | `KAFKA_BROKERS` | `localhost:9092`, or empty to run without Kafka (§4) |
 | `PAYMENT_WEBHOOK_SECRET` | must match the gateway or webhooks are rejected |
-| `AWS_S3_BUCKET` / `AWS_S3_REGION` | empty means media goes to `./uploads` and is lost on redeploy |
+| `AWS_S3_BUCKET` / `AWS_S3_REGION` | required in production — local `./uploads` is lost on redeploy |
 | `APP_ENV` | `production` |
 | `CORS_ORIGINS` | your frontend origin, not `*` |
 | `OTP_FIXED_CODE` | **delete the line** — it makes every OTP the same value |
@@ -219,6 +230,8 @@ EnvironmentFile=/opt/venue/app/.env
 ExecStart=/opt/venue/app/bin/api
 Restart=always
 RestartSec=5
+# Requests drain for 10s, then in-flight events flush for up to 40s more.
+TimeoutStopSec=45
 
 [Install]
 WantedBy=multi-user.target
@@ -236,6 +249,7 @@ EnvironmentFile=/opt/venue/app/.env
 ExecStart=/opt/venue/app/bin/worker
 Restart=always
 RestartSec=5
+TimeoutStopSec=45
 
 [Install]
 WantedBy=multi-user.target
@@ -245,7 +259,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now venue-api venue-worker
 ```
 
-Skip the worker unit entirely if you set `KAFKA_BROKERS=` empty.
+Run the worker unit even with `KAFKA_BROKERS=` empty — it sends the
+notifications and expires holds either way (§4).
 
 `WorkingDirectory` matters: with local storage the app writes to `./uploads`
 relative to it.
@@ -257,7 +272,15 @@ relative to it.
 ```bash
 curl -s localhost:8080/health
 # {"success":true,...,"data":{"database":"UP","status":"UP"}}
+curl -s localhost:8080/readyz
+# ...,"data":{"database":"UP","redis":"UP","status":"UP"}  - redis DEGRADED means rate limiting is off
+```
 
+Point a load balancer's health check at `/readyz` (database required, 503 while
+shutting down) and a process supervisor's at `/livez` (no dependencies, so a
+database outage does not restart every replica).
+
+```bash
 journalctl -u venue-api -n 40 --no-pager | grep -iE "storage|redis|kafka"
 # backend=s3://<bucket>   <- S3, not local disk
 ```
@@ -274,12 +297,20 @@ sudo dnf install -y nginx
 sudo systemctl enable --now nginx
 ```
 
-Proxy `:8080` behind nginx. Two settings the defaults get wrong here:
+Proxy `:8080` behind nginx. Three settings the defaults get wrong here:
 
 ```nginx
 client_max_body_size 200m;   # videos cap at 200MB; nginx defaults to 1MB
 proxy_read_timeout   300s;   # uploads stream through the app
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 ```
+
+The last one pairs with `TRUSTED_PROXIES=127.0.0.1` in `.env`. Without the
+header, every request reaches the API from 127.0.0.1 and the whole site shares
+one rate-limit bucket - 5 registrations an hour, 10 logins per 15 minutes -
+so legitimate users start getting 429s on day one. Without `TRUSTED_PROXIES`
+the header is ignored, with the same result. The API trusts the header only
+from the listed proxy, so a client cannot forge its own address.
 
 For TLS, certbot comes from EPEL on AL2023:
 

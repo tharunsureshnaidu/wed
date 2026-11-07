@@ -11,11 +11,12 @@ VALKEY_UNIT ?= $(shell systemctl list-unit-files 2>/dev/null | grep -qE '^valkey
 DB  ?= postgres://postgres:postgres@localhost:5432/venue?sslmode=disable
 API ?= http://localhost:8080
 
-.PHONY: run worker build start stop restart kafka-up kafka-down status logs logs-all logs-api logs-worker logs-error logs-warn logs-debug logs-http logs-clear unlimit limits logs-db logs-valkey logs-kafka errors otp postman postman-test test race vet fmt tidy check
+.PHONY: run worker build seed start stop restart kafka-up kafka-down status logs logs-all logs-api logs-worker logs-error logs-warn logs-debug logs-http logs-clear unlimit limits logs-db logs-valkey logs-kafka errors otp postman postman-test test race vet fmt tidy check
 
 ## --- running ---
 run:    ; go run ./cmd/api
 worker: ; go run ./cmd/worker
+seed:   ; go run ./cmd/seeder
 build:  ; go build -o bin/api ./cmd/api && go build -o bin/worker ./cmd/worker
 
 # Start both in the background. Both append to the SAME logs/app.log: each

@@ -15,13 +15,19 @@ type Config struct {
 	RedisAddr    string
 	KafkaBrokers []string
 
-	JWTSecret        string
-	JWTExpiry        time.Duration
-	JWTRefreshExpiry time.Duration
-	ResetPasswordURL string
-	LogOtpCodes      bool
-	WebhookSecret    string
-	CORSOrigins      []string
+	JWTSecret             string
+	JWTExpiry             time.Duration
+	JWTRefreshExpiry      time.Duration
+	ResetPasswordURL      string
+	LogOtpCodes           bool
+	WebhookSecret         string
+	CashfreeEnv           string
+	CashfreeClientID      string
+	CashfreeClientSecret  string
+	CashfreeWebhookSecret string
+	CashfreeBaseURL       string
+	CashfreeAppID         string
+	CORSOrigins           []string
 }
 
 // Load reads .env (if present) into the process environment, then reads config
@@ -57,13 +63,19 @@ func Load() Config {
 		// than logging a dropped event for every booking.
 		KafkaBrokers: kafkaBrokers(),
 
-		JWTSecret:        env("JWT_SECRET", ""),
-		JWTExpiry:        ms(env("JWT_EXPIRATION_MS", "3600000")),            // 1 hour
-		JWTRefreshExpiry: ms(env("JWT_REFRESH_EXPIRATION_MS", "2592000000")), // 30 days, sliding
-		ResetPasswordURL: env("FRONTEND_RESET_PASSWORD_URL", "http://localhost:3000/reset-password"),
-		LogOtpCodes:      env("LOG_OTP_CODES", "true") == "true",
-		WebhookSecret:    env("PAYMENT_WEBHOOK_SECRET", ""),
-		CORSOrigins:      strings.Split(env("CORS_ORIGINS", "http://localhost:3000"), ","),
+		JWTSecret:             env("JWT_SECRET", ""),
+		JWTExpiry:             ms(env("JWT_EXPIRATION_MS", "3600000")),            // 1 hour
+		JWTRefreshExpiry:      ms(env("JWT_REFRESH_EXPIRATION_MS", "2592000000")), // 30 days, sliding
+		ResetPasswordURL:      env("FRONTEND_RESET_PASSWORD_URL", "http://localhost:3000/reset-password"),
+		LogOtpCodes:           env("LOG_OTP_CODES", "true") == "true",
+		WebhookSecret:         env("PAYMENT_WEBHOOK_SECRET", ""),
+		CashfreeEnv:           env("CASHFREE_ENV", "sandbox"),
+		CashfreeClientID:      env("CASHFREE_CLIENT_ID", ""),
+		CashfreeClientSecret:  env("CASHFREE_CLIENT_SECRET", ""),
+		CashfreeWebhookSecret: env("CASHFREE_WEBHOOK_SECRET", env("PAYMENT_WEBHOOK_SECRET", "")),
+		CashfreeBaseURL:       env("CASHFREE_BASE_URL", "https://sandbox.cashfree.com"),
+		CashfreeAppID:         env("CASHFREE_APP_ID", ""),
+		CORSOrigins:           strings.Split(env("CORS_ORIGINS", "http://localhost:3000"), ","),
 	}
 }
 

@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/service"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
 // Price preview for the review screen.
@@ -27,10 +29,14 @@ const (
 )
 
 type quoteReq struct {
+	VenueID    string   `json:"venueId"`
 	HallID     string   `json:"hallId"`
+	HotelID    string   `json:"hotelId"`
 	FacilityID string   `json:"facilityId"`
 	StartDate  string   `json:"startDate"`
 	EndDate    string   `json:"endDate"`
+	CheckIn    string   `json:"checkIn"`
+	CheckOut   string   `json:"checkOut"`
 	StartTime  string   `json:"startTime"`
 	EndTime    string   `json:"endTime"`
 	EventDate  string   `json:"eventDate"` // legacy single-date form
@@ -38,7 +44,10 @@ type quoteReq struct {
 	GuestCount *int     `json:"guestCount"`
 	PackageIDs []string `json:"packageIds"`
 	// CouponCode is optional, priced exactly as the booking will price it.
-	CouponCode string `json:"couponCode"`
+	CouponCode       string   `json:"couponCode"`
+	CouponCodes      []string `json:"couponCodes"`
+	AdminCouponCode  string   `json:"adminCouponCode"`
+	VendorCouponCode string   `json:"vendorCouponCode"`
 }
 
 func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
@@ -46,18 +55,37 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &req) {
 		return
 	}
-	facilityID := req.HallID
+	facilityID := req.VenueID
 	if facilityID == "" {
 		facilityID = req.FacilityID
+	}
+	if facilityID == "" {
+		facilityID = req.HallID
+	}
+	if facilityID == "" {
+		facilityID = req.HotelID
 	}
 
 	var e validate.Errors
 	if !httpx.ValidUUID(facilityID) {
-		e = append(e, "A valid hallId is required")
+		if req.HallID != "" {
+			e = append(e, "A valid hallId is required")
+		} else if req.HotelID != "" {
+			e = append(e, "A valid hotelId is required")
+		} else {
+			e = append(e, "A valid venueId is required")
+		}
 	}
-	rawStart, rawEnd := req.StartDate, req.EndDate
+	rawStart := req.StartDate
+	if rawStart == "" {
+		rawStart = req.CheckIn
+	}
 	if rawStart == "" {
 		rawStart = req.EventDate
+	}
+	rawEnd := req.EndDate
+	if rawEnd == "" {
+		rawEnd = req.CheckOut
 	}
 	if rawEnd == "" {
 		rawEnd = rawStart
@@ -73,21 +101,35 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	if err == nil && err2 == nil && end.Before(start) {
 		e = append(e, "endDate cannot be before startDate")
 	}
-	startTime, ok1 := hhmm(req.StartTime)
-	endTime, ok2 := hhmm(req.EndTime)
-	if !ok1 || !ok2 {
-		e = append(e, "startTime and endTime must be HH:MM")
+	var startTime, endTime string
+	if req.StartTime != "" {
+		st, ok := hhmm(req.StartTime)
+		if !ok {
+			e = append(e, "startTime must be HH:MM")
+		} else {
+			startTime = st
+		}
+	}
+	if req.EndTime != "" {
+		et, ok := hhmm(req.EndTime)
+		if !ok {
+			e = append(e, "endTime must be HH:MM")
+		} else {
+			endTime = et
+		}
 	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
 	}
 
-	slot := req.SlotType
-	if startTime != "" {
-		slot = slotFor(startTime, endTime)
-	} else if slot == "" {
-		slot = "FULL_DAY"
+	slot := strings.ToUpper(strings.TrimSpace(req.SlotType))
+	if slot == "" {
+		if startTime != "" || endTime != "" {
+			slot = slotFor(startTime, endTime)
+		} else {
+			slot = "FULL_DAY"
+		}
 	}
 
 	var (
@@ -100,13 +142,13 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	)
 	if err := h.svc.Pool().QueryRow(r.Context(),
 		`SELECT name, city, base_price_per_day, capacity_pax, type, `+service.ActiveDiscountSQL+`
-		   FROM facilities WHERE id = $1 AND is_deleted = FALSE`,
+		   FROM facilities f WHERE id = $1 AND `+venuetype.LiveSQL("f"), // same rule as the booking
 		facilityID).Scan(&name, &city, &basePrice, &capacityPax, &facType, &discountPct); err != nil {
-		response.Error(w, http.StatusNotFound, "Hall not found", "HALL_NOT_FOUND")
+		response.Error(w, http.StatusNotFound, "Venue not found", "VENUE_NOT_FOUND")
 		return
 	}
-	if facType != "MARRIAGE_HALL" {
-		response.Error(w, http.StatusBadRequest, "Facility is not a marriage hall", "INVALID_HALL")
+	if facType != venuetype.StoredHall && facType != venuetype.Hotel {
+		response.Error(w, http.StatusBadRequest, "Facility is not a valid venue", "INVALID_VENUE")
 		return
 	}
 
@@ -141,20 +183,68 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 		hallPrice += price
 	}
 
-	// The coupon comes off after the venue discount and before fee and tax, in
-	// the order the booking applies them. An unusable code fails the preview
-	// with the same error the booking would give, rather than quietly pricing
-	// without it.
+	// The coupons come off after the venue discount and before fee and tax, in
+	// the order the booking applies them: Hall Owner coupon first, then Admin coupon.
+	// An unusable code fails the preview with the same error the booking would give.
+	codes := req.CouponCodes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(c, trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.CouponCode)
+	addCode(req.AdminCouponCode)
+	addCode(req.VendorCouponCode)
+
+	if len(codes) > 2 {
+		response.Error(w, http.StatusBadRequest, "Maximum 2 coupons can be applied per booking", "COUPON_LIMIT_EXCEEDED")
+		return
+	}
+
 	var couponCode *string
 	couponDiscount := 0.0
-	if code := strings.TrimSpace(req.CouponCode); code != "" {
-		c, d, err := h.svc.PriceCoupon(r.Context(), code, facilityID, hallPrice)
+	var couponsBreakdown []map[string]any
+	var adminCouponID, vendorCouponID *string
+	var adminDiscount, vendorDiscount float64
+
+	if len(codes) > 0 {
+		applied, d, err := h.svc.PriceCoupons(r.Context(), codes, facilityID, hallPrice)
 		if err != nil {
 			httpx.Fail(w, err)
 			return
 		}
-		couponCode, couponDiscount = &c.Code, d
+		couponDiscount = d
 		hallPrice -= d
+		var cs []string
+		for _, ac := range applied {
+			cs = append(cs, ac.Coupon.Code)
+			if ac.Scope == coupon.ScopeAdmin {
+				cid := ac.Coupon.ID
+				adminCouponID = &cid
+				adminDiscount = ac.DiscountAmount
+			} else if ac.Scope == coupon.ScopeVendor {
+				cid := ac.Coupon.ID
+				vendorCouponID = &cid
+				vendorDiscount = ac.DiscountAmount
+			}
+			couponsBreakdown = append(couponsBreakdown, map[string]any{
+				"couponId":       ac.Coupon.ID,
+				"code":           ac.Coupon.Code,
+				"scope":          ac.Scope,
+				"discountAmount": round2(ac.DiscountAmount),
+			})
+		}
+		if len(cs) > 0 {
+			joined := strings.Join(cs, ", ")
+			couponCode = &joined
+		}
 	}
 
 	serviceFee := round2(hallPrice * serviceFeeRate)
@@ -201,14 +291,19 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 		"exceedsCapacity": overCapacity,
 		"packages":        packages,
 		"priceBreakdown": map[string]any{
-			"hallPrice":      round2(hallPrice),
-			"venueDiscount":  round2(venueDiscount),
-			"couponDiscount": round2(couponDiscount),
-			"couponCode":     couponCode,
-			"serviceFee":     serviceFee,
-			"taxes":          taxes,
-			"total":          total,
-			"currency":       "INR",
+			"hallPrice":            round2(hallPrice),
+			"venueDiscount":        round2(venueDiscount),
+			"couponDiscount":       round2(couponDiscount),
+			"adminCouponId":        adminCouponID,
+			"adminCouponDiscount":  round2(adminDiscount),
+			"vendorCouponId":       vendorCouponID,
+			"vendorCouponDiscount": round2(vendorDiscount),
+			"couponCode":           couponCode,
+			"coupons":              couponsBreakdown,
+			"serviceFee":           serviceFee,
+			"taxes":                taxes,
+			"total":                total,
+			"currency":             "INR",
 		},
 		"available":            available,
 		"cancellationPolicies": policies,

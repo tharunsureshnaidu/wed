@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,12 +15,38 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
 
-// holdWindow is how long an unpaid booking keeps its slot before the sweeper
-// releases it. Long enough to finish a checkout, short enough that a dropped
-// session does not block a date all day.
+// holdWindow is how long an unpaid hotel booking keeps its rooms before the
+// sweeper releases it. Long enough to finish a checkout, short enough that a
+// dropped session does not block a night all day.
+//
+// A hall request has no expiry: it waits for the owner to confirm or reject.
+// With 15 minutes, 241 hall requests expired and none was ever confirmed -
+// owners could not answer in time.
 const holdWindow = 15 * time.Minute
+
+// Request size caps. Each day, night or line is one or two statements inside
+// the transaction that holds the slot and coupon locks, so an unbounded
+// request was a way to hold a hall for a year or stall the database.
+const (
+	maxHallDays   = 14
+	maxHotelNight = 30
+	maxLines      = 20
+)
+
+// ist is India Standard Time. Fixed, not LoadLocation: India has no DST, and a
+// fixed zone needs no tzdata in the container.
+var ist = time.FixedZone("IST", 5*3600+1800)
+
+// Today is the current date in India, as a UTC-midnight date comparable with
+// the YYYY-MM-DD dates requests parse to. time.Now().Truncate(24h) truncates
+// to UTC midnight, so between 00:00 and 05:30 IST yesterday was still bookable.
+func Today() time.Time {
+	y, m, d := time.Now().In(ist).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
 
 // Pool exposes the connection the service already holds, for read-only
 // queries next to the booking flow (the price preview) that would otherwise
@@ -31,19 +58,22 @@ type Service struct {
 	db   *pgxpool.Pool
 	// OnBookingCreated / OnBookingCancelled publish domain events. Funcs rather
 	// than a direct dependency so booking does not import the events package.
+	// actorID is who cancelled - the customer, the venue owner or an admin -
+	// so the audit row answers "who" rather than always naming the customer.
 	OnBookingCreated   func(ctx context.Context, b *repository.Booking)
-	OnBookingCancelled func(ctx context.Context, b *repository.Booking)
+	OnBookingCancelled func(ctx context.Context, b *repository.Booking, actorID int64)
 	// OnBookingDecided fires when a venue owner accepts or rejects a request.
 	// The customer is waiting on that answer, so it must reach them.
-	OnBookingDecided func(ctx context.Context, b *repository.Booking, confirmed bool, reason string)
+	OnBookingDecided func(ctx context.Context, b *repository.Booking, confirmed bool, reason string, actorID int64)
 }
 
 func New(repo *repository.Repo, db *pgxpool.Pool) *Service {
 	return &Service{repo: repo, db: db}
 }
 
-type HallBookingRequest struct {
+type VenueBookingRequest struct {
 	FacilityID string
+	TargetType string // "HALL" or "HOTEL"
 	// EventDate is the first day; EndDate the last. A single-day booking has
 	// both equal, which is what the old single-date form produced.
 	EventDate time.Time
@@ -62,8 +92,11 @@ type HallBookingRequest struct {
 	IdempotentKey string
 	// CouponCode is optional. It comes off the price after the venue's own
 	// advertised discount, and is redeemed in the booking's transaction.
-	CouponCode string
-	GuestName  *string
+	CouponCode       string
+	CouponCodes      []string
+	AdminCouponCode  string
+	VendorCouponCode string
+	GuestName        *string
 	GuestEmail *string
 	GuestPhone *string
 	// OverrideAmount is the price agreed through the quote flow. It is set only
@@ -72,11 +105,11 @@ type HallBookingRequest struct {
 	OverrideAmount *float64
 }
 
-// CreateHallBooking prices the booking server-side and claims the slot.
-//
-// Prices are always read from the database, never taken from the request body -
-// a client that could send its own total would simply book a hall for ₹1.
-func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallBookingRequest) (*repository.Booking, error) {
+type HallBookingRequest = VenueBookingRequest
+
+// CreateVenueBooking prices the booking server-side and claims the slot.
+// Works for both marriage halls and hotels.
+func (s *Service) CreateVenueBooking(ctx context.Context, userID int64, req VenueBookingRequest) (*repository.Booking, error) {
 	// An idempotent retry must return the original booking, not a second one.
 	if req.IdempotentKey != "" {
 		existing, err := s.repo.FindByIdempotencyKey(ctx, req.IdempotentKey)
@@ -92,24 +125,35 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		}
 	}
 
-	if req.EventDate.Before(time.Now().Truncate(24 * time.Hour)) {
+	if req.EventDate.Before(Today()) {
 		return nil, apperr.BadRequest("INVALID_DATE", "Event date cannot be in the past")
+	}
+	if !req.EndDate.IsZero() && req.EndDate.Sub(req.EventDate) >= maxHallDays*24*time.Hour {
+		return nil, apperr.BadRequest("VALIDATION_ERROR", "A hall booking can span at most 14 days")
+	}
+	if len(req.PackageIDs) > maxLines || len(req.Addons) > maxLines {
+		return nil, apperr.BadRequest("VALIDATION_ERROR", "At most 20 packages and 20 add-ons per booking")
 	}
 
 	var basePrice, discountPct *float64
 	var facilityType string
 	err := s.db.QueryRow(ctx,
-		`SELECT base_price_per_day, type, `+ActiveDiscountSQL+` FROM facilities
-		 WHERE id = $1 AND is_deleted = FALSE AND status <> 'BLOCKED'`,
+		`SELECT base_price_per_day, type, `+ActiveDiscountSQL+` FROM facilities f
+		 WHERE id = $1 AND `+venuetype.LiveSQL("f"),
 		req.FacilityID).Scan(&basePrice, &facilityType, &discountPct)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, apperr.BadRequest("INVALID_HALL", "Invalid hall")
+		return nil, apperr.BadRequest("INVALID_VENUE", "Invalid venue")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if facilityType != "MARRIAGE_HALL" {
-		return nil, apperr.BadRequest("INVALID_HALL", "Facility is not a marriage hall")
+	if facilityType != venuetype.StoredHall && facilityType != venuetype.Hotel {
+		return nil, apperr.BadRequest("INVALID_VENUE", "Facility is not a valid venue")
+	}
+
+	targetType := req.TargetType
+	if targetType == "" {
+		targetType = venuetype.API(facilityType)
 	}
 
 	// A caller that gives no end date means a single-day event. Defaulting here
@@ -181,31 +225,77 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		total, venueDiscount = *req.OverrideAmount, 0
 	}
 
+	codes := req.CouponCodes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(c, trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.CouponCode)
+	addCode(req.AdminCouponCode)
+	addCode(req.VendorCouponCode)
+
+	var appliedCoupons []coupon.AppliedCoupon
 	var couponID, couponCode string
+	var adminCouponID, vendorCouponID *string
+	var adminDiscount, vendorDiscount float64
 	couponDiscount := 0.0
-	if req.CouponCode != "" && req.OverrideAmount == nil {
-		c, d, err := s.PriceCoupon(ctx, req.CouponCode, req.FacilityID, total)
+	if len(codes) > 0 && req.OverrideAmount == nil {
+		applied, d, err := s.PriceCoupons(ctx, codes, req.FacilityID, total)
 		if err != nil {
 			return nil, err
 		}
-		couponID, couponCode, couponDiscount = c.ID, c.Code, d
+		appliedCoupons = applied
+		couponDiscount = d
 		total -= d
+		if len(applied) > 0 {
+			couponID = applied[0].Coupon.ID
+			var cs []string
+			for _, ac := range applied {
+				cs = append(cs, ac.Coupon.Code)
+				if ac.Scope == "ADMIN" {
+					adminCouponID = &ac.Coupon.ID
+					adminDiscount = ac.DiscountAmount
+				} else {
+					vendorCouponID = &ac.Coupon.ID
+					vendorDiscount = ac.DiscountAmount
+				}
+			}
+			couponCode = strings.Join(cs, ", ")
+		}
+	}
+
+	slot := strings.ToUpper(strings.TrimSpace(req.SlotType))
+	if slot == "" {
+		slot = "FULL_DAY"
 	}
 
 	b, err := s.repo.CreateHallBooking(ctx, repository.HallBookingInput{
-		UserID: userID, FacilityID: req.FacilityID,
+		UserID: userID, FacilityID: req.FacilityID, TargetType: targetType,
 		EventDate: req.EventDate, EndDate: req.EndDate,
 		StartTime: req.StartTime, EndTime: req.EndTime,
 		GuestCount: req.GuestCount, RoomCount: req.RoomCount, EventType: req.EventType,
-		SlotType: req.SlotType, TotalAmount: total, IdempotentKey: req.IdempotentKey,
+		SlotType: slot, TotalAmount: total, IdempotentKey: req.IdempotentKey,
 		GuestName: req.GuestName, GuestEmail: req.GuestEmail, GuestPhone: req.GuestPhone,
-		HoldFor: holdWindow, PackageIDs: req.PackageIDs, Addons: req.Addons,
+		HoldFor: 0, PackageIDs: req.PackageIDs, Addons: req.Addons, // no expiry: waits for the owner
 		DiscountAmount: venueDiscount + couponDiscount,
 		CouponID:       couponID, CouponCode: couponCode,
+		AppliedCoupons: appliedCoupons,
+		AdminCouponID:        adminCouponID,
+		AdminCouponDiscount:  adminDiscount,
+		VendorCouponID:       vendorCouponID,
+		VendorCouponDiscount: vendorDiscount,
 	})
 	switch {
 	case errors.Is(err, repository.ErrSlotTaken):
-		return nil, apperr.Conflict("SLOT_UNAVAILABLE", "Hall slot is no longer available")
+		return nil, apperr.Conflict("SLOT_UNAVAILABLE", "Venue slot is no longer available")
 	case errors.Is(err, repository.ErrCouponUnavailable):
 		// Ran out (or was switched off) between pricing and the insert.
 		return nil, apperr.New(coupon.ErrExhausted.Status, coupon.ErrExhausted.Code,
@@ -227,6 +317,11 @@ func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallB
 		s.OnBookingCreated(ctx, b)
 	}
 	return b, nil
+}
+
+// CreateHallBooking is an alias for CreateVenueBooking for backward compatibility.
+func (s *Service) CreateHallBooking(ctx context.Context, userID int64, req HallBookingRequest) (*repository.Booking, error) {
+	return s.CreateVenueBooking(ctx, userID, req)
 }
 
 // ActiveDiscountSQL is a facility's advertised discount percent, or NULL once
@@ -263,6 +358,20 @@ func (s *Service) PriceCoupon(ctx context.Context, code, facilityID string, amou
 	return c, c.Discount(amount), nil
 }
 
+// PriceCoupons checks up to 2 coupon codes (max 1 Admin and 1 Hall Owner) against
+// a venue and an amount, returning the breakdown and total discount.
+func (s *Service) PriceCoupons(ctx context.Context, codes []string, facilityID string, amount float64) ([]coupon.AppliedCoupon, float64, error) {
+	applied, totalDiscount, err := coupon.PriceCoupons(ctx, s.db, codes, facilityID, amount)
+	var ce *coupon.Error
+	if errors.As(err, &ce) {
+		return nil, 0, apperr.New(ce.Status, ce.Code, ce.Message)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	return applied, totalDiscount, nil
+}
+
 type HotelBookingRequest struct {
 	FacilityID    string
 	CheckIn       time.Time
@@ -272,6 +381,11 @@ type HotelBookingRequest struct {
 	GuestName     *string
 	GuestEmail    *string
 	GuestPhone    *string
+	// CouponCode is optional, applied as for a hall: after the venue discount.
+	CouponCode       string
+	CouponCodes      []string
+	AdminCouponCode  string
+	VendorCouponCode string
 }
 
 func (s *Service) CreateHotelBooking(ctx context.Context, userID int64, req HotelBookingRequest) (*repository.Booking, error) {
@@ -292,15 +406,37 @@ func (s *Service) CreateHotelBooking(ctx context.Context, userID int64, req Hote
 	if !req.CheckOut.After(req.CheckIn) {
 		return nil, apperr.BadRequest("INVALID_DATES", "Check-out must be after check-in")
 	}
-	if req.CheckIn.Before(time.Now().Truncate(24 * time.Hour)) {
+	if req.CheckIn.Before(Today()) {
 		return nil, apperr.BadRequest("INVALID_DATES", "Check-in cannot be in the past")
 	}
 	if len(req.Rooms) == 0 {
 		return nil, apperr.BadRequest("NO_ROOMS", "At least one room is required")
 	}
-
 	nights := int(req.CheckOut.Sub(req.CheckIn).Hours() / 24)
-	total := 0.0
+	if nights > maxHotelNight {
+		return nil, apperr.BadRequest("VALIDATION_ERROR", "A hotel stay can be at most 30 nights")
+	}
+	if len(req.Rooms) > maxLines {
+		return nil, apperr.BadRequest("VALIDATION_ERROR", "At most 20 room lines per booking")
+	}
+
+	// The same live-venue rule as a hall. This path used to check nothing, so
+	// a deleted or rejected hotel was bookable by id.
+	var facilityType string
+	var discountPct *float64
+	err := s.db.QueryRow(ctx,
+		`SELECT type, `+ActiveDiscountSQL+` FROM facilities f WHERE id = $1 AND `+venuetype.LiveSQL("f"),
+		req.FacilityID).Scan(&facilityType, &discountPct)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && facilityType != venuetype.Hotel) {
+		return nil, apperr.BadRequest("INVALID_HOTEL", "Invalid hotel")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Each night is charged at the discounted rate the card advertises, as for
+	// a hall's day rate; checkout used to charge the full room rate.
+	total, venueDiscount := 0.0, 0.0
 	for i, room := range req.Rooms {
 		if room.Quantity <= 0 {
 			return nil, apperr.BadRequest("INVALID_ROOM", "Room quantity must be positive")
@@ -317,7 +453,57 @@ func (s *Service) CreateHotelBooking(ctx context.Context, userID int64, req Hote
 			return nil, err
 		}
 		req.Rooms[i].Price = price
-		total += price * float64(room.Quantity) * float64(nights)
+		units := float64(room.Quantity) * float64(nights)
+		rate := DayRate(price, discountPct)
+		total += rate * units
+		venueDiscount += (price - rate) * units
+	}
+
+	codes := req.CouponCodes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(c, trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.CouponCode)
+	addCode(req.AdminCouponCode)
+	addCode(req.VendorCouponCode)
+
+	var appliedCoupons []coupon.AppliedCoupon
+	var couponID, couponCode string
+	var adminCouponID, vendorCouponID *string
+	var adminDiscount, vendorDiscount float64
+	couponDiscount := 0.0
+	if len(codes) > 0 {
+		applied, d, err := s.PriceCoupons(ctx, codes, req.FacilityID, total)
+		if err != nil {
+			return nil, err
+		}
+		appliedCoupons = applied
+		couponDiscount = d
+		total -= d
+		if len(applied) > 0 {
+			couponID = applied[0].Coupon.ID
+			var cs []string
+			for _, ac := range applied {
+				cs = append(cs, ac.Coupon.Code)
+				if ac.Scope == "ADMIN" {
+					adminCouponID = &ac.Coupon.ID
+					adminDiscount = ac.DiscountAmount
+				} else {
+					vendorCouponID = &ac.Coupon.ID
+					vendorDiscount = ac.DiscountAmount
+				}
+			}
+			couponCode = strings.Join(cs, ", ")
+		}
 	}
 
 	b, err := s.repo.CreateHotelBooking(ctx, repository.HotelBookingInput{
@@ -325,11 +511,21 @@ func (s *Service) CreateHotelBooking(ctx context.Context, userID int64, req Hote
 		CheckOut: req.CheckOut, TotalAmount: total, IdempotentKey: req.IdempotentKey,
 		GuestName: req.GuestName, GuestEmail: req.GuestEmail, GuestPhone: req.GuestPhone,
 		HoldFor: holdWindow, Rooms: req.Rooms,
+		DiscountAmount: venueDiscount + couponDiscount,
+		CouponID:       couponID, CouponCode: couponCode,
+		AppliedCoupons: appliedCoupons,
+		AdminCouponID:        adminCouponID,
+		AdminCouponDiscount:  adminDiscount,
+		VendorCouponID:       vendorCouponID,
+		VendorCouponDiscount: vendorDiscount,
 	})
 	switch {
 	case errors.Is(err, repository.ErrNoInventory):
 		return nil, apperr.Conflict("INVENTORY_UNAVAILABLE",
 			"Rooms are no longer available for the selected dates")
+	case errors.Is(err, repository.ErrCouponUnavailable):
+		return nil, apperr.New(coupon.ErrExhausted.Status, coupon.ErrExhausted.Code,
+			"This coupon is no longer available")
 	case errors.Is(err, repository.ErrDuplicateKey):
 		if existing, e := s.repo.FindByIdempotencyKey(ctx, req.IdempotentKey); e == nil {
 			if existing.UserID != userID {
@@ -359,7 +555,7 @@ func (s *Service) Get(ctx context.Context, id string, userID int64, isAdmin bool
 	// Enriched for the same reason as List: the detail screen shows the venue,
 	// and a Rate button that depends on review state.
 	if err := s.repo.Enrich(ctx, userID, []*repository.Booking{b}); err != nil {
-		logger.Error("bookings: enrich detail", "bookingId", id, logger.Err(err))
+		logger.Error("bookings: enrich detail", "bookingId", b.ID, logger.Err(err))
 	}
 	// A booking is readable by the customer who made it, the facility owner, or an admin.
 	isOwnerOrAdmin := isAdmin
@@ -385,17 +581,14 @@ func (s *Service) Cancel(ctx context.Context, id string, userID int64, isAdmin b
 	if err != nil {
 		return err
 	}
-	// Release first: if SetStatus then fails, the sweeper still reconciles, whereas
-	// the reverse order could leave a cancelled booking holding its slot forever.
-	if err := s.repo.ReleaseInventory(ctx, b.ID); err != nil {
-		return err
-	}
+	// SetStatus frees the dates or rooms in the same transaction, and only on a
+	// real PENDING/CONFIRMED -> CANCELLED move, so a retried cancel frees nothing.
 	err = s.repo.SetStatus(ctx, b.ID, "CANCELLED", "Cancelled by user", "PENDING", "CONFIRMED")
 	if errors.Is(err, repository.ErrNotFound) {
 		return apperr.Conflict("INVALID_STATE", "Booking cannot be cancelled in its current state")
 	}
 	if err == nil && s.OnBookingCancelled != nil {
-		s.OnBookingCancelled(ctx, b)
+		s.OnBookingCancelled(ctx, b, userID)
 	}
 	return err
 }

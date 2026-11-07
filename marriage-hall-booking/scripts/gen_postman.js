@@ -49,6 +49,30 @@ const BODIES = {
     title: "Privacy Policy",
     content: "Updated: we now also record the device you signed in from.",
   },
+  "POST /api/v1/admin/faqs": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>To book a marriage hall, follow these steps:</p><ol><li>Browse available venues.</li><li>Select your preferred hall.</li><li>Choose your event date.</li><li>Submit your booking request.</li></ol><p>Our team will help you with the booking process.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "PUT /api/v1/admin/faqs/{faqId}": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>Follow these steps to book your venue:</p><ul><li>Choose a venue.</li><li>Select your event date.</li><li>Submit your booking request.</li></ul><p><strong>Note:</strong> Booking confirmation depends on availability.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "POST /api/admin/faqs": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>To book a marriage hall, follow these steps:</p><ol><li>Browse available venues.</li><li>Select your preferred hall.</li><li>Choose your event date.</li><li>Submit your booking request.</li></ol><p>Our team will help you with the booking process.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
+  "PUT /api/admin/faqs/{faqId}": {
+    question: "How can I book a marriage hall?",
+    answer: "<p>Follow these steps to book your venue:</p><ul><li>Choose a venue.</li><li>Select your event date.</li><li>Submit your booking request.</li></ul><p><strong>Note:</strong> Booking confirmation depends on availability.</p>",
+    displayOrder: 1,
+    isActive: true,
+  },
   "POST /api/v1/facilities/compare": {
     type: "hall",
     venue_ids: ["{{hallId}}", "{{hallId2}}"],
@@ -84,12 +108,16 @@ const BODIES = {
     email: "{{customerEmail}}",
     phoneNumber: "{{customerPhone}}",
     password: "SecurePass@123",
+    // Optional: a one-line string, or an object whose every part is optional.
+    address: { street: "12 MG Road", city: "Bengaluru", state: "Karnataka", zipCode: "560001", country: "India" },
   },
   "POST /api/v1/auth/register/vendor": {
     fullName: "Rajesh Kumar",
     email: "{{ownerEmail}}",
     phoneNumber: "{{ownerPhone}}",
     password: "SecurePass@123",
+    // Also seeds the vendor's business_address.
+    address: { street: "45 Brigade Road", city: "Bengaluru", state: "Karnataka", zipCode: "560025", country: "India" },
   },
   "POST /api/v1/auth/register/verify-email": {
     target: "{{customerEmail}}",
@@ -150,6 +178,12 @@ const BODIES = {
     starRating: 4,
     checkInTime: "14:00",
     checkOutTime: "11:00",
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1566073771259-6a8506099945",
+        isCover: true,
+      },
+    ],
   },
   "POST /api/v1/facilities#hall2": {
     name: "Kumar Royal Garden",
@@ -169,6 +203,12 @@ const BODIES = {
     seatingCapacity: 800,
     floatingCapacity: 1200,
     minBookingSize: 150,
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1545232979-fbf68fe9f76a",
+        isCover: true,
+      },
+    ],
   },
   "POST /api/v1/facilities": {
     name: "Kumar Grand Palace",
@@ -188,6 +228,16 @@ const BODIES = {
     seatingCapacity: 600,
     floatingCapacity: 800,
     minBookingSize: 100,
+    images: [
+      {
+        url: "https://images.unsplash.com/photo-1519167758481-83f550bb49b3",
+        isCover: true,
+      },
+      {
+        url: "https://images.unsplash.com/photo-1545232979-fbf68fe9f76a",
+        isCover: false,
+      },
+    ],
   },
   "PUT /api/v1/halls/{id}": {
     name: "Kumar Grand Palace (Renovated)",
@@ -275,16 +325,29 @@ const BODIES = {
   },
   "PUT /api/v1/facilities/{id}/images/reorder": { order: ["{{imageId}}"] },
   "PUT /api/v1/facilities/{id}/videos/reorder": { order: ["{{videoId}}"] },
+  "POST /api/v1/bookings/venues": {
+    venueId: "{{hallId}}",
+    startDate: "2027-06-25",
+    endDate: "2027-06-26",
+    startTime: "10:00",
+    endTime: "18:00",
+    slotType: "FULL_DAY",
+    guestCount: 400,
+    eventType: "WEDDING",
+    roomCount: 2,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
+  },
   "POST /api/v1/bookings/halls": {
     hallId: "{{hallId}}",
     startDate: "2027-06-25",
     endDate: "2027-06-26",
-    startTime: "18:00",
-    endTime: "23:00",
+    startTime: "10:00",
+    endTime: "18:00",
+    slotType: "FULL_DAY",
     guestCount: 400,
     eventType: "WEDDING",
-    roomCount: 12,
-    idempotentKey: "hall-{{runId}}",
+    roomCount: 2,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
   },
   "PATCH /api/v1/admin/facilities/{id}": {
     name: "Royal Grand Palace",
@@ -292,6 +355,9 @@ const BODIES = {
     basePricePerDay: 125000,
     discountPercent: 15,
     discountLabel: "Monsoon offer",
+    status: "APPROVED",
+    isVerified: true,
+    isFeatured: true,
   },
   "PUT /api/v1/admin/facilities/{id}/rating": {
     avgRating: 4.3,
@@ -332,7 +398,8 @@ const BODIES = {
     isActive: true,
   },
   "POST /api/v1/coupons/validate": {
-    code: "WED{{runId}}",
+    code: "{{couponCode}}",
+    codes: ["{{couponCode}}", "{{adminCouponCode}}"],
     amount: 200000,
     facilityId: "{{hallId}}",
   },
@@ -360,6 +427,7 @@ const BODIES = {
     startTime: "18:00",
     endTime: "23:00",
     guestCount: 400,
+    couponCodes: ["{{couponCode}}", "{{adminCouponCode}}"],
   },
   "POST /api/v1/facilities/{id}/cancellation-policies": {
     policyType: "FLEXIBLE",
@@ -382,7 +450,6 @@ const BODIES = {
     checkIn: "2027-05-01",
     checkOut: "2027-05-03",
     rooms: [{ roomTypeId: "{{roomTypeId}}", quantity: 2 }],
-    idempotentKey: "hotel-{{runId}}",
     guestName: "Priya Sharma",
     guestEmail: "{{customerEmail}}",
     guestPhone: "{{customerPhone}}",
@@ -487,21 +554,90 @@ const BODIES = {
   },
 };
 
-// Query strings worth pre-filling
+// Comprehensive descriptions for query parameters accepted during API testing
+const PARAM_DESCRIPTIONS = {
+  category: "Filter event types by category (Allowed: WEDDING, SOCIAL, CORPORATE, OTHER)",
+  type: "Filter by venue/facility/amenity type (Allowed: ALL, HALL, HOTEL)",
+  venueType: "Target venue type (Allowed: ALL, HALL, HOTEL)",
+  eventType: "Filter venues hosting this event type (e.g. WEDDING, RECEPTION, BIRTHDAY)",
+  search: "Full-text search keyword for name, address, or business",
+  q: "Search query or autocomplete keyword prefix",
+  city: "City name filter (e.g. Bengaluru, Mumbai, Delhi)",
+  page: "0-indexed page number for pagination (default: 0)",
+  size: "Page size limit (default: 20, max: 100)",
+  limit: "Maximum number of items to return (default: 20)",
+  lat: "User/caller latitude coordinate for distance calculation",
+  lng: "User/caller longitude coordinate for distance calculation",
+  radiusKm: "Search/coupon radius in kilometers (default: 50, max: 500)",
+  status: "Filter by status (e.g. PENDING, CONFIRMED, CANCELLED, COMPLETED, REJECTED, EXPIRED)",
+  ref: "Search by unique Booking Reference ID (e.g. BK-B0ED430951)",
+  bookingReference: "Search by unique Booking Reference ID (alias for ref)",
+  facilityId: "Specific facility/venue UUID to evaluate scope or eligibility",
+  hotelId: "Specific hotel UUID",
+  hallId: "Specific marriage hall UUID",
+  venueId: "Specific venue UUID",
+  ids: "Comma-separated facility UUIDs (e.g. {{hallId}},{{hallId2}} for comparison)",
+  venue_ids: "Comma-separated facility UUIDs for comparison",
+  minCapacity: "Minimum guest capacity (e.g. 100)",
+  maxCapacity: "Maximum guest capacity (e.g. 1000)",
+  minBudget: "Minimum budget/price in INR (e.g. 100000)",
+  maxBudget: "Maximum budget/price in INR (e.g. 500000)",
+  amenities: "Comma-separated amenities (e.g. PARKING, AIR_CONDITIONING, CATERING)",
+  sort: "Sort order: PRICE_LOW_TO_HIGH, PRICE_HIGH_TO_LOW, RATING_DESC, DISTANCE_ASC",
+  unreadOnly: "Filter unread notifications only (true/false)",
+  before: "RFC3339 cursor timestamp for notification feed pagination",
+  entity: "Decision entity type (BOOKING, KYC, FACILITY, REVIEW)",
+  from: "RFC3339 start timestamp for analytics range",
+  until: "RFC3339 end timestamp for analytics range",
+  role: "User role filter (ROLE_CUSTOMER, ROLE_VENDOR, ROLE_ADMIN, ROLE_SUPER_ADMIN)",
+  amount: "Transaction amount in INR",
+  reason: "Reason for cancellation, rejection, or refund",
+  note: "Internal administrative note or resolution comment",
+  searchId: "Search tracking UUID for view attribution",
+};
+
+// Descriptions for URL path variables (e.g. :id, :facilityId)
+const PATH_DESCRIPTIONS = {
+  id: "Target resource UUID or identifier",
+  facilityId: "Facility / Venue UUID",
+  hallId: "Marriage Hall UUID",
+  hotelId: "Hotel UUID",
+  bookingId: "Booking UUID or Reference ID",
+  paymentId: "Payment UUID",
+  vendorId: "Vendor business UUID",
+  quoteId: "Quote request UUID",
+  reportId: "Fraud report UUID",
+  token: "One-click action token from SMS/Email",
+  filename: "Uploaded media file name (e.g. photo.jpg)",
+  faqId: "FAQ record ID",
+  amenityId: "Amenity code or ID",
+  policyId: "Policy UUID",
+  ruleId: "Rule UUID",
+  packageId: "Hall package UUID",
+  addonId: "Add-on service UUID",
+  roomTypeId: "Hotel room type UUID",
+  imageId: "Venue gallery image UUID",
+  videoId: "Venue gallery video UUID",
+  messageId: "Help message UUID",
+  userId: "User ID",
+};
+
+// Query strings pre-filling all accepted parameters for API testing
 const QUERIES = {
+  "GET /api/v1/events": "category=WEDDING",
   "GET /api/v1/admin/analytics/decisions": "entity=&from=&until=",
   "GET /api/v1/users/me/dashboard": "lat=12.9716&lng=77.5946",
-  "GET /api/v1/facilities": "type=HALL&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
-  "GET /api/v1/venues": "type=&search=&city=&page=0&size=20&lat=12.9716&lng=77.5946",
+  "GET /api/v1/facilities": "type=HALL&eventType=WEDDING&search=&city=Bengaluru&page=0&size=20&lat=12.9716&lng=77.5946",
+  "GET /api/v1/venues": "type=HALL&eventType=WEDDING&search=&city=Bengaluru&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls": "search=&page=0&size=20&lat=12.9716&lng=77.5946",
   "GET /api/v1/halls/my-halls": "page=0&size=20",
   "GET /api/v1/hotels/my-hotels": "page=0&size=20",
-  "GET /api/v1/amenities": "",
-  "GET /api/v1/bookings": "page=0&size=20",
-  "GET /api/v1/bookings/owner": "status=&page=0&size=20",
-  "GET /api/v1/coupons/available": "lat=12.9716&lng=77.5946&radiusKm=50",
-  "GET /api/v1/coupons/offers": "lat=12.9716&lng=77.5946&radiusKm=50",
-  "GET /api/v1/notifications": "limit=20&unreadOnly=&before=",
+  "GET /api/v1/amenities": "type=ALL",
+  "GET /api/v1/bookings": "page=0&size=20&status=&ref=",
+  "GET /api/v1/bookings/owner": "status=&page=0&size=20&ref=",
+  "GET /api/v1/coupons/available": "facilityId={{hallId}}&venueType=ALL&lat=12.9716&lng=77.5946&radiusKm=50",
+  "GET /api/v1/coupons/offers": "facilityId={{hallId}}&venueType=ALL&lat=12.9716&lng=77.5946&radiusKm=50",
+  "GET /api/v1/notifications": "limit=20&unreadOnly=false&before=",
   "GET /api/v1/facilities/compare": "type=hall&ids={{hallId}},{{hallId2}}&lat=12.9716&lng=77.5946",
   "GET /api/v1/venues/compare": "type=hall&ids={{hallId}},{{hallId2}}&lat=12.9716&lng=77.5946",
   "GET /api/v1/users/me/favourites": "",
@@ -510,11 +646,11 @@ const QUERIES = {
   "GET /api/v1/quotes/owner": "status=&page=0&size=20",
   "GET /api/v1/reviews/facility/{facilityId}": "page=0&size=20",
   "GET /api/v1/admin/reviews": "status=PENDING&page=0&size=20",
-  "GET /api/v1/admin/users": "search=&page=0&size=20",
-  "GET /api/v1/admin/vendors": "status=PENDING&page=0&size=20",
-  "GET /api/v1/admin/facilities": "type=&search=&page=0&size=20",
+  "GET /api/v1/admin/users": "search=&role=&status=&page=0&size=20",
+  "GET /api/v1/admin/vendors": "status=PENDING&search=&page=0&size=20",
+  "GET /api/v1/admin/facilities": "type=&status=&search=&page=0&size=20",
   "GET /api/v1/admin/dashboard": "",
-  "GET /api/v1/search/venues": "city=Bengaluru&venueType=HALL&minCapacity=100&maxCapacity=1000&minBudget=100000&maxBudget=500000&amenities=Parking&sort=PRICE_LOW_TO_HIGH&page=0&size=20",
+  "GET /api/v1/search/venues": "city=Bengaluru&venueType=HALL&eventType=WEDDING&minCapacity=100&maxCapacity=1000&minBudget=100000&maxBudget=500000&amenities=PARKING&sort=PRICE_LOW_TO_HIGH&page=0&size=20",
   "GET /api/v1/search/autocomplete": "q=Kum",
   "GET /api/v1/search/suggestions": "q=Beng",
   "GET /api/v1/search/venues/{id}/similar": "limit=10",
@@ -527,6 +663,8 @@ const QUERIES = {
   "POST /api/v1/admin/facilities/{id}/approve": "status=APPROVED",
   "GET /api/v1/super-admin/help/messages": "search=&status=&page=0&limit=20",
   "GET /api/v1/public/recommendations": "lat=12.9716&lng=77.5946&type=ALL&radiusKm=50",
+  "GET /api/v1/admin/faqs": "page=0&size=20",
+  "GET /api/admin/faqs": "page=0&size=20",
 };
 
 // Which token each folder acts as
@@ -559,6 +697,7 @@ const FOLDER_TOKEN = {
   "Support": null,
   "Help Center": "accessToken",
   "Privacy Policy": "accessToken",
+  "FAQs": "adminToken",
   "Feedback": "accessToken",
   "Search": "accessToken",
   "Admin": "adminToken",
@@ -607,6 +746,16 @@ const REQUEST_TOKEN = {
   "GET /api/admin/feedback/{id}": "adminToken",
   "PUT /api/v1/admin/feedback/{id}": "adminToken",
   "PUT /api/admin/feedback/{id}": "adminToken",
+  "POST /api/v1/admin/faqs": "adminToken",
+  "POST /api/admin/faqs": "adminToken",
+  "GET /api/v1/admin/faqs": "adminToken",
+  "GET /api/admin/faqs": "adminToken",
+  "GET /api/v1/admin/faqs/{faqId}": "adminToken",
+  "GET /api/admin/faqs/{faqId}": "adminToken",
+  "PUT /api/v1/admin/faqs/{faqId}": "adminToken",
+  "PUT /api/admin/faqs/{faqId}": "adminToken",
+  "DELETE /api/v1/admin/faqs/{faqId}": "adminToken",
+  "DELETE /api/admin/faqs/{faqId}": "adminToken",
 };
 
 // Endpoints that are completely public (No Bearer token required)
@@ -624,6 +773,8 @@ const NO_AUTH = new Set([
   "POST /api/v1/auth/reset-password",
   "POST /api/v1/payments/webhook",
   "GET /health",
+  "GET /livez",
+  "GET /readyz",
   "GET /ack/{token}",
   "GET /decline/{token}",
   "GET /api/v1/coupons/available",
@@ -661,6 +812,8 @@ const NO_AUTH = new Set([
   "GET /api/privacy-policy",
   "GET /api/v1/privacy-policy",
   "GET /api/v1/public/recommendations",
+  "GET /api/v1/public/faqs",
+  "GET /api/public/faqs",
 ]);
 
 const MODULE_FOLDER = {
@@ -680,6 +833,7 @@ const MODULE_FOLDER = {
   feedback: "Feedback",
   help: "Help Center",
   privacypolicy: "Privacy Policy",
+  faq: "FAQs",
   recommendation: "Recommendations",
 };
 
@@ -713,6 +867,7 @@ const FOLDER_ORDER = [
   "Help Center",
   "Feedback",
   "Privacy Policy",
+  "FAQs",
   "Search",
   "Admin",
   "Cleanup (destructive)",
@@ -766,6 +921,8 @@ const DESTRUCTIVE = new Set([
   "DELETE /api/v1/super-admin/help/messages/{messageId}",
   "DELETE /api/v1/admin/privacy-policy",
   "DELETE /api/admin/privacy-policy",
+  "DELETE /api/v1/admin/faqs/{faqId}",
+  "DELETE /api/admin/faqs/{faqId}",
 ]);
 
 const REQUEST_ORDER = [
@@ -836,6 +993,7 @@ const REQUEST_ORDER = [
   "POST /api/v1/facilities/{id}/block",
   "POST /api/v1/facilities/{id}/unblock",
 
+  "POST /api/v1/bookings/venues",
   "POST /api/v1/bookings/halls",
   "POST /api/v1/bookings/hotels",
   "GET /api/v1/bookings",
@@ -895,6 +1053,14 @@ const REQUEST_ORDER = [
   "GET /api/v1/admin/privacy-policy",
   "PUT /api/v1/admin/privacy-policy",
   "DELETE /api/v1/admin/privacy-policy",
+
+  "GET /api/public/faqs",
+  "GET /api/v1/public/faqs",
+  "POST /api/v1/admin/faqs",
+  "GET /api/v1/admin/faqs",
+  "GET /api/v1/admin/faqs/{faqId}",
+  "PUT /api/v1/admin/faqs/{faqId}",
+  "DELETE /api/v1/admin/faqs/{faqId}",
 
   "GET /api/v1/search/venues",
   "GET /api/v1/search/autocomplete",
@@ -1045,6 +1211,7 @@ const NAMES = {
   "POST /api/v1/facilities/{id}/block": "Block facility",
   "POST /api/v1/facilities/{id}/unblock": "Unblock facility",
 
+  "POST /api/v1/bookings/venues": "Book a venue (hotel or hall)",
   "POST /api/v1/bookings/halls": "Book a hall",
   "POST /api/v1/bookings/hotels": "Book hotel rooms",
   "GET /api/v1/bookings": "My bookings",
@@ -1147,6 +1314,8 @@ const NAMES = {
   "POST /api/v1/admin/fraud-reports": "Create fraud report",
   "POST /api/v1/admin/fraud-reports/{reportId}/resolve": "Resolve fraud report",
   "GET /health": "Health check",
+  "GET /livez": "Liveness probe",
+  "GET /readyz": "Readiness probe",
   "GET /ack/{token}": "One-click booking acknowledgement",
   "GET /decline/{token}": "One-click booking decline",
   "GET /api/v1/coupons/offers": "Available coupon offers",
@@ -1162,14 +1331,24 @@ if (d && d.items && d.items.length) {
 }`,
   "POST /api/v1/facilities/{id}/faqs": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
+  "POST /api/v1/admin/faqs": `const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
+  "POST /api/admin/faqs": `const d = pm.response.json().data;
+if (d && d.id) pm.collectionVariables.set("faqId", d.id);`,
   "POST /api/v1/feedback": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);`,
   "POST /api/feedback": `const d = pm.response.json().data;
 if (d && d.id) pm.collectionVariables.set("feedbackId", d.id);`,
   "POST /api/v1/coupons": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("couponId", d.id);`,
+if (d && d.id) {
+  pm.collectionVariables.set("couponId", d.id);
+  if (d.code) pm.collectionVariables.set("couponCode", d.code);
+}`,
   "POST /api/v1/admin/coupons": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("adminCouponId", d.id);`,
+if (d && d.id) {
+  pm.collectionVariables.set("adminCouponId", d.id);
+  if (d.code) pm.collectionVariables.set("adminCouponCode", d.code);
+}`,
   "POST /api/v1/admin/reviews": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("adminReviewId", d.id);`,
   "GET /api/v1/admin/reviews": `const d = pm.response.json().data;
@@ -1242,6 +1421,15 @@ if (d) pm.collectionVariables.set("roomTypeId", d.id);`,
 if (d) pm.collectionVariables.set("imageId", d.id);`,
   "POST /api/v1/facilities/{id}/videos": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("videoId", d.id);`,
+  "POST /api/v1/bookings/venues": `const d = pm.response.json().data;
+if (d) {
+  pm.collectionVariables.set("bookingId", d.id);
+  pm.environment.set("bookingId", d.id);
+  pm.collectionVariables.set("venueBookingId", d.id);
+  pm.environment.set("venueBookingId", d.id);
+  pm.collectionVariables.set("hallBookingId", d.id);
+  pm.environment.set("hallBookingId", d.id);
+}`,
   "POST /api/v1/bookings/halls": `const d = pm.response.json().data;
 if (d) {
   pm.collectionVariables.set("bookingId", d.id);
@@ -1315,7 +1503,14 @@ if (d && d.length) pm.collectionVariables.set("ruleId", d[0].id);`,
   "POST /api/v1/admin/fraud-reports": `const d = pm.response.json().data;
 if (d) pm.collectionVariables.set("reportId", d.id);`,
   "POST /api/v1/help/messages": `const d = pm.response.json().data;
-if (d && d.id) pm.collectionVariables.set("messageId", d.id);`,
+if (d && d.id) pm.collectionVariables.set("messageId", d.id);
+pm.test("Help message has camelCase fields and no duplicates", function () {
+    pm.expect(d).to.have.property("userId");
+    pm.expect(d).to.have.property("userName");
+    pm.expect(d).to.have.property("createdAt");
+    pm.expect(d).to.not.have.property("user_id");
+    pm.expect(d).to.not.have.property("user_name");
+});`,
   "GET /api/v1/super-admin/help/messages": `const d = pm.response.json().data;
 const list = d && d.messages ? d.messages : (d && d.content ? d.content : (Array.isArray(d) ? d : []));
 if (list.length > 0 && list[0].id) {
@@ -1402,16 +1597,64 @@ function requestName(method, p) {
 }
 
 function describe(method, p, folder) {
-  const resource = folder.replace(/s$/i, "").toLowerCase();
-  if (method === "GET") {
-    const what = p.includes("{") ? "Fetches" : "Lists";
-    return `${what} ${resource} data. See response for shape.`;
+  const key = `${method} ${p}`;
+  const token = REQUEST_TOKEN[key] || FOLDER_TOKEN[folder];
+  let authDesc = "Public Endpoint (No Token Required)";
+  if (NO_AUTH.has(key)) {
+    authDesc = "Public Endpoint (No Token Required)";
+  } else if (token === "adminToken") {
+    authDesc = "Admin / Super Admin Bearer JWT (`Authorization: Bearer {{adminToken}}`)";
+  } else if (token === "ownerToken") {
+    authDesc = "Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)";
+  } else if (token === "accessToken") {
+    authDesc = "Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)";
   }
-  if (method === "POST") return `Creates or acts on a ${resource} record.`;
-  if (method === "PUT") return `Updates ${resource}. Send full object.`;
-  if (method === "PATCH") return `Partially updates ${resource}. Omitted fields remain untouched.`;
-  if (method === "DELETE") return `Deletes ${resource} record.`;
-  return "";
+
+  let lines = [];
+  lines.push(`## ${method} ${p}`);
+  lines.push(`- **Module:** ${folder}`);
+  lines.push(`- **Authentication:** ${authDesc}`);
+  lines.push("");
+
+  const query = QUERIES[key];
+  if (query) {
+    lines.push(`### 🔍 Accepted Query Parameters (Params Tab):`);
+    const qParts = query.split("&");
+    for (const q of qParts) {
+      const idx = q.indexOf("=");
+      const qKey = idx >= 0 ? q.slice(0, idx) : q;
+      const qVal = idx >= 0 ? q.slice(idx + 1) : "";
+      const qDesc = PARAM_DESCRIPTIONS[qKey] || "Optional query filter";
+      lines.push(`- **\`${qKey}\`** (Sample: \`${qVal || "(empty)"}\`) — ${qDesc}`);
+    }
+    lines.push("");
+  }
+
+  const pathVars = (p.match(/\{[^}]+\}/g) || []).map((v) => v.slice(1, -1));
+  if (pathVars.length > 0) {
+    lines.push(`### 📌 Accepted Path Variables (URL Path):`);
+    for (const pv of pathVars) {
+      const pvDesc = PATH_DESCRIPTIONS[pv] || "Target identifier";
+      lines.push(`- **\`:${pv}\`** — ${pvDesc}`);
+    }
+    lines.push("");
+  }
+
+  const body = BODIES[key];
+  if (body) {
+    lines.push(`### 📦 Accepted Request Body Fields (JSON):`);
+    for (const [k, v] of Object.entries(body)) {
+      const type = Array.isArray(v) ? "Array" : typeof v;
+      lines.push(`- **\`${k}\`** (${type}) — Sample value: \`${JSON.stringify(v)}\``);
+    }
+    lines.push("");
+  }
+
+  lines.push(`### 🧪 Testing Notes:`);
+  lines.push(`- Pre-configured with collection variables like \`{{baseUrl}}\`, \`{{accessToken}}\`, \`{{ownerToken}}\`, \`{{adminToken}}\`.`);
+  lines.push(`- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.`);
+
+  return lines.join("\n");
 }
 
 function buildRequest(folder, method, p) {
@@ -1425,18 +1668,29 @@ function buildRequest(folder, method, p) {
   if (query) {
     url.query = query.split("&").map((param) => {
       const idx = param.indexOf("=");
-      return idx >= 0
-        ? { key: param.slice(0, idx), value: param.slice(idx + 1) }
-        : { key: param, value: "" };
+      const qKey = idx >= 0 ? param.slice(0, idx) : param;
+      const qVal = idx >= 0 ? param.slice(idx + 1) : "";
+      const desc = PARAM_DESCRIPTIONS[qKey] || "Query parameter";
+      return {
+        key: qKey,
+        value: qVal,
+        description: desc,
+      };
     });
   }
 
   const variables = segs
     .filter((s) => s.startsWith(":"))
-    .map((s) => ({
-      key: s.slice(1),
-      value: `{{${pathVar(p, s.slice(1))}}}`,
-    }));
+    .map((s) => {
+      const varKey = s.slice(1);
+      const varName = pathVar(p, varKey);
+      const desc = PATH_DESCRIPTIONS[varKey] || PATH_DESCRIPTIONS[varName] || "Path parameter";
+      return {
+        key: varKey,
+        value: `{{${varName}}}`,
+        description: desc,
+      };
+    });
   if (variables.length > 0) url.variable = variables;
 
   const headers = [];
@@ -1495,7 +1749,13 @@ function collectRoutes() {
   const pat = /(?:mux\.(?:HandleFunc|Handle)\("|get\(")(GET|POST|PUT|PATCH|DELETE) ([^"]+)"/g;
   const seen = new Set();
   const routes = [];
-  const skipRoutes = new Set(["GET /uploads/"]);
+  const skipRoutes = new Set([
+    "GET /uploads/",
+    // Same handler as POST /api/v1/auth/refresh under the old spec path. Still
+    // served, but a second refresh in the run only adds a chance to replay a
+    // rotated token, which revokes every session.
+    "POST /api/v1/auth/login/refresh",
+  ]);
 
   function walk(dir) {
     for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -1674,6 +1934,12 @@ function main() {
           desc: "Public access test without sending any Authorization header.",
           expectedStatus: 200,
         },
+        {
+          name: "Test 9 - Event Type Filter (eventType=WEDDING)",
+          query: "lat=12.9716&lng=77.5946&type=ALL&radiusKm=50&eventType=WEDDING",
+          desc: "Filters recommendations for WEDDING event type (or venues without configured events).",
+          expectedStatus: 200,
+        },
       ];
 
       for (const tc of testCases) {
@@ -1712,11 +1978,18 @@ function main() {
             `pm.test("Status code is 200", function () {`,
             `    pm.response.to.have.status(200);`,
             `});`,
-            `pm.test("returns recommendations list", function () {`,
+            `pm.test("returns recommendations list with venue format", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data).to.have.property("items");`,
-            `    pm.expect(b.data.items).to.be.an("array");`,
+            `    pm.expect(b.data).to.have.property("content");`,
+            `    pm.expect(b.data.content).to.be.an("array");`,
+            `    if (b.data.content.length > 0) {`,
+            `        const v = b.data.content[0];`,
+            `        pm.expect(v).to.have.property("id");`,
+            `        pm.expect(v).to.have.property("name");`,
+            `        pm.expect(v).to.have.property("type");`,
+            `        pm.expect(v).to.have.property("distanceKm");`,
+            `    }`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1728,7 +2001,7 @@ function main() {
             `pm.test("all items are HALL", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.type === "HALL")).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.type === "HALL")).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1740,7 +2013,7 @@ function main() {
             `pm.test("all items are HOTEL", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.type === "HOTEL")).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.type === "HOTEL")).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1752,7 +2025,7 @@ function main() {
             `pm.test("all items are within 5 km", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.items.every(x => x.distanceKm <= 5)).to.be.true;`,
+            `    pm.expect(b.data.content.every(x => x.distanceKm <= 5)).to.be.true;`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1764,8 +2037,21 @@ function main() {
             `pm.test("pagination metadata is correct", function () {`,
             `    const b = pm.response.json();`,
             `    pm.expect(b.success).to.be.true;`,
-            `    pm.expect(b.data.pagination.page).to.eql(1);`,
-            `    pm.expect(b.data.pagination.size).to.eql(20);`,
+            `    pm.expect(b.data.page).to.eql(1);`,
+            `    pm.expect(b.data.size).to.eql(20);`,
+            `});`,
+            COMMON_TEST
+          ].join("\n");
+        } else if (tc.name.includes("Event Type Filter")) {
+          testScript = [
+            `pm.test("Status code is 200", function () {`,
+            `    pm.response.to.have.status(200);`,
+            `});`,
+            `pm.test("returns recommendations matching event type filter", function () {`,
+            `    const b = pm.response.json();`,
+            `    pm.expect(b.success).to.be.true;`,
+            `    pm.expect(b.data).to.have.property("content");`,
+            `    pm.expect(b.data.content).to.be.an("array");`,
             `});`,
             COMMON_TEST
           ].join("\n");
@@ -1831,6 +2117,54 @@ if (d) {
       hall2.request.description =
         "Creates a second HALL facility so hallId2 is captured for side-by-side venue comparison.";
       sub.splice(2, 0, hall2);
+
+      // Event filtering test requests
+      const venueEventTests = [
+        {
+          name: "List venues - filter by eventType=WEDDING & type=HOTEL",
+          query: "type=HOTEL&eventType=WEDDING&search=&city=&page=0&size=20",
+          desc: "Filters hotels by WEDDING. Returns hotels supporting WEDDING plus hotels with no configured events.",
+        },
+        {
+          name: "List venues - filter by eventType=WEDDING & type=HALL",
+          query: "type=HALL&eventType=WEDDING&search=&city=&page=0&size=20",
+          desc: "Filters halls by WEDDING. Returns halls supporting WEDDING plus halls with no configured events.",
+        },
+        {
+          name: "List venues - filter by eventType=BIRTHDAY",
+          query: "eventType=BIRTHDAY&page=0&size=20",
+          desc: "Filters all venues by BIRTHDAY. Venues configured exclusively for other events are excluded.",
+        },
+      ];
+      for (const vet of venueEventTests) {
+        const segs = ["api", "v1", "venues"];
+        const queryParams = vet.query.split("&").map((p) => {
+          const idx = p.indexOf("=");
+          return idx >= 0 ? { key: p.slice(0, idx), value: p.slice(idx + 1) } : { key: p, value: "" };
+        });
+        sub.push({
+          name: vet.name,
+          request: {
+            method: "GET",
+            header: [],
+            url: {
+              raw: "{{baseUrl}}/api/v1/venues?" + vet.query,
+              host: ["{{baseUrl}}"],
+              path: segs,
+              query: queryParams,
+            },
+            description: vet.desc,
+            auth: { type: "noauth" },
+          },
+          response: [],
+          event: [
+            {
+              listen: "test",
+              script: { type: "text/javascript", exec: COMMON_TEST.split("\n") },
+            },
+          ],
+        });
+      }
     }
 
     // Add multipart media uploads
@@ -1945,6 +2279,7 @@ const FOLDER_DESC = {
   "Help Center": "Customer support messages, inquiry submission, and admin message handling.",
   Feedback: "Customer app feedback, ratings, and issue reporting.",
   "Privacy Policy": "Public privacy policy reading and admin version publishing.",
+  FAQs: "Platform Frequently Asked Questions (FAQ) management with rich HTML editor support and public browsing.",
   Search: "Advanced multi-criteria search, autocomplete, trending searches, and geolocation.",
   Admin: "Platform administration, KYC approvals, user moderation, review approval, and analytics.",
   "Cleanup (destructive)": "Deletes and cancellations kept last to maintain test isolation and idempotency.",
@@ -2021,13 +2356,16 @@ const FOLDER_DESC = {
       { key: "videoId", value: "" },
       { key: "videoId2", value: "" },
       { key: "bookingId", value: "" },
+      { key: "venueBookingId", value: "", description: "Captured from POST /bookings/venues" },
       { key: "hallBookingId", value: "", description: "Captured from POST /bookings/halls" },
       { key: "hotelBookingId", value: "", description: "Captured from POST /bookings/hotels" },
       { key: "faqId", value: "" },
       { key: "feedbackId", value: "" },
       { key: "messageId", value: "", description: "Help Center message UUID" },
       { key: "couponId", value: "00000000-0000-0000-0000-000000000000" },
+      { key: "couponCode", value: "WEDDING15" },
       { key: "adminCouponId", value: "00000000-0000-0000-0000-000000000000" },
+      { key: "adminCouponCode", value: "ALLHALLS10" },
       { key: "notificationId", value: "" },
       { key: "paymentId", value: "" },
       { key: "gatewayOrderId", value: "" },
@@ -2046,15 +2384,20 @@ const FOLDER_DESC = {
     ],
   };
 
-  const outPaths = [
-    path.join(ROOT, "postman_collection.json"),
-    path.join(ROOT, "..", "..", "postman_collection.json"),
-  ];
+  const jsonStr = JSON.stringify(collection, null, 2) + "\n";
+  const outPath = path.join(ROOT, "postman_collection.json");
+  fs.writeFileSync(outPath, jsonStr, "utf8");
+  console.error(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
 
-  for (const outPath of outPaths) {
-    fs.writeFileSync(outPath, JSON.stringify(collection, null, 2) + "\n", "utf8");
-    console.error(`Generated ${total} requests in ${items.length} folders -> ${outPath}`);
-  }
+  // Save to workspace root d:/Codes/venue
+  const parentRoot = path.resolve(ROOT, "..", "..");
+  const parentOutPath = path.join(parentRoot, "postman_collection.json");
+  fs.writeFileSync(parentOutPath, jsonStr, "utf8");
+  console.error(`Also updated parent postman_collection.json -> ${parentOutPath}`);
+
+  const dedicatedPath = path.join(parentRoot, "POSTMAN_COLLECTION_WITH_PARAMS.json");
+  fs.writeFileSync(dedicatedPath, jsonStr, "utf8");
+  console.error(`Created new dedicated collection -> ${dedicatedPath}`);
 }
 
 main();

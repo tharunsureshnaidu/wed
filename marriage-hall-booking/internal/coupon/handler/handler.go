@@ -5,9 +5,17 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +30,7 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/storage"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
@@ -29,6 +38,7 @@ import (
 type Handler struct {
 	db     *pgxpool.Pool
 	signer *jwt.Signer
+	store  storage.Store
 
 	// OnCouponCreated announces a new coupon: to customers near the venue it
 	// is scoped to, or - for an all-halls coupon - to every customer. Nil
@@ -47,8 +57,28 @@ type Created struct {
 	CreatedBy     int64
 }
 
-func New(db *pgxpool.Pool, signer *jwt.Signer) *Handler {
-	return &Handler{db: db, signer: signer}
+func New(db *pgxpool.Pool, signer *jwt.Signer, store ...storage.Store) *Handler {
+	h := &Handler{db: db, signer: signer}
+	if len(store) > 0 {
+		h.store = store[0]
+	}
+	return h
+}
+
+func (h *Handler) getStore() storage.Store {
+	if h.store != nil {
+		return h.store
+	}
+	return storage.NewLocal("uploads", os.Getenv("PUBLIC_BASE_URL"))
+}
+
+const maxBannerImageSize = 5 << 20 // 5 MB upload limit
+
+var bannerImageTypes = map[string]string{
+	"image/jpeg": ".jpg",
+	"image/png":  ".png",
+	"image/webp": ".webp",
+	"image/gif":  ".gif",
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -132,6 +162,264 @@ type couponReq struct {
 	// AppliesTo scopes an admin coupon: HALL (the default), HOTEL, or ALL for
 	// every venue. Ignored on a vendor coupon, which is scoped by ownership.
 	AppliesTo *string `json:"appliesTo"`
+
+	BannerImage         *string `json:"bannerImage"`
+	BannerImageURL      *string `json:"bannerImageUrl"`
+	BannerImageSnake    *string `json:"banner_image"`
+	BannerImageURLSnake *string `json:"banner_image_url"`
+}
+
+func (r *couponReq) bannerValue() *string {
+	for _, s := range []*string{r.BannerImage, r.BannerImageURL, r.BannerImageSnake, r.BannerImageURLSnake} {
+		if s != nil && strings.TrimSpace(*s) != "" {
+			trimmed := strings.TrimSpace(*s)
+			return &trimmed
+		}
+	}
+	return nil
+}
+
+func (h *Handler) decodeCouponReq(w http.ResponseWriter, r *http.Request) (*couponReq, *multipart.FileHeader, bool) {
+	var req couponReq
+	var fh *multipart.FileHeader
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBannerImageSize+1<<20)
+		if err := r.ParseMultipartForm(maxBannerImageSize); err != nil {
+			response.Error(w, http.StatusBadRequest, "Banner image exceeds 5 MB limit or form is malformed", "VALIDATION_ERROR")
+			return nil, nil, false
+		}
+
+		if blob := r.FormValue("data"); blob != "" {
+			if err := json.Unmarshal([]byte(blob), &req); err != nil {
+				response.Error(w, http.StatusBadRequest, "The data part is not valid JSON: "+err.Error(), "VALIDATION_ERROR")
+				return nil, nil, false
+			}
+		} else {
+			if v := strings.TrimSpace(r.FormValue("code")); v != "" {
+				req.Code = v
+			}
+			if v := strings.TrimSpace(r.FormValue("description")); v != "" {
+				req.Description = &v
+			}
+			if v := strings.TrimSpace(r.FormValue("facilityId")); v != "" {
+				req.FacilityID = &v
+			} else if v := strings.TrimSpace(r.FormValue("facility_id")); v != "" {
+				req.FacilityID = &v
+			}
+			if v := strings.TrimSpace(r.FormValue("discountType")); v != "" {
+				req.DiscountType = v
+			} else if v := strings.TrimSpace(r.FormValue("discount_type")); v != "" {
+				req.DiscountType = v
+			}
+			if v := strings.TrimSpace(r.FormValue("discountValue")); v != "" {
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					req.DiscountValue = f
+				}
+			} else if v := strings.TrimSpace(r.FormValue("discount_value")); v != "" {
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					req.DiscountValue = f
+				}
+			}
+			if v := strings.TrimSpace(r.FormValue("maxDiscount")); v != "" {
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					req.MaxDiscount = &f
+				}
+			} else if v := strings.TrimSpace(r.FormValue("max_discount")); v != "" {
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					req.MaxDiscount = &f
+				}
+			}
+			if v := strings.TrimSpace(r.FormValue("minBookingAmount")); v != "" {
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					req.MinBookingAmount = &f
+				}
+			} else if v := strings.TrimSpace(r.FormValue("min_booking_amount")); v != "" {
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					req.MinBookingAmount = &f
+				}
+			}
+			if v := strings.TrimSpace(r.FormValue("validFrom")); v != "" {
+				req.ValidFrom = &v
+			} else if v := strings.TrimSpace(r.FormValue("valid_from")); v != "" {
+				req.ValidFrom = &v
+			}
+			if v := strings.TrimSpace(r.FormValue("validUntil")); v != "" {
+				req.ValidUntil = &v
+			} else if v := strings.TrimSpace(r.FormValue("valid_until")); v != "" {
+				req.ValidUntil = &v
+			}
+			if v := strings.TrimSpace(r.FormValue("usageLimit")); v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					req.UsageLimit = &n
+				}
+			} else if v := strings.TrimSpace(r.FormValue("usage_limit")); v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					req.UsageLimit = &n
+				}
+			}
+			if v := strings.TrimSpace(r.FormValue("isActive")); v != "" {
+				b := strings.EqualFold(v, "true") || v == "1"
+				req.IsActive = &b
+			} else if v := strings.TrimSpace(r.FormValue("is_active")); v != "" {
+				b := strings.EqualFold(v, "true") || v == "1"
+				req.IsActive = &b
+			}
+			if v := strings.TrimSpace(r.FormValue("appliesTo")); v != "" {
+				req.AppliesTo = &v
+			} else if v := strings.TrimSpace(r.FormValue("applies_to")); v != "" {
+				req.AppliesTo = &v
+			}
+			if v := strings.TrimSpace(r.FormValue("bannerImage")); v != "" {
+				req.BannerImage = &v
+			} else if v := strings.TrimSpace(r.FormValue("banner_image")); v != "" {
+				req.BannerImage = &v
+			} else if v := strings.TrimSpace(r.FormValue("bannerImageUrl")); v != "" {
+				req.BannerImage = &v
+			} else if v := strings.TrimSpace(r.FormValue("banner_image_url")); v != "" {
+				req.BannerImage = &v
+			}
+		}
+
+		if r.MultipartForm != nil {
+			for _, key := range []string{"banner_image", "bannerImage", "banner", "image", "file"} {
+				if fhs := r.MultipartForm.File[key]; len(fhs) > 0 {
+					fh = fhs[0]
+					break
+				}
+			}
+		}
+		return &req, fh, true
+	}
+
+	if !httpx.Decode(w, r, &req) {
+		return nil, nil, false
+	}
+	return &req, nil, true
+}
+
+func (h *Handler) processBannerImage(ctx context.Context, fh *multipart.FileHeader, rawBanner *string, facilityID, vendorID *string) (*string, error) {
+	if fh != nil {
+		if fh.Size > maxBannerImageSize {
+			return nil, errors.New("banner image must be 5 MB or smaller")
+		}
+		f, err := fh.Open()
+		if err != nil {
+			return nil, errors.New("could not read banner image file")
+		}
+		defer f.Close()
+
+		head := make([]byte, 512)
+		n, _ := f.Read(head)
+		ct := http.DetectContentType(head[:n])
+		ext, ok := bannerImageTypes[ct]
+		if !ok {
+			fileExt := strings.ToLower(filepath.Ext(fh.Filename))
+			switch fileExt {
+			case ".jpg", ".jpeg":
+				ct = "image/jpeg"
+				ext = ".jpg"
+				ok = true
+			case ".png":
+				ct = "image/png"
+				ext = ".png"
+				ok = true
+			case ".webp":
+				ct = "image/webp"
+				ext = ".webp"
+				ok = true
+			case ".gif":
+				ct = "image/gif"
+				ext = ".gif"
+				ok = true
+			}
+		}
+		if !ok {
+			return nil, errors.New("banner image must be a JPEG, PNG, WebP or GIF image")
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return nil, errors.New("could not read banner image file")
+		}
+
+		store := h.getStore()
+		facID := ""
+		if facilityID != nil {
+			facID = *facilityID
+		}
+		venID := ""
+		if vendorID != nil {
+			venID = *vendorID
+		}
+		res, err := store.Put(ctx, storage.Upload{
+			Kind:        storage.Image,
+			Body:        f,
+			Size:        fh.Size,
+			ContentType: ct,
+			Ext:         ext,
+			FacilityID:  facID,
+			VendorID:    venID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("could not store banner image: %w", err)
+		}
+		return &res.URL, nil
+	}
+
+	if rawBanner != nil && strings.TrimSpace(*rawBanner) != "" {
+		str := strings.TrimSpace(*rawBanner)
+		if strings.HasPrefix(str, "data:image/") {
+			comma := strings.Index(str, ",")
+			if comma != -1 {
+				header := str[:comma]
+				data := str[comma+1:]
+				decoded, err := base64.StdEncoding.DecodeString(data)
+				if err != nil {
+					return nil, errors.New("invalid base64 banner image data")
+				}
+				if int64(len(decoded)) > maxBannerImageSize {
+					return nil, errors.New("banner image must be 5 MB or smaller")
+				}
+				ct := "image/jpeg"
+				ext := ".jpg"
+				if strings.Contains(header, "image/png") {
+					ct = "image/png"
+					ext = ".png"
+				} else if strings.Contains(header, "image/webp") {
+					ct = "image/webp"
+					ext = ".webp"
+				} else if strings.Contains(header, "image/gif") {
+					ct = "image/gif"
+					ext = ".gif"
+				}
+
+				store := h.getStore()
+				facID := ""
+				if facilityID != nil {
+					facID = *facilityID
+				}
+				venID := ""
+				if vendorID != nil {
+					venID = *vendorID
+				}
+				res, err := store.Put(ctx, storage.Upload{
+					Kind:        storage.Image,
+					Body:        bytes.NewReader(decoded),
+					Size:        int64(len(decoded)),
+					ContentType: ct,
+					Ext:         ext,
+					FacilityID:  facID,
+					VendorID:    venID,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("could not store banner image: %w", err)
+				}
+				return &res.URL, nil
+			}
+		}
+		return &str, nil
+	}
+
+	return nil, nil
 }
 
 func (r couponReq) validateInto(e *validate.Errors) (from, until *time.Time) {
@@ -162,12 +450,7 @@ func (r couponReq) validateInto(e *validate.Errors) (from, until *time.Time) {
 		if f.raw == nil || *f.raw == "" {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, *f.raw)
-		if err != nil {
-			// Accept a bare date too: an admin setting a campaign window
-			// should not have to write a timezone offset.
-			t, err = time.Parse("2006-01-02", *f.raw)
-		}
+		t, err := parseWhen(*f.raw, f.name == "validUntil")
 		if err != nil {
 			*e = append(*e, f.name+" must be YYYY-MM-DD or RFC3339")
 			continue
@@ -180,11 +463,87 @@ func (r couponReq) validateInto(e *validate.Errors) (from, until *time.Time) {
 	return from, until
 }
 
+// ist is the campaign clock. India keeps no DST, so a fixed zone needs no
+// tzdata in the image.
+var ist = time.FixedZone("IST", 5*3600+30*60)
+
+// parseWhen reads an RFC3339 instant, or a bare date so an admin setting a
+// campaign window need not write an offset. A bare date is a day in IST: its
+// first instant, or its last when endOfDay. Parsed as UTC midnight it killed a
+// coupon "valid until the 10th" at 05:30 that morning, and made validFrom ==
+// validUntil - a one-day campaign - impossible.
+func parseWhen(raw string, endOfDay bool) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t, nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", raw, ist)
+	if err == nil && endOfDay {
+		t = t.AddDate(0, 0, 1).Add(-time.Millisecond)
+	}
+	return t, err
+}
+
+func validateBannerFile(fh *multipart.FileHeader, rawBanner *string) error {
+	if fh != nil {
+		if fh.Size > maxBannerImageSize {
+			return errors.New("banner image must be 5 MB or smaller")
+		}
+		f, err := fh.Open()
+		if err != nil {
+			return errors.New("could not read banner image file")
+		}
+		defer f.Close()
+
+		head := make([]byte, 512)
+		n, _ := f.Read(head)
+		ct := http.DetectContentType(head[:n])
+		_, ok := bannerImageTypes[ct]
+		if !ok {
+			fileExt := strings.ToLower(filepath.Ext(fh.Filename))
+			switch fileExt {
+			case ".jpg", ".jpeg", ".png", ".webp", ".gif":
+				ok = true
+			}
+		}
+		if !ok {
+			return errors.New("banner image must be a JPEG, PNG, WebP or GIF image")
+		}
+	}
+
+	if rawBanner != nil && strings.TrimSpace(*rawBanner) != "" {
+		str := strings.TrimSpace(*rawBanner)
+		if strings.HasPrefix(str, "data:image/") {
+			comma := strings.Index(str, ",")
+			if comma == -1 {
+				return errors.New("invalid base64 banner image data")
+			}
+			header := str[:comma]
+			data := str[comma+1:]
+			decoded, err := base64.StdEncoding.DecodeString(data)
+			if err != nil {
+				return errors.New("invalid base64 banner image data")
+			}
+			if int64(len(decoded)) > maxBannerImageSize {
+				return errors.New("banner image must be 5 MB or smaller")
+			}
+			if !strings.Contains(header, "image/jpeg") && !strings.Contains(header, "image/jpg") &&
+				!strings.Contains(header, "image/png") && !strings.Contains(header, "image/webp") &&
+				!strings.Contains(header, "image/gif") {
+				return errors.New("banner image must be a JPEG, PNG, WebP or GIF image")
+			}
+		}
+	}
+	return nil
+}
+
 // vendorOf returns the caller's vendor id, or nil for an admin (whose coupons
 // are platform-wide). A hall owner with no vendor record cannot create one.
 func (h *Handler) vendorOf(r *http.Request) (*string, bool, error) {
 	if middleware.HasRole(r.Context(), domain.RoleAdmin) {
 		return nil, true, nil
+	}
+	if h.db == nil {
+		return nil, false, nil
 	}
 	userID, _ := middleware.UserID(r.Context())
 	var id string
@@ -201,12 +560,20 @@ func (h *Handler) vendorOf(r *http.Request) (*string, bool, error) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	var req couponReq
-	if !httpx.Decode(w, r, &req) {
+	req, fh, ok := h.decodeCouponReq(w, r)
+	if !ok {
 		return
 	}
 	var e validate.Errors
 	from, until := req.validateInto(&e)
+	if req.FacilityID == nil || strings.TrimSpace(*req.FacilityID) == "" {
+		e.Required("FacilityId", "")
+	} else if !httpx.ValidUUID(*req.FacilityID) {
+		e = append(e, "facilityId must be a valid id")
+	}
+	if err := validateBannerFile(fh, req.bannerValue()); err != nil {
+		e = append(e, err.Error())
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -222,17 +589,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			"Create your vendor business first (PUT /api/v1/vendors/me)", "VENDOR_REQUIRED")
 		return
 	}
-	// An admin's coupon here must name a venue. One without used to mean
-	// "platform-wide" with no venue type, so it discounted hotels as well.
-	if vendorID == nil && (req.FacilityID == nil || *req.FacilityID == "") {
-		response.Error(w, http.StatusBadRequest,
-			"facilityId is required. For a coupon on every marriage hall use POST /api/v1/admin/coupons",
-			"VALIDATION_ERROR")
-		return
-	}
 	// A vendor may only scope a coupon to a venue they own; an admin may scope
-	// it anywhere. Checked before the insert so the coupon is never created.
-	if req.FacilityID != nil && *req.FacilityID != "" && vendorID != nil {
+	// it to any existing venue. Checked before the insert so the coupon is never created.
+	if vendorID != nil {
 		var owns bool
 		if err := h.db.QueryRow(r.Context(),
 			`SELECT EXISTS(SELECT 1 FROM facilities f JOIN vendors v ON v.id = $2
@@ -246,6 +605,24 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 				"You do not own that facility", "NOT_FACILITY_OWNER")
 			return
 		}
+	} else {
+		var exists bool
+		if err := h.db.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM facilities WHERE id = $1 AND is_deleted = FALSE)`,
+			*req.FacilityID).Scan(&exists); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if !exists {
+			response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
+			return
+		}
+	}
+
+	bannerURL, err := h.processBannerImage(r.Context(), fh, req.bannerValue(), req.FacilityID, vendorID)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err.Error(), "VALIDATION_ERROR")
+		return
 	}
 
 	userID, _ := middleware.UserID(r.Context())
@@ -257,13 +634,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	err = h.db.QueryRow(r.Context(), `
 		INSERT INTO coupons (code, description, vendor_id, facility_id,
 		    discount_type, discount_value, max_discount, min_booking_amount,
-		    valid_from, valid_until, usage_limit, is_active, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		    valid_from, valid_until, usage_limit, is_active, created_by, banner_image_url)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING id::text`,
 		strings.ToUpper(strings.TrimSpace(req.Code)), req.Description, vendorID,
 		nullUUID(req.FacilityID), strings.ToUpper(req.DiscountType), req.DiscountValue,
 		req.MaxDiscount, req.MinBookingAmount, from, until, req.UsageLimit,
-		active, userID).Scan(&id)
+		active, userID, bannerURL).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -285,8 +662,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			MaxDiscount: req.MaxDiscount, CreatedBy: userID,
 		})
 	}
-	response.Created(w, "Coupon created successfully", "/api/v1/coupons/"+id,
-		map[string]any{"id": id, "code": req.Code})
+	respData := map[string]any{"id": id, "code": req.Code, "start_date": nil, "end_date": nil}
+	if bannerURL != nil {
+		respData["bannerImage"] = *bannerURL
+	}
+	response.Created(w, "Coupon created successfully", "/api/v1/coupons/"+id, respData)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +691,8 @@ func (h *Handler) listWhere(w http.ResponseWriter, r *http.Request, where string
 	rows, err := h.db.Query(r.Context(), `
 		SELECT id::text, code, description, facility_id::text, facility_type, discount_type,
 		       discount_value, max_discount, min_booking_amount,
-		       valid_from, valid_until, usage_limit, used_count, is_active
+		       valid_from, valid_until, usage_limit, used_count, is_active,
+		       banner_image_url
 		  FROM coupons
 		 WHERE is_deleted = FALSE AND `+where+`
 		 ORDER BY created_at DESC`, args...)
@@ -328,23 +709,26 @@ func (h *Handler) listWhere(w http.ResponseWriter, r *http.Request, where string
 		FacilityID   *string `json:"facilityId"`
 		facilityType *string
 		// AppliesTo is set on an all-venues-of-a-type coupon: "HALL".
-		AppliesTo     *string    `json:"appliesTo"`
-		DiscountType  string     `json:"discountType"`
-		DiscountValue float64    `json:"discountValue"`
-		MaxDiscount   *float64   `json:"maxDiscount"`
-		MinBooking    *float64   `json:"minBookingAmount"`
-		ValidFrom     *time.Time `json:"validFrom"`
-		ValidUntil    *time.Time `json:"validUntil"`
-		UsageLimit    *int       `json:"usageLimit"`
-		UsedCount     int        `json:"usedCount"`
-		IsActive      bool       `json:"isActive"`
+		AppliesTo      *string    `json:"appliesTo"`
+		DiscountType   string     `json:"discountType"`
+		DiscountValue  float64    `json:"discountValue"`
+		MaxDiscount    *float64   `json:"maxDiscount"`
+		MinBooking     *float64   `json:"minBookingAmount"`
+		ValidFrom      *time.Time `json:"validFrom"`
+		ValidUntil     *time.Time `json:"validUntil"`
+		UsageLimit     *int       `json:"usageLimit"`
+		UsedCount      int        `json:"usedCount"`
+		IsActive       bool       `json:"isActive"`
+		BannerImage    *string    `json:"bannerImage,omitempty"`
+		BannerImageURL *string    `json:"bannerImageUrl,omitempty"`
 	}
 	out := []row{}
 	for rows.Next() {
 		var x row
+		var banner *string
 		if err := rows.Scan(&x.ID, &x.Code, &x.Description, &x.FacilityID, &x.facilityType,
 			&x.DiscountType, &x.DiscountValue, &x.MaxDiscount, &x.MinBooking, &x.ValidFrom,
-			&x.ValidUntil, &x.UsageLimit, &x.UsedCount, &x.IsActive); err != nil {
+			&x.ValidUntil, &x.UsageLimit, &x.UsedCount, &x.IsActive, &banner); err != nil {
 			httpx.Fail(w, err)
 			return
 		}
@@ -352,6 +736,8 @@ func (h *Handler) listWhere(w http.ResponseWriter, r *http.Request, where string
 			t := venuetype.API(*x.facilityType)
 			x.AppliesTo = &t
 		}
+		x.BannerImage = banner
+		x.BannerImageURL = banner
 		out = append(out, x)
 	}
 	if err := rows.Err(); err != nil {
@@ -365,8 +751,8 @@ func (h *Handler) listWhere(w http.ResponseWriter, r *http.Request, where string
 // facilityId field: sending one is rejected rather than ignored, so a client
 // that meant one venue finds out instead of discounting all of them.
 func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
-	var req couponReq
-	if !httpx.Decode(w, r, &req) {
+	req, fh, ok := h.decodeCouponReq(w, r)
+	if !ok {
 		return
 	}
 	var e validate.Errors
@@ -378,8 +764,8 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 	if req.AppliesTo != nil {
 		appliesTo = *req.AppliesTo
 	}
-	scope, ok := adminScope(appliesTo)
-	if !ok {
+	scope, okScope := adminScope(appliesTo)
+	if !okScope {
 		e = append(e, "appliesTo must be HALL, HOTEL or ALL")
 	}
 	if len(e) > 0 {
@@ -387,19 +773,47 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, _ := middleware.UserID(r.Context())
 	active := req.IsActive == nil || *req.IsActive
+	if active {
+		var exists bool
+		err := h.db.QueryRow(r.Context(), `
+			SELECT EXISTS (
+				SELECT 1 FROM coupons
+				 WHERE facility_type IS NOT NULL
+				   AND is_deleted = FALSE
+				   AND is_active = TRUE
+				   AND (valid_until IS NULL OR valid_until >= CURRENT_TIMESTAMP)
+			)`).Scan(&exists)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if exists {
+			response.Error(w, http.StatusBadRequest,
+				"Admin can only have one active coupon at a time. An active coupon already exists.",
+				"COUPON_LIMIT_EXCEEDED")
+			return
+		}
+	}
+
+	bannerURL, err := h.processBannerImage(r.Context(), fh, req.bannerValue(), nil, nil)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err.Error(), "VALIDATION_ERROR")
+		return
+	}
+
+	userID, _ := middleware.UserID(r.Context())
 	code := strings.ToUpper(strings.TrimSpace(req.Code))
 	var id string
-	err := h.db.QueryRow(r.Context(), `
+	err = h.db.QueryRow(r.Context(), `
 		INSERT INTO coupons (code, description, facility_type,
 		    discount_type, discount_value, max_discount, min_booking_amount,
-		    valid_from, valid_until, usage_limit, is_active, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		    valid_from, valid_until, usage_limit, is_active, created_by, banner_image_url)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING id::text`,
 		code, req.Description, scope, strings.ToUpper(req.DiscountType), req.DiscountValue,
 		req.MaxDiscount, req.MinBookingAmount, from, until, req.UsageLimit,
-		active, userID).Scan(&id)
+		active, userID, bannerURL).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -421,15 +835,33 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 			DiscountValue: req.DiscountValue, MaxDiscount: req.MaxDiscount, CreatedBy: userID,
 		})
 	}
-	response.Created(w, "Coupon created successfully", "/api/v1/admin/coupons/"+id,
-		map[string]any{"id": id, "code": code, "appliesTo": venuetype.API(scope), "announced": h.OnCouponCreated != nil && usableNow})
+	adminData := map[string]any{
+		"id":        id,
+		"code":      code,
+		"appliesTo": venuetype.API(scope),
+		"announced": h.OnCouponCreated != nil && usableNow,
+	}
+	if bannerURL != nil {
+		adminData["bannerImage"] = *bannerURL
+		adminData["bannerImageUrl"] = *bannerURL
+	}
+	response.Created(w, "Coupon created successfully", "/api/v1/admin/coupons/"+id, adminData)
 }
 
 // available lists the coupons a customer can use at a venue - or, without a
 // facilityId, the ones valid at every marriage hall. Exhausted and expired
 // coupons are filtered in SQL, so the list never offers a code checkout rejects.
 func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
-	facilityID := r.URL.Query().Get("facilityId")
+	facilityID := strings.TrimSpace(r.URL.Query().Get("facilityId"))
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("venueId"))
+	}
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("hotelId"))
+	}
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("hallId"))
+	}
 	// Without a venue: the platform-wide offers - every-hall coupons and the
 	// ALL-venue ones, which would otherwise be invisible on this screen even
 	// though checkout accepts them everywhere. With a venue: whatever applies
@@ -453,10 +885,18 @@ func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
 		}
 		join = `JOIN facilities f ON f.id = $1 AND f.is_deleted = FALSE`
 		where, args = coupon.AppliesSQL, []any{facilityID}
+	} else if vt := strings.TrimSpace(r.URL.Query().Get("venueType")); vt != "" {
+		upper := strings.ToUpper(vt)
+		if upper == venuetype.Hotel {
+			where, args = `c.facility_type IN ($1, $2)`, []any{venuetype.Hotel, scopeAll}
+		} else if upper == venuetype.Hall || upper == venuetype.StoredHall {
+			where, args = `c.facility_type IN ($1, $2)`, []any{hallType, scopeAll}
+		}
 	}
 	rows, err := h.db.Query(r.Context(), `
 		SELECT c.id::text, c.code, c.description, c.discount_type, c.discount_value,
-		       c.max_discount, c.min_booking_amount, c.valid_until, c.facility_type
+		       c.max_discount, c.min_booking_amount, c.valid_until, c.facility_type,
+		       c.banner_image_url
 		  FROM coupons c `+join+`
 		 WHERE `+coupon.LiveSQL+`
 		   AND (c.usage_limit IS NULL OR c.used_count < c.usage_limit)
@@ -479,14 +919,17 @@ func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
 		ValidUntil    *time.Time `json:"validUntil"`
 		// AppliesTo is "HALL" for a coupon valid at every marriage hall, null
 		// for one scoped to this venue or its vendor.
-		AppliesTo    *string `json:"appliesTo"`
-		facilityType *string
+		AppliesTo      *string `json:"appliesTo"`
+		facilityType   *string
+		BannerImage    *string `json:"bannerImage,omitempty"`
+		BannerImageURL *string `json:"bannerImageUrl,omitempty"`
 	}
 	out := []offer{}
 	for rows.Next() {
 		var o offer
+		var banner *string
 		if err := rows.Scan(&o.ID, &o.Code, &o.Description, &o.DiscountType, &o.DiscountValue,
-			&o.MaxDiscount, &o.MinBooking, &o.ValidUntil, &o.facilityType); err != nil {
+			&o.MaxDiscount, &o.MinBooking, &o.ValidUntil, &o.facilityType, &banner); err != nil {
 			httpx.Fail(w, err)
 			return
 		}
@@ -494,6 +937,8 @@ func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
 			t := venuetype.API(*o.facilityType)
 			o.AppliesTo = &t
 		}
+		o.BannerImage = banner
+		o.BannerImageURL = banner
 		out = append(out, o)
 	}
 	if err := rows.Err(); err != nil {
@@ -512,8 +957,8 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, platform bool) {
 		response.Error(w, http.StatusBadRequest, "Invalid coupon id", "VALIDATION_ERROR")
 		return
 	}
-	var req couponReq
-	if !httpx.Decode(w, r, &req) {
+	req, fh, ok := h.decodeCouponReq(w, r)
+	if !ok {
 		return
 	}
 	var e validate.Errors
@@ -535,19 +980,49 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, platform bool) {
 		return
 	}
 	active := req.IsActive == nil || *req.IsActive
+	if platform && active {
+		var exists bool
+		err := h.db.QueryRow(r.Context(), `
+			SELECT EXISTS (
+				SELECT 1 FROM coupons
+				 WHERE facility_type IS NOT NULL
+				   AND id <> $1::uuid
+				   AND is_deleted = FALSE
+				   AND is_active = TRUE
+				   AND (valid_until IS NULL OR valid_until >= CURRENT_TIMESTAMP)
+			)`, id).Scan(&exists)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if exists {
+			response.Error(w, http.StatusBadRequest,
+				"Admin can only have one active coupon at a time. An active coupon already exists.",
+				"COUPON_LIMIT_EXCEEDED")
+			return
+		}
+	}
+
+	bannerURL, err := h.processBannerImage(r.Context(), fh, req.bannerValue(), req.FacilityID, vendorID)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err.Error(), "VALIDATION_ERROR")
+		return
+	}
+
 	// Ownership is in the WHERE clause, so another vendor's coupon simply
 	// matches nothing and is reported as not found.
 	tag, err := h.db.Exec(r.Context(), `
 		UPDATE coupons SET code = $2, description = $3, discount_type = $4,
 		    discount_value = $5, max_discount = $6, min_booking_amount = $7,
 		    valid_from = $8, valid_until = $9, usage_limit = $10, is_active = $11,
+		    banner_image_url = COALESCE($12, banner_image_url),
 		    updated_at = CURRENT_TIMESTAMP
 		 WHERE id = $1 AND is_deleted = FALSE
-		   AND ($12::uuid IS NULL OR vendor_id = $12::uuid)
-		   AND (NOT $13 OR facility_type IS NOT NULL)`,
+		   AND ($13::uuid IS NULL OR vendor_id = $13::uuid)
+		   AND (NOT $14 OR facility_type IS NOT NULL)`,
 		id, strings.ToUpper(strings.TrimSpace(req.Code)), req.Description,
 		strings.ToUpper(req.DiscountType), req.DiscountValue, req.MaxDiscount,
-		req.MinBookingAmount, from, until, req.UsageLimit, active, vendorID, platform)
+		req.MinBookingAmount, from, until, req.UsageLimit, active, bannerURL, vendorID, platform)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -599,12 +1074,19 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request, platform bool) 
 }
 
 type validateReq struct {
-	Code       string  `json:"code"`
-	Amount     float64 `json:"amount"`
-	FacilityID *string `json:"facilityId"`
+	Code             string   `json:"code"`
+	Codes            []string `json:"codes"`
+	AdminCouponCode  *string  `json:"adminCouponCode"`
+	VendorCouponCode *string  `json:"vendorCouponCode"`
+	Amount           float64  `json:"amount"`
+	FacilityID       *string  `json:"facilityId"`
+	VenueID          *string  `json:"venueId"`
+	HotelID          *string  `json:"hotelId"`
+	HallID           *string  `json:"hallId"`
 }
 
-// validateCode prices a coupon against an amount at one venue.
+// validateCode prices one or more coupon codes against an amount at one venue.
+// Supports applying multiple coupons (e.g. 1 Admin coupon + 1 Hall Owner coupon).
 //
 // amount is what the coupon comes off: the price after the venue's own
 // advertised discount, as the booking applies it. The discount is always
@@ -619,11 +1101,45 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var e validate.Errors
-	e.Required("Code", req.Code)
+	targetFacilityID := ""
+	if req.FacilityID != nil && strings.TrimSpace(*req.FacilityID) != "" {
+		targetFacilityID = strings.TrimSpace(*req.FacilityID)
+	} else if req.VenueID != nil && strings.TrimSpace(*req.VenueID) != "" {
+		targetFacilityID = strings.TrimSpace(*req.VenueID)
+	} else if req.HotelID != nil && strings.TrimSpace(*req.HotelID) != "" {
+		targetFacilityID = strings.TrimSpace(*req.HotelID)
+	} else if req.HallID != nil && strings.TrimSpace(*req.HallID) != "" {
+		targetFacilityID = strings.TrimSpace(*req.HallID)
+	}
+
+	codes := req.Codes
+	addCode := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		for _, c := range codes {
+			if strings.EqualFold(strings.TrimSpace(c), trimmed) {
+				return
+			}
+		}
+		codes = append(codes, trimmed)
+	}
+	addCode(req.Code)
+	if req.AdminCouponCode != nil {
+		addCode(*req.AdminCouponCode)
+	}
+	if req.VendorCouponCode != nil {
+		addCode(*req.VendorCouponCode)
+	}
+
+	if len(codes) == 0 {
+		e.Required("Code", req.Code)
+	}
 	if req.Amount <= 0 {
 		e = append(e, "amount must be greater than 0")
 	}
-	if req.FacilityID == nil || !httpx.ValidUUID(*req.FacilityID) {
+	if targetFacilityID == "" || !httpx.ValidUUID(targetFacilityID) {
 		e = append(e, "facilityId is required")
 	}
 	if len(e) > 0 {
@@ -631,10 +1147,12 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c, err := coupon.Load(r.Context(), h.db, req.Code, *req.FacilityID)
-	if err == nil {
-		err = c.Check(req.Amount)
+	if len(codes) > 2 {
+		response.Error(w, http.StatusBadRequest, "Maximum 2 coupons can be applied per booking", "COUPON_LIMIT_EXCEEDED")
+		return
 	}
+
+	applied, totalDiscount, err := coupon.PriceCoupons(r.Context(), h.db, codes, targetFacilityID, req.Amount)
 	var ce *coupon.Error
 	if errors.As(err, &ce) {
 		response.Error(w, ce.Status, ce.Message, ce.Code)
@@ -644,10 +1162,43 @@ func (h *Handler) validateCode(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	discount := c.Discount(req.Amount)
+
+	var couponsBreakdown []map[string]any
+	var primaryID, primaryCode string
+	var adminCouponID, vendorCouponID *string
+	var adminDiscount, vendorDiscount float64
+	for _, ac := range applied {
+		if primaryID == "" {
+			primaryID = ac.Coupon.ID
+			primaryCode = ac.Coupon.Code
+		}
+		if ac.Scope == coupon.ScopeAdmin {
+			cid := ac.Coupon.ID
+			adminCouponID = &cid
+			adminDiscount = ac.DiscountAmount
+		} else if ac.Scope == coupon.ScopeVendor {
+			cid := ac.Coupon.ID
+			vendorCouponID = &cid
+			vendorDiscount = ac.DiscountAmount
+		}
+		couponsBreakdown = append(couponsBreakdown, map[string]any{
+			"couponId":       ac.Coupon.ID,
+			"code":           ac.Coupon.Code,
+			"scope":          ac.Scope,
+			"discountAmount": ac.DiscountAmount,
+		})
+	}
+
 	response.OK(w, "Coupon applied", map[string]any{
-		"couponId": c.ID, "code": c.Code,
-		"discountAmount": discount, "finalAmount": req.Amount - discount,
+		"couponId":             primaryID,
+		"code":                 primaryCode,
+		"adminCouponId":        adminCouponID,
+		"adminCouponDiscount":  adminDiscount,
+		"vendorCouponId":       vendorCouponID,
+		"vendorCouponDiscount": vendorDiscount,
+		"discountAmount":       totalDiscount,
+		"finalAmount":          req.Amount - totalDiscount,
+		"coupons":              couponsBreakdown,
 	})
 }
 
@@ -667,6 +1218,8 @@ type availableCouponItem struct {
 	UsedCount        int        `json:"usedCount"`
 	IsActive         bool       `json:"isActive"`
 	DistanceKm       *float64   `json:"distanceKm,omitempty"`
+	BannerImage      *string    `json:"bannerImage,omitempty"`
+	BannerImageURL   *string    `json:"bannerImageUrl,omitempty"`
 }
 
 const (
@@ -674,26 +1227,24 @@ const (
 	maxGeoRadiusKm         = 500.0
 )
 
-// optCoord reads an optional coordinate. Out of range, unparseable or exactly
-// zero is treated as absent: 0,0 is Null Island in the Atlantic, which is what
-// an uninitialised location object serialises to far more often than it is a
-// real position.
-func optCoord(r *http.Request, key string) *float64 {
-	raw := r.URL.Query().Get(key)
-	if raw == "" {
-		return nil
+// optLocation reads the caller's ?lat=&lng=, both or neither. Half a location,
+// an unparseable or out-of-range value, and 0,0 (Null Island, what an
+// uninitialised location object serialises to) are all treated as absent.
+//
+// ponytail: the same rule as facility/handler's parseUserLocation, copied
+// because one handler must not import another. Keep the two identical; this
+// one used to drop any single 0 coordinate, so a venue on the equator or the
+// prime meridian lost its location here but not there.
+func optLocation(r *http.Request) (lat, lng *float64) {
+	q := r.URL.Query()
+	la, err1 := strconv.ParseFloat(q.Get("lat"), 64)
+	ln, err2 := strconv.ParseFloat(q.Get("lng"), 64)
+	// Written as "in range" so NaN, which fails every comparison, is out.
+	if err1 != nil || err2 != nil ||
+		!(la >= -90 && la <= 90 && ln >= -180 && ln <= 180) || (la == 0 && ln == 0) {
+		return nil, nil
 	}
-	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil || v == 0 {
-		return nil
-	}
-	if key == "lat" && (v < -90 || v > 90) {
-		return nil
-	}
-	if key == "lng" && (v < -180 || v > 180) {
-		return nil
-	}
-	return &v
+	return &la, &ln
 }
 
 // listAvailable returns coupon cards for a user's app screen.
@@ -702,6 +1253,11 @@ func optCoord(r *http.Request, key string) *float64 {
 // 1. User has location AND Facility has location: included ONLY if distance <= 50 km.
 // 2. User has NO location (lat/lng is null) OR Facility has NO location: ALWAYS INCLUDED.
 // 3. Platform-wide coupons (facilityId is null): ALWAYS INCLUDED.
+//
+// Optional query parameter:
+// - venueType=HALL|HOTEL  narrows results to coupons applicable to that venue
+//   type only. Without it every live coupon in range is returned, which is the
+//   historic behaviour preserved for backward compatibility.
 func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 	userID, _ := middleware.UserID(r.Context())
 
@@ -709,10 +1265,7 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 	// of 559 profiles have coordinates, so without this the radius filter does
 	// nothing for most users - and a phone knows where it is right now, which
 	// a stale profile address does not.
-	lat, lng := optCoord(r, "lat"), optCoord(r, "lng")
-	if lat == nil || lng == nil {
-		lat, lng = nil, nil // half a location is a client bug, not a location
-	}
+	lat, lng := optLocation(r)
 	// Capped at 500 km: beyond that "nearby offers" is not a screen anyone is
 	// looking at, and an unbounded radius is a cheap way to ask for every
 	// coupon in the table. An out-of-range value is a 400 rather than a silent
@@ -720,12 +1273,56 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 	radius := float64(defaultGeoRadiusMetres)
 	if v := r.URL.Query().Get("radiusKm"); v != "" {
 		km, err := strconv.ParseFloat(v, 64)
-		if err != nil || km <= 0 || km > maxGeoRadiusKm {
+		if err != nil || !(km > 0 && km <= maxGeoRadiusKm) { // NaN fails both
 			response.Error(w, http.StatusBadRequest,
 				"radiusKm must be a number between 0 and 500", "VALIDATION_ERROR")
 			return
 		}
 		radius = km * 1000
+	}
+
+	// venueType narrows the coupon list to coupons that apply to that venue
+	// type. A nil value means "return all" (backward-compatible default).
+	var storedVenueType *string
+	if vt := strings.TrimSpace(r.URL.Query().Get("venueType")); vt != "" {
+		upper := strings.ToUpper(vt)
+		if !venuetype.Valid(upper) {
+			response.Error(w, http.StatusBadRequest,
+				"venueType must be HALL or HOTEL", "VALIDATION_ERROR")
+			return
+		}
+		s := venuetype.Stored(upper)
+		storedVenueType = &s
+	}
+
+	facilityID := strings.TrimSpace(r.URL.Query().Get("facilityId"))
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("venueId"))
+	}
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("hotelId"))
+	}
+	if facilityID == "" {
+		facilityID = strings.TrimSpace(r.URL.Query().Get("hallId"))
+	}
+	var targetFacilityID *string
+	if facilityID != "" {
+		if !httpx.ValidUUID(facilityID) {
+			response.Error(w, http.StatusBadRequest, "facilityId must be a valid id", "VALIDATION_ERROR")
+			return
+		}
+		var exists bool
+		if err := h.db.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM facilities WHERE id = $1 AND is_deleted = FALSE)`,
+			facilityID).Scan(&exists); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		if !exists {
+			response.Error(w, http.StatusNotFound, "Facility not found", "FACILITY_NOT_FOUND")
+			return
+		}
+		targetFacilityID = &facilityID
 	}
 
 	rows, err := h.db.Query(r.Context(), `
@@ -745,28 +1342,52 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 		         WHEN me.lat IS NOT NULL AND me.lng IS NOT NULL AND f.lat IS NOT NULL AND f.lng IS NOT NULL THEN
 		           round((earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision),
 		                                 ll_to_earth(me.lat, me.lng)) / 1000.0)::numeric, 2)
-		       END AS distance_km
+		       END AS distance_km,
+		       c.banner_image_url
 		  FROM coupons c
 		  CROSS JOIN me
-		  LEFT JOIN facilities f ON f.id = c.facility_id AND f.is_deleted = FALSE
-		 WHERE c.is_active = TRUE
-		   AND c.is_deleted = FALSE
-		   AND (c.valid_from IS NULL OR c.valid_from <= CURRENT_TIMESTAMP)
-		   AND (c.valid_until IS NULL OR c.valid_until >= CURRENT_TIMESTAMP)
+		  LEFT JOIN facilities f ON f.id = c.facility_id AND `+venuetype.LiveSQL("f")+`
+		  LEFT JOIN facilities target_f ON target_f.id = $6::uuid AND target_f.is_deleted = FALSE
+		 WHERE `+coupon.LiveSQL+`
 		   AND (c.usage_limit IS NULL OR c.used_count < c.usage_limit)
+		   -- A venue coupon whose venue is gone or not live is one checkout
+		   -- refuses; offering it here was a code that could never be used.
+		   AND (c.facility_id IS NULL OR f.id IS NOT NULL)
 		   -- A venue-scoped coupon is hidden only when we can prove it is far
-		   -- away. No location on either side means "not stated", never "no":
-		   -- hiding offers because a phone refused GPS looks like a broken
-		   -- screen, not a filter.
+		   -- away. If target facility is specified, do not hide the venue's own coupon due to remote GPS.
 		   AND (
-		     c.facility_id IS NULL
+		     $6::uuid IS NOT NULL
+		     OR c.facility_id IS NULL
 		     OR me.lat IS NULL OR me.lng IS NULL
 		     OR f.lat IS NULL OR f.lng IS NULL
 		     OR earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision),
 		                       ll_to_earth(me.lat, me.lng)) <= $2
 		   )
+		   -- Target facility coupon scope check
+		   AND (
+		     $6::uuid IS NULL OR (
+		       CASE
+		         WHEN c.vendor_id IS NOT NULL THEN (c.facility_id IS NOT NULL AND c.facility_id = target_f.id)
+		         WHEN c.facility_id IS NOT NULL THEN c.facility_id = target_f.id
+		         WHEN c.facility_type = 'ALL' THEN TRUE
+		         ELSE (c.facility_type = target_f.type OR (c.facility_type = 'HALL' AND target_f.type = 'MARRIAGE_HALL') OR (c.facility_type = 'MARRIAGE_HALL' AND target_f.type = 'HALL'))
+		       END
+		     )
+		   )
+		   -- venueType filter: when $5 is NULL every coupon passes through
+		   -- (backward-compatible). When set, only coupons that can actually be
+		   -- used at that venue type are shown:
+		   --   ALL admin coupons apply everywhere.
+		   --   Type-scoped admin coupons must match the requested type.
+		   --   Venue-specific coupons are filtered by the joined facility's type.
+		   AND (
+		     $5::text IS NULL
+		     OR c.facility_type = 'ALL'
+		     OR c.facility_type = $5
+		     OR (c.facility_id IS NOT NULL AND f.type = $5)
+		   )
 		 ORDER BY distance_km NULLS LAST, c.created_at DESC`,
-		userID, radius, lat, lng)
+		userID, radius, lat, lng, storedVenueType, targetFacilityID)
 	if err != nil {
 		httpx.Fail(w, err)
 		return
@@ -776,13 +1397,16 @@ func (h *Handler) listAvailable(w http.ResponseWriter, r *http.Request) {
 	out := []availableCouponItem{}
 	for rows.Next() {
 		var x availableCouponItem
+		var banner *string
 		if err := rows.Scan(&x.ID, &x.Code, &x.Description, &x.FacilityID, &x.FacilityName,
 			&x.DiscountType, &x.DiscountValue, &x.MaxDiscount, &x.MinBookingAmount,
 			&x.ValidFrom, &x.ValidUntil, &x.UsageLimit, &x.UsedCount, &x.IsActive,
-			&x.DistanceKm); err != nil {
+			&x.DistanceKm, &banner); err != nil {
 			httpx.Fail(w, err)
 			return
 		}
+		x.BannerImage = banner
+		x.BannerImageURL = banner
 		out = append(out, x)
 	}
 	if err := rows.Err(); err != nil {

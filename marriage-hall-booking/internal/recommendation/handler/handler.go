@@ -71,11 +71,11 @@ func (h *Handler) GetRecommendations(w http.ResponseWriter, r *http.Request) {
 		radiusKm = rVal
 	}
 
-	// 5. Validate page (optional, default 1)
-	page := 1
+	// 5. Validate page (optional, 0-based like every other list, default 0)
+	page := 0
 	if pageStr := q.Get("page"); pageStr != "" {
 		pVal, err := strconv.Atoi(pageStr)
-		if err != nil || pVal < 1 {
+		if err != nil || pVal < 0 {
 			response.Error(w, http.StatusBadRequest, "Invalid page number", "VALIDATION_ERROR")
 			return
 		}
@@ -93,13 +93,19 @@ func (h *Handler) GetRecommendations(w http.ResponseWriter, r *http.Request) {
 		size = sVal
 	}
 
+	eventType := strings.ToUpper(strings.TrimSpace(q.Get("eventType")))
+	if eventType == "" {
+		eventType = strings.ToUpper(strings.TrimSpace(q.Get("event_type")))
+	}
+
 	params := dto.RecommendationParams{
-		Lat:      lat,
-		Lng:      lng,
-		Type:     rawType,
-		RadiusKm: radiusKm,
-		Page:     page,
-		Size:     size,
+		Lat:       lat,
+		Lng:       lng,
+		Type:      rawType,
+		RadiusKm:  radiusKm,
+		EventType: eventType,
+		Page:      page,
+		Size:      size,
 	}
 
 	data, msg, err := h.svc.GetRecommendations(r.Context(), params)

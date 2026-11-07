@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
@@ -73,15 +74,16 @@ func (h *Handler) reject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) decide(w http.ResponseWriter, r *http.Request, confirm bool, reason string) {
-	id := r.PathValue("id")
-	if !httpx.ValidUUID(id) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
 		response.Error(w, http.StatusBadRequest, "Invalid booking id", "VALIDATION_ERROR")
 		return
 	}
 
 	actorID, _ := middleware.UserID(r.Context())
+	isAdmin := middleware.HasRole(r.Context(), domain.RoleAdmin) || middleware.HasRole(r.Context(), domain.RoleSuperAdmin)
 	b, err := h.svc.Decide(r.Context(), id, actorID,
-		middleware.HasRole(r.Context(), domain.RoleAdmin),
+		isAdmin,
 		confirm, strings.TrimSpace(reason))
 	if err != nil {
 		httpx.Fail(w, err)
@@ -97,8 +99,26 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, confirm bool, r
 // ownerBookings is the venue owner's inbox. Without it a booking request
 // arrived as a notification and could then be found nowhere in the API.
 func (h *Handler) ownerBookings(w http.ResponseWriter, r *http.Request) {
-	page, size := httpx.Page(r)
 	ownerID, _ := middleware.UserID(r.Context())
+	ref := strings.TrimSpace(r.URL.Query().Get("referenceId"))
+	if ref == "" {
+		ref = strings.TrimSpace(r.URL.Query().Get("bookingReference"))
+	}
+	if ref == "" {
+		ref = strings.TrimSpace(r.URL.Query().Get("reference"))
+	}
+	if ref != "" {
+		isAdmin := middleware.HasRole(r.Context(), domain.RoleAdmin) || middleware.HasRole(r.Context(), domain.RoleSuperAdmin)
+		b, err := h.svc.Get(r.Context(), ref, ownerID, isAdmin)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		response.OK(w, "Bookings retrieved successfully", httpx.NewPaged([]repository.Booking{*b}, 1, 1, 1))
+		return
+	}
+
+	page, size := httpx.Page(r)
 	status := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))
 	if status != "" && !validBookingStatus(status) {
 		response.Error(w, http.StatusBadRequest,

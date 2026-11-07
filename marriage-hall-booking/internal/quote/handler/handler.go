@@ -66,8 +66,37 @@ type quoteParty struct {
 	StartTime  *string
 	EndTime    *string
 	SlotType   *string
+	ValidUntil *time.Time
+	Quoted     *float64
 	IsCustomer bool
 	IsOwner    bool
+}
+
+// ist is the venue clock. India keeps no DST, so a fixed zone needs no tzdata
+// in the image.
+var ist = time.FixedZone("IST", 5*3600+30*60)
+
+// expired reports whether an offer's valid_until date has passed. The date is
+// inclusive: an offer valid until the 10th can still be taken on the 10th.
+func expired(validUntil *time.Time, now time.Time) bool {
+	if validUntil == nil {
+		return false
+	}
+	return validUntil.Format("2006-01-02") < now.In(ist).Format("2006-01-02")
+}
+
+// canAccept: the side that did not make the offer on the table accepts it.
+// The owner's REPLIED price is the customer's to take; the customer's COUNTERED
+// price is the owner's. Letting the author accept their own number let a
+// customer counter at 1 rupee, accept it, and convert it into a booking.
+func canAccept(status string, isCustomer, isOwner, isAdmin bool) bool {
+	switch status {
+	case "REPLIED":
+		return isCustomer || isAdmin
+	case "COUNTERED":
+		return isOwner || isAdmin
+	}
+	return false
 }
 
 // load fetches a quote and establishes which side of the negotiation the caller
@@ -83,11 +112,12 @@ func (h *Handler) load(w http.ResponseWriter, r *http.Request) (*quoteParty, boo
 	q.QuoteID = id
 	err := h.db.QueryRow(r.Context(),
 		`SELECT q.customer_id, f.owner_id, q.facility_id, q.status, q.event_date,
-		        COALESCE(q.end_date, q.event_date), q.start_time, q.end_time, q.slot_type
+		        COALESCE(q.end_date, q.event_date), q.start_time, q.end_time, q.slot_type,
+		        q.valid_until, q.quoted_amount
 		 FROM quotes q JOIN facilities f ON f.id = q.facility_id
 		 WHERE q.id = $1`, id).
 		Scan(&q.CustomerID, &q.OwnerID, &q.FacilityID, &q.Status, &q.EventDate,
-			&q.EndDate, &q.StartTime, &q.EndTime, &q.SlotType)
+			&q.EndDate, &q.StartTime, &q.EndTime, &q.SlotType, &q.ValidUntil, &q.Quoted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "Quote not found", "QUOTE_NOT_FOUND")
 		return nil, false
@@ -179,7 +209,8 @@ func (h *Handler) request(w http.ResponseWriter, r *http.Request) {
 	eventDate, err := time.Parse("2006-01-02", start)
 	if err != nil {
 		e = append(e, "startDate must be YYYY-MM-DD")
-	} else if eventDate.Before(time.Now().Truncate(24 * time.Hour)) {
+	} else if start < time.Now().In(ist).Format("2006-01-02") {
+		// Today in IST: UTC midnight kept yesterday bookable until 05:30.
 		e = append(e, "startDate cannot be in the past")
 	}
 
@@ -324,6 +355,15 @@ func (h *Handler) addVersion(w http.ResponseWriter, r *http.Request, role, newSt
 	if req.Discount < 0 || req.Tax < 0 || req.ServiceCharge < 0 {
 		e = append(e, "discount, tax and serviceCharge cannot be negative")
 	}
+	// Checked here so a bad date is a 400, not a cast failure (500) in the INSERT.
+	if req.ValidUntil != nil && *req.ValidUntil == "" {
+		req.ValidUntil = nil
+	}
+	if req.ValidUntil != nil {
+		if _, err := time.Parse("2006-01-02", *req.ValidUntil); err != nil {
+			e = append(e, "validUntil must be YYYY-MM-DD")
+		}
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -354,6 +394,20 @@ func (h *Handler) addVersion(w http.ResponseWriter, r *http.Request, role, newSt
 		return
 	}
 	defer tx.Rollback(r.Context())
+
+	// Lock the quote and re-read its status: the check above ran before the
+	// lock, and a concurrent accept must not have its price changed under it.
+	var status string
+	if err := tx.QueryRow(r.Context(),
+		`SELECT status FROM quotes WHERE id = $1 FOR UPDATE`, q.QuoteID).Scan(&status); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	switch status {
+	case "ACCEPTED", "REJECTED", "CANCELLED", "CONVERTED":
+		response.Error(w, http.StatusConflict, "Quote is already "+status, "INVALID_STATE")
+		return
+	}
 
 	var versionNo int
 	if err := tx.QueryRow(r.Context(),
@@ -652,6 +706,10 @@ func (h *Handler) listQuotes(w http.ResponseWriter, r *http.Request, where strin
 		x.EventDate = x.StartDate
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Quotes retrieved successfully", httpx.NewPaged(out, page, size, total))
 }
 
@@ -706,16 +764,34 @@ func (h *Handler) accept(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Either side can accept, but only a quote that actually carries a price.
+	// Only a quote that actually carries a price.
 	if q.Status != "REPLIED" && q.Status != "COUNTERED" {
 		response.Error(w, http.StatusConflict,
 			"Only a quoted or countered quote can be accepted", "INVALID_STATUS_TRANSITION")
 		return
 	}
-	if _, err := h.db.Exec(r.Context(),
-		`UPDATE quotes SET status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		q.QuoteID); err != nil {
+	if !canAccept(q.Status, q.IsCustomer, q.IsOwner, middleware.HasRole(r.Context(), domain.RoleAdmin)) {
+		response.Error(w, http.StatusForbidden,
+			"Only the other party can accept this offer", "NOT_YOUR_OFFER_TO_ACCEPT")
+		return
+	}
+	if expired(q.ValidUntil, time.Now()) {
+		response.Error(w, http.StatusConflict, "This offer has expired", "QUOTE_EXPIRED")
+		return
+	}
+	// Conditional on what was read: a counter landing between the read and
+	// this write must not be accepted at a price nobody looked at.
+	tag, err := h.db.Exec(r.Context(),
+		`UPDATE quotes SET status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND status = $2 AND quoted_amount IS NOT DISTINCT FROM $3`,
+		q.QuoteID, q.Status, q.Quoted)
+	if err != nil {
 		httpx.Fail(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		response.Error(w, http.StatusConflict,
+			"The quote changed while you were viewing it; reload and try again", "QUOTE_CHANGED")
 		return
 	}
 	response.OK(w, "Quote accepted successfully", map[string]any{
@@ -740,8 +816,11 @@ func (h *Handler) settle(w http.ResponseWriter, r *http.Request, status, verb st
 	if !ok {
 		return
 	}
+	// Only an open negotiation can be settled. Re-settling a REJECTED quote
+	// as CANCELLED flipped it and wrote a second audit row, double-counting it.
 	switch q.Status {
-	case "CONVERTED", "ACCEPTED":
+	case "REQUESTED", "REPLIED", "COUNTERED":
+	default:
 		response.Error(w, http.StatusConflict,
 			"Quote is already "+q.Status, "INVALID_STATE")
 		return
@@ -750,11 +829,17 @@ func (h *Handler) settle(w http.ResponseWriter, r *http.Request, status, verb st
 	if r.ContentLength > 0 && !httpx.Decode(w, r, &req) {
 		return
 	}
-	if _, err := h.db.Exec(r.Context(),
+	tag, err := h.db.Exec(r.Context(),
 		`UPDATE quotes SET status = $2, rejection_reason = NULLIF($3,''),
-		    updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		q.QuoteID, status, req.Reason); err != nil {
+		    updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = $4`,
+		q.QuoteID, status, req.Reason, q.Status)
+	if err != nil {
 		httpx.Fail(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		response.Error(w, http.StatusConflict,
+			"The quote changed while you were viewing it; reload and try again", "QUOTE_CHANGED")
 		return
 	}
 	actor, _ := middleware.UserID(r.Context())
@@ -843,6 +928,10 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Messages retrieved successfully", out)
 }
 
@@ -868,6 +957,8 @@ func (h *Handler) addAttachment(w http.ResponseWriter, r *http.Request) {
 	var e validate.Errors
 	e.Required("fileName", req.FileName)
 	e.Required("fileUrl", req.FileURL)
+	// Shown to the other party as a link: javascript: or data: would run there.
+	e.URL("fileUrl", &req.FileURL)
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -920,6 +1011,10 @@ func (h *Handler) listAttachments(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Attachments retrieved successfully", out)
 }
 
@@ -953,16 +1048,15 @@ func (h *Handler) convert(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 && !httpx.Decode(w, r, &req) {
 		return
 	}
-	if req.IdempotentKey == "" {
-		req.IdempotentKey = "quote-" + q.QuoteID
-	}
+	// One quote, one booking: the key is the quote's whatever the client sent,
+	// so two converts racing with different keys cannot book twice.
+	req.IdempotentKey = "quote-" + q.QuoteID
 
-	var agreed *float64
-	if err := h.db.QueryRow(r.Context(),
-		`SELECT quoted_amount FROM quotes WHERE id = $1`, q.QuoteID).Scan(&agreed); err != nil {
-		httpx.Fail(w, err)
+	if expired(q.ValidUntil, time.Now()) {
+		response.Error(w, http.StatusConflict, "This offer has expired", "QUOTE_EXPIRED")
 		return
 	}
+	agreed := q.Quoted
 	if agreed == nil {
 		// Java: a quote with no version has nothing to convert.
 		response.Error(w, http.StatusConflict,
@@ -989,7 +1083,8 @@ func (h *Handler) convert(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.db.Exec(r.Context(),
 		`UPDATE quotes SET status = 'CONVERTED', booking_id = $2,
-		    updated_at = CURRENT_TIMESTAMP WHERE id = $1`, q.QuoteID, b.ID); err != nil {
+		    updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'ACCEPTED'`,
+		q.QuoteID, b.ID); err != nil {
 		httpx.Fail(w, err)
 		return
 	}

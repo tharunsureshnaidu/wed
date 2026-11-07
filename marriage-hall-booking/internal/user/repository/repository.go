@@ -53,6 +53,16 @@ func (r *Repo) EnsureProfile(ctx context.Context, userID int64, firstName string
 	return err
 }
 
+// AddAddress saves one address against the profile. The profile must exist
+// already - EnsureProfile first. a.ID is ignored.
+func (r *Repo) AddAddress(ctx context.Context, userID int64, a Address) error {
+	_, err := r.db.Exec(ctx,
+		`INSERT INTO addresses (user_profile_id, street, city, state, zip_code, country)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		userID, a.Street, a.City, a.State, a.ZipCode, a.Country)
+	return err
+}
+
 func (r *Repo) Get(ctx context.Context, userID int64) (*Profile, error) {
 	var p Profile
 	err := r.db.QueryRow(ctx,

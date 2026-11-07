@@ -9,26 +9,28 @@ import (
 // A coordinate only counts when it is usable. Anything else is treated as "no
 // location", which shows every live offer rather than hiding them - a filter
 // that silently empties the screen looks like a broken app.
-func TestOptCoord(t *testing.T) {
+func TestOptLocation(t *testing.T) {
 	cases := []struct {
-		key, raw string
-		want     bool
-		why      string
+		query string
+		want  bool
+		why   string
 	}{
-		{"lat", "12.9716", true, "a normal fix"},
-		{"lng", "77.5946", true, "a normal fix"},
-		{"lat", "", false, "nothing sent"},
-		{"lat", "abc", false, "unparseable"},
-		{"lat", "91", false, "latitude out of range"},
-		{"lng", "181", false, "longitude out of range"},
-		{"lat", "0", false, "Null Island, not a position"},
-		{"lng", "-122.4", true, "western hemisphere"},
+		{"lat=12.9716&lng=77.5946", true, "a normal fix"},
+		{"lat=37.77&lng=-122.4", true, "western hemisphere"},
+		{"lat=0&lng=77.6", true, "the equator is a real place"},
+		{"", false, "nothing sent"},
+		{"lat=12.9716", false, "half a location is a client bug"},
+		{"lat=abc&lng=77.5946", false, "unparseable"},
+		{"lat=91&lng=77.5946", false, "latitude out of range"},
+		{"lat=12.9&lng=181", false, "longitude out of range"},
+		{"lat=0&lng=0", false, "Null Island, not a position"},
+		{"lat=NaN&lng=77.6", false, "NaN fails every comparison"},
+		{"lat=12.9&lng=Inf", false, "infinity"},
 	}
 	for _, c := range cases {
-		r := httptest.NewRequest("GET", "/?"+c.key+"="+c.raw, nil)
-		if got := optCoord(r, c.key); (got != nil) != c.want {
-			t.Errorf("optCoord(%s=%q) usable=%v, want %v - %s",
-				c.key, c.raw, got != nil, c.want, c.why)
+		lat, lng := optLocation(httptest.NewRequest("GET", "/?"+c.query, nil))
+		if got := lat != nil && lng != nil; got != c.want {
+			t.Errorf("optLocation(%q) usable=%v, want %v - %s", c.query, got, c.want, c.why)
 		}
 	}
 }
@@ -58,4 +60,3 @@ func TestCouponsAvailableRouteIsRegistered(t *testing.T) {
 		t.Fatal("expected handler to not be nil")
 	}
 }
-

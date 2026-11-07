@@ -1,15 +1,16 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/domain"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/auth/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/jwt"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
@@ -51,15 +52,18 @@ type registerReq struct {
 	Email       *string `json:"email"`
 	PhoneNumber *string `json:"phoneNumber"`
 	Password    string  `json:"password"`
-	Address     string  `json:"address,omitempty"`
+	// address is either one line ("Bangalore, Karnataka") or an object of
+	// optional parts; UnmarshalJSON sorts it into one of these.
+	Address      string           `json:"-"`
+	AddressParts *service.Address `json:"-"`
 }
 
 func (r *registerReq) UnmarshalJSON(data []byte) error {
 	type Alias registerReq
 	aux := &struct {
-		Name    *string `json:"name"`
-		Phone   *string `json:"phone"`
-		Address *string `json:"address"`
+		Name    *string         `json:"name"`
+		Phone   *string         `json:"phone"`
+		Address json.RawMessage `json:"address"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -73,8 +77,10 @@ func (r *registerReq) UnmarshalJSON(data []byte) error {
 	if r.PhoneNumber == nil && aux.Phone != nil {
 		r.PhoneNumber = aux.Phone
 	}
-	if aux.Address != nil {
-		r.Address = *aux.Address
+	if raw := bytes.TrimSpace(aux.Address); len(raw) > 0 && raw[0] == '{' {
+		return json.Unmarshal(raw, &r.AddressParts)
+	} else if len(raw) > 0 && string(raw) != "null" {
+		return json.Unmarshal(raw, &r.Address)
 	}
 	return nil
 }
@@ -137,6 +143,15 @@ func (h *Handler) doRegister(w http.ResponseWriter, r *http.Request, vendor bool
 	if addr != "" {
 		e.MaxLength("Address", &addr, 500)
 	}
+	req.AddressParts = cleanAddress(req.AddressParts)
+	if a := req.AddressParts; a != nil {
+		// The addresses table's column widths.
+		e.MaxLength("Street", a.Street, 255)
+		e.MaxLength("City", a.City, 100)
+		e.MaxLength("State", a.State, 100)
+		e.MaxLength("Zip code", a.ZipCode, 20)
+		e.MaxLength("Country", a.Country, 100)
+	}
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return
@@ -148,11 +163,12 @@ func (h *Handler) doRegister(w http.ResponseWriter, r *http.Request, vendor bool
 	}
 
 	in := service.RegisterInput{
-		FullName:    req.FullName,
-		Email:       req.Email,
-		PhoneNumber: req.PhoneNumber,
-		Address:     addrPtr,
-		Password:    req.Password,
+		FullName:     req.FullName,
+		Email:        req.Email,
+		PhoneNumber:  req.PhoneNumber,
+		Address:      addrPtr,
+		AddressParts: req.AddressParts,
+		Password:     req.Password,
 	}
 	var (
 		userView *service.UserView
@@ -354,16 +370,30 @@ func fail(w http.ResponseWriter, err error) {
 	response.Error(w, http.StatusInternalServerError, "Something went wrong", "INTERNAL_ERROR")
 }
 
-func ip(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		hops := strings.Split(xff, ",")
-		return strings.TrimSpace(hops[len(hops)-1])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// ip is the caller's address for login_attempts, OTP and refresh-token rows.
+// It used to trust the last X-Forwarded-For hop unconditionally, so with no
+// proxy in front a client wrote whatever address it liked into the audit trail.
+func ip(r *http.Request) string { return httpx.ClientIP(r) }
 
 func empty(s *string) bool { return s == nil || strings.TrimSpace(*s) == "" }
+
+// cleanAddress trims each part and drops the blank ones. An address with no
+// part left is nil, so `"address": {}` saves no empty row.
+func cleanAddress(a *service.Address) *service.Address {
+	if a == nil {
+		return nil
+	}
+	kept := false
+	for _, p := range []**string{&a.Street, &a.City, &a.State, &a.ZipCode, &a.Country} {
+		if empty(*p) {
+			*p = nil
+			continue
+		}
+		t := strings.TrimSpace(**p)
+		*p, kept = &t, true
+	}
+	if !kept {
+		return nil
+	}
+	return a
+}

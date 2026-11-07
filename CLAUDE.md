@@ -18,6 +18,11 @@ reached "done" did so because something compiled and was assumed to work.
 **Check the request struct before writing a payload.** Field names differ from
 the obvious guess; see the table below.
 
+**Never commit photos, uploads or build output.** `uploads/` (venue photos,
+feedback screenshots, the media spool), images, `*.exe` and raw `.sql` dumps are
+gitignored; a 28MB `api.exe` and user photos had both been pushed to `main`.
+Check `git status` for them before every commit — `git add -A` picks them up.
+
 **Clean up test data.** Delete test users, bookings, reviews and any row you
 mutated in a shared table. Restore any facility you edited.
 
@@ -66,6 +71,11 @@ nothing (verified: booking with Kafka stopped → 28ms response, 9 outbox rows).
   The broker has no auth, and a forged path would upload any readable file to
   public storage.
 
+**A DB test must skip unless `TEST_DATABASE_URL` is set** — never connect via
+`config.Load()`. Four tests did, so a plain `go test ./...` deleted `TEST_%`
+coupons and inserted a live all-venue coupon into the dev database, and CI would
+have failed with no database at all.
+
 **`make test` runs the DB tests against the dev database**, and
 `booking_test.go`'s `ExpireHolds` expires *every* lapsed hold there, not just its
 fixtures. For a no-side-effect run: `env -u TEST_DATABASE_URL go test ./...`.
@@ -73,7 +83,7 @@ fixtures. For a no-side-effect run: `env -u TEST_DATABASE_URL go test ./...`.
 ## Migrations
 
 `internal/migrations/NNN_name.sql`, embedded, forward-only, applied on startup.
-Next number: check `ls internal/migrations/ | tail -1` (currently at 050).
+Next number: check `ls internal/migrations/ | tail -1` (currently at 062).
 
 House style: `IF NOT EXISTS`, `UUID PRIMARY KEY DEFAULT gen_random_uuid()`,
 `DECIMAL(10,2)` for money, `TIMESTAMPTZ`, `VARCHAR` + inline `CHECK` for enums,
@@ -88,9 +98,11 @@ surfaced when a cleanup failed.
 | Endpoint | Correct fields |
 |---|---|
 | `POST /auth/register` | `fullName`, `email`, `phoneNumber`, `password` — **not** `name` |
+| `POST /auth/register`, `/register/vendor` | optional `address`: a string (→ `users.address`) **or** `{street, city, state, zipCode, country}`, each part optional (→ `addresses`, and its joined line → `users.address`); a vendor's also seeds `vendors.business_address` |
 | `POST /auth/register/verify-email` | `target`, `otpCode` — **not** `identifier`/`otp` |
 | `POST /auth/login` | `identifier`, `password` |
 | `POST /bookings/halls` | `hallId`, `startDate`, `endDate`, `startTime`, `endTime`, `guestCount`, `roomCount` (optional), `eventType`, `idempotentKey` |
+| `POST /bookings/venues` (also `/bookings`, `/bookings/halls`) | one route for a hall **or** hotel: `venueId` (or `hallId`/`hotelId`), `startDate`/`endDate` or `checkIn`/`checkOut`, optional `startTime`/`endTime`/`slotType` |
 | `POST /bookings/hotels` | `hotelId`, `checkIn`, `checkOut`, `rooms: [{roomTypeId, quantity}]` — `rooms` is an **array**, not a count |
 
 **Halls and hotels count rooms differently, deliberately.** A hall booking takes
@@ -255,6 +267,76 @@ Rate button that 403s: a `CONFIRMED`/`COMPLETED` stay, and reviews are unique
 per **(user, facility)** — not per booking, so a second booking at the same
 venue is not a second chance to review it.
 
+## Venue search
+
+`/search/venues`, its autocomplete/suggestions, and `/halls` / `/facilities`
+`?search=` all match through **`pkg/venuesearch`**. Never write a fresh
+`name ILIKE '%q%'` for venue text: that was the old match, and `palce` or
+`grnd palace` returned 0 results.
+
+- **Every word must match** - by full text (`facilities.search_vector`: name,
+  city, type words, amenities, description; stemmed, prefix, stop words
+  ignored) or as a typo of a name/city word (`word_similarity` >= **0.4**; real
+  typos score 0.40-0.83, the closest unrelated venue 0.33). Matching the phrase
+  as a whole let one word carry it: `palace bengaluru` returned 38 venues (every
+  Bengaluru one), `palace mysuru` a Bengaluru palace. Now 5, and none.
+- **Nothing matched every word -> `LooseSQL`**, the old whole-phrase match, so
+  the screen is never empty; `/search/venues` then says `relaxed: true`.
+- **Bind `venuesearch.Clean(text)`, never raw text.** It is spliced into a
+  tsquery, and `grand & palace` is a tsquery syntax error -> 500.
+- **`search_vector` is kept by triggers** (migration 062) on `facilities`,
+  `facility_amenities` and amenity renames - not a generated column, since
+  amenities are another table. Every write path, `cmd/import` included, is
+  covered without remembering to.
+- **The typo prefilter needs `pg_trgm.word_similarity_threshold` on the
+  session** - `pkg/database` sets it (0.3). A pool built elsewhere silently
+  falls back to 0.6 and loses typo matches.
+- **`<%` binds as tightly as `||`**: the haystack is parenthesised, or
+  `p <% f.name||...` parses as `(p <% f.name)||...` and errors.
+- **An explicit `sort` leads; relevance breaks its ties**, then `f.id` so
+  paging is stable. `sort=RATING` uses `rating_score`, a Bayesian average
+  (five phantom 3.5 reviews): 4.6 from 200 beats 5.0 from 1; unreviewed = 3.5.
+- **Indexed**: GIN on `search_vector` and on the name+city expression,
+  partial btrees on price and `rating_score` for live venues. Verified as a
+  `BitmapOr` over both GINs; on 52 rows the planner rightly seq-scans anyway.
+- **Postgres, not Elasticsearch, deliberately.** ES would mean a JVM service,
+  a sync pipeline for every facility write, and drift handling.
+- **Old city names and synonyms live in `pkg/venuesearch/aliases.go`**, a
+  hardcoded list like `eventtypes`. Cities are *replaced* (bangalore ->
+  bengaluru, in the text and in `?city=`); venue words are *expanded*
+  (mandapam -> mandapam|hall|banquet|...), any one of which matches.
+- Not handled: occasion words in free text (`sangeet hall` matches the word,
+  not venues hosting Sangeet - that is `?eventType=`).
+
+### Search like the big apps
+
+`/search/venues` also takes, all optional:
+
+- **Dates** - `date`, `startDate`/`endDate` or `checkIn`/`checkOut`, `slot`,
+  `rooms`. `availableSQL` mirrors what booking enforces when it claims: a hall
+  needs at least one free half per day with no slot (any half, FULL_DAY, as
+  asked), an owner `BLOCKED` is taken; a hotel needs `rooms` free across its
+  room types every night. **A hotel with no room types is shown** (not stated
+  is not "full"). A past, malformed or >30-day range is a 400, never "no
+  filter".
+- **Distance** - `lat`/`lng`, `sort=DISTANCE`, `radiusKm` (cap 500, 400 out of
+  range). A venue without coordinates is never hidden by a radius; it sorts
+  last with no `distanceKm`.
+- **`facets`** on every response: type, event and amenity counts plus price
+  min/max. **Each single-choice facet ignores its own filter** (Booking.com
+  style): with HOTEL chosen, the type facet still counts halls, and the price
+  range ignores the budget. Event counts include venues declaring no events,
+  as the filter does.
+- **Popularity** - default rank is `rating_score + 0.25*ln(1 + bookings in 90
+  days)`, PENDING/CONFIRMED/COMPLETED; also `sort=POPULARITY`.
+- **`didYouMean`** - only when nothing matched every word, and only a
+  correction that *does* find venues. Offered, never applied.
+
+`/search/autocomplete` and `/suggestions` return **typed** items (`VENUE`,
+`CITY`, `CATEGORY`, `RECENT` with an empty `q`), cities first. "Hotels in
+Bengaluru" categories appear only when the query is just a city - for
+`grand palace bengaluru` they would push aside the venue being typed.
+
 ## Search history
 
 `GET /api/v1/search/recent` (and `/recently-viewed`) were already built and
@@ -341,7 +423,9 @@ and each fails *silently* — the run stays green while testing nothing:
   (alias)` replayed the token the request before it had already burnt. Replay is
   the theft signal, so the API revoked every session for that user and 14
   assertions failed across Bookings, Quotes and Refunds. The API was correct
-  throughout; the collection was replaying.
+  throughout; the collection was replaying. The alias
+  (`POST /auth/login/refresh`) is now in `SKIP_ROUTES`: the route is still
+  served, but the collection refreshes once.
 
 ## My reviews and app feedback
 
@@ -492,9 +576,10 @@ would make a ₹4,500 hotel look ten times cheaper than a ₹50,000 hall.
 of 43 halls no capacity — this is the common case, not an edge. A missing price
 is not a free venue, and a missing capacity is not zero guests.
 
-`repository.ByIDs` loads all three venues, their amenities and their cover images
-in **3 queries regardless of venue count** — measured with `log_statement=all`,
-not assumed. Never call `Get` in a loop here: that is 9 queries for 3 venues.
+`repository.ByIDs` loads all three venues with their events, FAQs, policies,
+reviews, amenities and images in **7 queries regardless of venue count** — one
+per kind, via the `*OfMany` loaders. Never call `Get` in a loop here: that is
+N queries per venue.
 
 Two smaller rules that each hid a bug:
 
@@ -523,9 +608,8 @@ position, and accepting it would put every Indian venue ~6000 km away.
 caller's distance is a per-venue field; the matrix is a separate thing and
 clients already read it.
 
-One helper, `parseUserLocation` + `distanceFrom` in
-`internal/facility/handler/userlocation.go`, so list, detail and compare cannot
-drift. `haversineKm` moved there from `compare.go`. Straight-line, not driving
+One helper, `geo.Parse` + `DistanceFrom` in `pkg/geo`, so list, detail,
+compare and `/search/venues` cannot drift. Straight-line, not driving
 distance — there is no routing service here.
 
 Duplicate ids are rejected rather than collapsed (comparing a venue with itself
@@ -601,6 +685,11 @@ Every paginated list returns `httpx.NewPaged`: `content`, `page`, `size`,
 pagination helper. The notification feed keeps `content` but deliberately has no
 page number — it is a keyset cursor, and a page number over a shifting feed is a
 number no client can act on.
+
+**Pages are 0-based: `page=0` is the first.** `httpx.Offset` used to treat 0 and
+1 both as the first page, so a client walking `0..totalPages-1` saw page one
+twice and never the last. Recommendations were 1-based on their own; they now
+use `httpx.Offset` too. Never compute an offset by hand.
 
 ## Geo-targeted announcements
 
@@ -847,6 +936,68 @@ added later cannot leak to every app user by accident.
 **Do not validate a display phone with `validate.Phone`.** That enforces E.164
 for a user's login number and rejects `"+91 98765 43210"`. The support handler
 counts digits instead and keeps the admin's formatting.
+
+## Production hardening (2026-10)
+
+What a four-way audit (security, DB, API semantics, ops) found and fixed. Each
+rule below was a live bug; each was verified against the running API.
+
+**Inventory is released only inside `SetStatus`**, under its `FOR UPDATE`
+from-status guard, beside `coupon.Release`. Cancel, expiry and reject each used
+to release on their own, outside the transaction: a repeated cancel of a hotel
+booking 409'd but decremented `booked_rooms` again every time, and a payment
+racing the sweeper left a CONFIRMED booking with its slot freed.
+
+**A hall date is locked per `(hall, date)`** with `pg_advisory_xact_lock` before
+claiming. The unique key is per slot, so FULL_DAY and MORNING on the same date
+both succeeded — a real double booking.
+
+**Hall requests do not expire; hotels keep 15 minutes.** An owner now decides a
+hall request, and a 15-minute hold had expired 241 of them before any owner
+looked. `expires_at` is NULL for halls; the sweeper skips NULL.
+
+**The payment webhook is one transaction.** The dedupe row used to commit first,
+so a transient failure after it made the gateway's retry look "already
+processed" — money taken, booking never credited. A payment for a booking that
+has ended is recorded but never revives it (logged as "refund due").
+`payments/create` returns the open PENDING order instead of a second one.
+
+**One definition of a live venue: `venuetype.LiveSQL`** — not deleted and
+**APPROVED**. A PENDING venue is unreviewed, and serving it bypassed moderation
+(on 2026-10-12 that left 4 of 52 venues live until an admin approves the rest).
+Search, list, detail, compare, recommendations, hall *and* hotel booking all use
+it, or its Go mirror `venuetype.Live`; hotel booking used to check nothing. A
+non-live venue's detail is 404 except to its owner or an admin. Never write a
+`status = 'APPROVED'` literal for a venue — one drifted copy is how PENDING
+venues were briefly listed but unbookable.
+
+**Quote acceptance belongs to the other party.** The customer accepts a REPLIED
+quote, the owner a COUNTERED one. "Either side can accept" let a customer counter
+at ₹1, accept it themselves and convert it into a booking. Every quote UPDATE is
+conditional on the status it read; an expired `valid_until` cannot be accepted.
+
+**Refunds are scoped to the venue's owner** (or admin); NaN/Inf amounts are
+refused — `NaN <= 0` is false, and one NaN row made every later limit pass.
+
+**Unblocking a venue is admin-only.** Owner and admin blocks both store
+`BLOCKED`, so an owner "unblock" could lift an admin block or approve a PENDING
+listing outright. Owners lost the ability to resume a self-paused listing; a
+`blocked_by` column would give it back.
+
+**Auth.** A logout/reset cutoff is never deleted on the next login (that revived
+every stolen token); new tokens wait past it instead. A locked account answers
+exactly like a wrong password, checked *before* bcrypt, so the lockout is no
+longer an oracle. Login and Refresh share `canSignIn`; INACTIVE is refused at
+both. OTPs and reset links are sent directly through `pkg/notify` — not the
+outbox, so codes never sit in `notifications` — and logged only with
+`LOG_OTP_CODES`.
+
+**Ops.** DB sessions carry `statement_timeout` 10s / `lock_timeout` 5s;
+`DB_MAX_CONNS` sizes the pool. Migrations run under an advisory lock, so
+replicas booting together no longer race. `/livez` and `/readyz` sit beside
+`/health`. A panicking event handler goes to the DLQ instead of crash-looping the
+worker. Production refuses to boot with the seeded `admin@example.com` password,
+no live email/SMS sender, no S3 bucket, or rate limiting disabled.
 
 ## Docs in this repo
 

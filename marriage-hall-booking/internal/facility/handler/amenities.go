@@ -54,10 +54,18 @@ func (h *Handler) resolveAmenities(ctx context.Context, refs []string, facilityT
 	// Codes are compared upper-cased, ids lower-cased: a UUID renders as
 	// lowercase hex, so matching it against the upper-cased list found nothing
 	// and every attach-by-id failed with AMENITY_NOT_FOUND.
+	// Only the refs shaped like ids go to the uuid[] match: the cast keeps the
+	// primary key usable, and one code in that array would fail the whole cast.
+	ids := []string{}
+	for _, ref := range lowerAll(unique) {
+		if httpx.ValidUUID(ref) {
+			ids = append(ids, ref)
+		}
+	}
 	rows, err := h.repo.Pool().Query(ctx,
 		`SELECT id, name, code, applicable_type FROM amenities
-		  WHERE upper(code) = ANY($1) OR id::text = ANY($2)`,
-		upperAll(unique), lowerAll(unique))
+		  WHERE upper(code) = ANY($1) OR id = ANY($2::uuid[])`,
+		upperAll(unique), ids)
 	if err != nil {
 		return nil, err
 	}

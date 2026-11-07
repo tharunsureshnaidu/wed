@@ -1,4 +1,4 @@
-package handler
+package geo
 
 import (
 	"math"
@@ -23,11 +23,13 @@ func TestParseUserLocation(t *testing.T) {
 		{"lat=12.97&lng=181", false, "longitude out of range"},
 		{"lat=0&lng=0", false, "Null Island is an uninitialised object, not a position"},
 		{"lat=-33.86&lng=151.21", true, "southern and eastern hemispheres"},
+		{"lat=NaN&lng=77.5946", false, "NaN passes every out-of-range test"},
+		{"lat=12.97&lng=Inf", false, "infinity"},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest("GET", "/?"+c.query, nil)
-		if got := parseUserLocation(r); got.OK != c.want {
-			t.Errorf("parseUserLocation(%q).OK = %v, want %v - %s",
+		if got := Parse(r); got.OK != c.want {
+			t.Errorf("Parse(%q).OK = %v, want %v - %s",
 				c.query, got.OK, c.want, c.why)
 		}
 	}
@@ -37,19 +39,19 @@ func TestParseUserLocation(t *testing.T) {
 // and 35 of 52 facilities still have no coordinates.
 func TestDistanceIsNilNotZeroWhenUnknown(t *testing.T) {
 	lat, lng := 12.9716, 77.5946
-	here := userLocation{Lat: lat, Lng: lng, OK: true}
+	here := Location{Lat: lat, Lng: lng, OK: true}
 
-	if got := here.distanceFrom(nil, nil); got != nil {
+	if got := here.DistanceFrom(nil, nil); got != nil {
 		t.Errorf("venue without coordinates gave %v, want nil", *got)
 	}
-	if got := here.distanceFrom(&lat, nil); got != nil {
+	if got := here.DistanceFrom(&lat, nil); got != nil {
 		t.Errorf("venue with half a pin gave %v, want nil", *got)
 	}
-	if got := (userLocation{}).distanceFrom(&lat, &lng); got != nil {
+	if got := (Location{}).DistanceFrom(&lat, &lng); got != nil {
 		t.Errorf("no caller location gave %v, want nil", *got)
 	}
 	// Same point is a real zero, and must not be confused with unknown.
-	got := here.distanceFrom(&lat, &lng)
+	got := here.DistanceFrom(&lat, &lng)
 	if got == nil || *got != 0 {
 		t.Errorf("distance to itself = %v, want 0", got)
 	}
@@ -58,12 +60,12 @@ func TestDistanceIsNilNotZeroWhenUnknown(t *testing.T) {
 // A known pair, so a bad refactor of the formula is caught rather than just
 // "some number came back". Bengaluru to Chennai is ~290 km.
 func TestHaversineAgainstAKnownDistance(t *testing.T) {
-	got := haversineKm(12.9716, 77.5946, 13.0827, 80.2707)
+	got := HaversineKm(12.9716, 77.5946, 13.0827, 80.2707)
 	if math.Abs(got-290) > 10 {
 		t.Errorf("Bengaluru->Chennai = %.2f km, want ~290", got)
 	}
 	// Symmetric: the distance does not depend on which end you start from.
-	back := haversineKm(13.0827, 80.2707, 12.9716, 77.5946)
+	back := HaversineKm(13.0827, 80.2707, 12.9716, 77.5946)
 	if got != back {
 		t.Errorf("not symmetric: %.2f vs %.2f", got, back)
 	}

@@ -60,15 +60,16 @@ func Page(r *http.Request) (page, size int) {
 	return page, size
 }
 
-// Offset returns the SQL OFFSET for a given page and size.
-// Both 1-based indexing (where page 1 is the first page) and 0-based indexing
-// (where page 0 is also the first page) are supported so that passing page=1
-// does not skip past the first page of results.
+// Offset returns the SQL OFFSET for a 0-based page: page 0 is the first page,
+// as in the Spring envelope this API mirrors and the Postman collection.
+//
+// It used to treat page 0 and page 1 both as the first page. A client walking
+// 0..totalPages-1 then got page one twice and never saw the last page.
 func Offset(page, size int) int {
-	if page <= 1 {
+	if page < 0 {
 		return 0
 	}
-	return (page - 1) * size
+	return page * size
 }
 
 type Paged struct {

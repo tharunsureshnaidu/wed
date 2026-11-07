@@ -211,6 +211,10 @@ func (h *Handler) listRoomTypes(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Room types retrieved successfully", out)
 }
 
@@ -300,6 +304,10 @@ func (h *Handler) listPackages(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Packages retrieved successfully", out)
 }
 
@@ -380,6 +388,10 @@ func (h *Handler) listAddons(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, "Add-ons retrieved successfully", out)
 }
@@ -585,6 +597,10 @@ func (h *Handler) listPolicies(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Policies retrieved successfully", out)
 }
 
@@ -715,6 +731,10 @@ func (h *Handler) listPricing(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, "Pricing rules retrieved successfully", out)
 }
