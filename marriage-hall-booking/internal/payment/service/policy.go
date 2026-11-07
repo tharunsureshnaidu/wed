@@ -58,6 +58,22 @@ func (p Policy) Normalize() Policy {
 	return p.normalized()
 }
 
+func (p Policy) IsZero() bool {
+	return p.normalized() == (Policy{})
+}
+
+func ResolvePolicyPrecedence(facilityPolicy, marketplacePolicy Policy) Policy {
+	facilityPolicy = facilityPolicy.normalized()
+	marketplacePolicy = marketplacePolicy.normalized()
+	if facilityPolicy.IsZero() {
+		if marketplacePolicy.IsZero() {
+			return DefaultPolicy()
+		}
+		return marketplacePolicy
+	}
+	return facilityPolicy
+}
+
 func roundCurrency(v float64) float64 {
 	return math.Round(v*100) / 100
 }
