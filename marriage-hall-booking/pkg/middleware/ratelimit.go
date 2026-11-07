@@ -28,6 +28,7 @@ var buckets = []struct {
 	{"/api/v1/auth/login", bucket{"login", 10, 15 * time.Minute}},
 	{"/api/v1/auth/otp/resend", bucket{"otp_resend", 3, 15 * time.Minute}},
 	{"/api/v1/auth/forgot-password", bucket{"forgot_password", 3, time.Hour}},
+	{"/api/v1/contact-us", bucket{"contact_us", 10, time.Hour}},
 }
 
 var global = bucket{"global", 100, time.Minute}

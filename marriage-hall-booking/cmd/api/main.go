@@ -21,6 +21,7 @@ import (
 	bookinghandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/handler"
 	bookingrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
 	bookingservice "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/service"
+	contactushandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/contactus/handler"
 	couponhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/coupon/handler"
 	facilityhandler "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/handler"
 	facilityrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
@@ -302,7 +303,7 @@ func main() {
 	vendorhandler.New(db, signer).Register(mux)
 	quotehandler.New(db, signer, bookingSvc).Register(mux)
 
-	coupons := couponhandler.New(db, signer)
+	coupons := couponhandler.New(db, signer, media)
 	coupons.OnCouponCreated = func(ctx context.Context, c couponhandler.Created) {
 		publisher.Publish(ctx, events.TopicCouponCreated, c.ID, events.CouponCreated{
 			CouponID: c.ID, Code: c.Code, FacilityID: c.FacilityID,
@@ -366,6 +367,8 @@ func main() {
 	faqRepo := faqrepo.New(db)
 	faqSvc := faqsvc.New(faqRepo)
 	faqhandler.NewWithService(faqSvc, signer).Register(mux)
+
+	contactushandler.New(db, signer).Register(mux)
 
 	admins := adminhandler.New(db, signer)
 	admins.OnStatusChange = func(ctx context.Context, ev adminhandler.StatusChange) {
