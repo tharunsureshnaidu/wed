@@ -213,6 +213,16 @@ func main() {
 		})
 	}
 	paymentSvc := paymentservice.New(db, bookings, cfg.WebhookSecret)
+	if cfg.CashfreeClientID != "" && cfg.CashfreeClientSecret != "" {
+		paymentSvc.SetCashfreeClient(paymentservice.NewCashfreeClient(
+			cfg.CashfreeEnv,
+			cfg.CashfreeClientID,
+			cfg.CashfreeClientSecret,
+			cfg.CashfreeWebhookSecret,
+			cfg.CashfreeBaseURL,
+		))
+	}
+
 	paymentSvc.OnPaid = func(ctx context.Context, bookingID, paymentID string, amount float64) {
 		publisher.Publish(ctx, events.TopicPaymentCompleted, bookingID,
 			map[string]any{"bookingId": bookingID, "paymentId": paymentID, "amount": amount})
@@ -300,6 +310,7 @@ func main() {
 	publisher.Local = consumer.New(notifier, db).Handle
 	notifyhandler.New(notifier, signer).Register(mux)
 	paymenthandler.New(paymentSvc, signer).Register(mux)
+	paymenthandler.New(paymentSvc, signer).RegisterPolicyRoutes(mux)
 	vendorhandler.New(db, signer).Register(mux)
 	quotehandler.New(db, signer, bookingSvc).Register(mux)
 
