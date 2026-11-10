@@ -18079,6 +18079,445 @@
         }
       ],
       "description": "Deletes and cancellations kept last to maintain test isolation and idempotency."
+    },
+    {
+      "name": "Cashfree & Payment Policies (7)",
+      "item": [
+        {
+          "name": "Create payment for a booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "create"
+              ]
+            },
+            "description": "## POST /api/v1/payments/create\n- **Module:** Payments\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📦 Accepted Request Body Fields (JSON):\n- **`bookingId`** (string) — UUID of the booking that requires payment\n\n### 🧪 Testing Notes:\n- Creates a booking payment order in the backend and returns the payment record.\n- Use the returned `gatewayOrderId` and `paymentSessionId` for follow-up checkout or webhook testing.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingId\": \"{{bookingId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body && body.data && body.data.id) pm.collectionVariables.set('paymentId', body.data.id);",
+                  "  if (body && body.data && body.data.gatewayOrderId) pm.collectionVariables.set('gatewayOrderId', body.data.gatewayOrderId);",
+                  "}",
+                  "pm.test(\"returns a valid ApiResponse envelope\", function () {\n    const b = pm.response.json();\n    pm.expect(b).to.have.property('success');\n    pm.expect(b).to.have.property('message');\n    pm.expect(b).to.have.property('timestamp');\n  });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cashfree webhook simulation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{webhookSignature}}",
+                "description": "HMAC signature generated over the raw body"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "webhook"
+              ]
+            },
+            "description": "## POST /api/v1/payments/webhook\n- **Module:** Payments\n- **Authentication:** Gateway callback, not a user JWT\n\n### 📦 Accepted Request Body Fields (JSON):\n- **`eventId`** (string) — unique event ID from the gateway\n- **`orderId`** (string) — gateway order ID returned by the payment create call\n- **`paymentId`** (string) — provider payment reference\n- **`status`** (string) — `SUCCESS` or `FAILED`\n- **`amount`** (number) — amount received\n- **`reason`** (string, optional) — failure reason\n\n### 🧪 Testing Notes:\n- Use the raw JSON body that matches the gateway payload exactly.\n- The backend validates the signature against the original bytes before applying the payment.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"evt_{{runId}}_{{paymentId}}\",\n  \"orderId\": \"{{gatewayOrderId}}\",\n  \"paymentId\": \"pay_{{runId}}\",\n  \"status\": \"SUCCESS\",\n  \"amount\": 2500,\n  \"reason\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns valid ApiResponse envelope\", function () {\n    const b = pm.response.json();\n    pm.expect(b).to.have.property('success');\n    pm.expect(b).to.have.property('message');\n  });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund a successful payment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/refunds/:paymentId?amount=1000&reason=customer_cancellation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "refunds",
+                ":paymentId"
+              ],
+              "query": [
+                {
+                  "key": "amount",
+                  "value": "1000"
+                },
+                {
+                  "key": "reason",
+                  "value": "customer_cancellation"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "paymentId",
+                  "value": "{{paymentId}}",
+                  "description": "Payment UUID to refund"
+                }
+              ]
+            },
+            "description": "## POST /api/v1/refunds/{paymentId}\n- **Module:** Payments\n- **Authentication:** Hall Owner or Admin Bearer JWT (`Authorization: Bearer {{ownerToken}}` or `{{adminToken}}`)\n\n### 🧪 Testing Notes:\n- Refunds are limited to the actual paid amount and validated by the backend.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns valid ApiResponse envelope\", function () {\n    const b = pm.response.json();\n    pm.expect(b).to.have.property('success');\n    pm.expect(b).to.have.property('message');\n  });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get marketplace payment policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payment-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payment-policies"
+              ]
+            },
+            "description": "## GET /api/v1/payment-policies\n- **Module:** Payments\n- **Authentication:** Authenticated user\n\n### 🧪 Testing Notes:\n- Returns the effective marketplace default payment policy or the currently configured marketplace override.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns policy data\", function () {\n    const b = pm.response.json();\n    pm.expect(b).to.have.property('success');\n    pm.expect(b).to.have.property('data');\n  });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update marketplace payment policy",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payment-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payment-policies"
+              ]
+            },
+            "description": "## PUT /api/v1/payment-policies\n- **Module:** Payments\n- **Authentication:** Admin only\n\n### 📦 Accepted Request Body Fields (JSON):\n- **`advancePercent`** (number) — initial due percentage\n- **`minAdvanceAmount`** (number) — minimum initial payment\n- **`maxAdvanceAmount`** (number) — maximum initial payment\n- **`balanceDueHoursBeforeEvent`** (number) — remaining balance due cutoff\n- **`cancellationWindowHours`** (number) — full refund cutoff\n- **`cancellationPenaltyPercent`** (number) — penalty after the refund window",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"advancePercent\": 50,\n  \"minAdvanceAmount\": 0,\n  \"maxAdvanceAmount\": 0,\n  \"balanceDueHoursBeforeEvent\": 72,\n  \"cancellationWindowHours\": 168,\n  \"cancellationPenaltyPercent\": 25\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"stores the policy successfully\", function () {\n    const b = pm.response.json();\n    pm.expect(b).to.have.property('success');\n  });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get facility payment policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/facilities/{{facilityId}}/payment-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "facilities",
+                "{{facilityId}}",
+                "payment-policy"
+              ]
+            },
+            "description": "## GET /api/v1/facilities/{facilityId}/payment-policy\n- **Module:** Payments\n- **Authentication:** Authenticated user; venue owners can read their own facility policy",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns facility policy data\", function () {\n    const b = pm.response.json();\n    pm.expect(b).to.have.property('data');\n  });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update facility payment policy",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/facilities/{{facilityId}}/payment-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "facilities",
+                "{{facilityId}}",
+                "payment-policy"
+              ]
+            },
+            "description": "## PUT /api/v1/facilities/{facilityId}/payment-policy\n- **Module:** Payments\n- **Authentication:** Admin or owner of the facility\n\n### 📦 Accepted Request Body Fields (JSON):\n- **`advancePercent`** (number) — initial advance percentage\n- **`minAdvanceAmount`** (number) — minimum amount required\n- **`maxAdvanceAmount`** (number) — maximum amount allowed\n- **`balanceDueHoursBeforeEvent`** (number) — remaining balance due window\n- **`cancellationWindowHours`** (number) — time before event for a full refund\n- **`cancellationPenaltyPercent`** (number) — penalty after the refund window",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"advancePercent\": 60,\n  \"minAdvanceAmount\": 2000,\n  \"maxAdvanceAmount\": 20000,\n  \"balanceDueHoursBeforeEvent\": 72,\n  \"cancellationWindowHours\": 168,\n  \"cancellationPenaltyPercent\": 25\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"facility policy update succeeds\", function () {\n    const b = pm.response.json();\n    pm.expect(b).to.have.property('success');\n  });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Cashfree payment creation, webhook simulation, and payment-policy management requests for bookings and facilities."
+    },
+    {
+      "name": "Delete Admin Faqs",
+      "item": [
+        {
+          "name": "DELETE Admin Faqs",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/faqs/:faqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "faqs",
+                ":faqId"
+              ],
+              "variable": [
+                {
+                  "key": "faqId",
+                  "value": "{{faqId}}",
+                  "description": "FAQ record ID"
+                }
+              ]
+            },
+            "description": "## DELETE /api/admin/faqs/{faqId}\n- **Module:** Cleanup (destructive)\n- **Authentication:** Admin / Super Admin Bearer JWT (`Authorization: Bearer {{adminToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:faqId`** — FAQ record ID\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {\n        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;\n    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {\n        pm.expect(pm.response.text()).to.include(\"<html\");\n    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {\n        const b = pm.response.json();\n        pm.expect(b).to.have.property(\"success\");\n        pm.expect(b).to.have.property(\"message\");\n        pm.expect(b).to.have.property(\"timestamp\");\n    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Administrative cleanup endpoints; kept at the end for test isolation."
     }
   ],
   "variable": [
@@ -18294,6 +18733,36 @@
     {
       "key": "webhookSignature",
       "value": ""
+    },
+    {
+      "key": "gatewayOrderId",
+      "value": "",
+      "description": "Cashfree/other gateway order ID for payment webhook simulation"
+    },
+    {
+      "key": "paymentId",
+      "value": "",
+      "description": "Payment record UUID for refund and webhook tests"
+    },
+    {
+      "key": "webhookSignature",
+      "value": "",
+      "description": "HMAC signature for webhook validation tests"
+    },
+    {
+      "key": "cashfreeAppId",
+      "value": "",
+      "description": "Cashfree client app ID"
+    },
+    {
+      "key": "cashfreeSecretKey",
+      "value": "",
+      "description": "Cashfree secret key (server-side only)"
+    },
+    {
+      "key": "cashfreeWebhookSecret",
+      "value": "",
+      "description": "Cashfree webhook secret for signature verification"
     }
   ]
 }
