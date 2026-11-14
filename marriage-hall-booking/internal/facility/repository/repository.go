@@ -116,6 +116,25 @@ type Facility struct {
 	Images     []Image   `json:"images"`
 	CoverImage *string   `json:"coverImage"`
 	Reviews    []Review  `json:"-"`
+
+	HourlyBooking *HourlyBookingConfig `json:"hourlyBooking,omitempty"`
+}
+
+type HourlyBookingOption struct {
+	ID            string  `json:"id,omitempty"`
+	Hours         int     `json:"hours"`
+	DurationHours int     `json:"durationHours,omitempty"`
+	Price         float64 `json:"price"`
+}
+
+type HourlyBookingConfig struct {
+	Enabled bool                  `json:"enabled"`
+	Options []HourlyBookingOption `json:"options"`
+}
+
+type HourlyPackageInput struct {
+	Hours int
+	Price float64
 }
 
 // MarshalJSON adds the grouped blocks the venue detail screen reads -
@@ -705,6 +724,9 @@ type CreateInput struct {
 	SeatingCapacity  *int
 	FloatingCapacity *int
 	MinBookingSize   *int
+
+	HourlyBookingEnabled bool
+	HourlyPackages       []HourlyPackageInput
 }
 
 func (r *Repo) Create(ctx context.Context, in CreateInput) (*Facility, error) {
@@ -729,6 +751,21 @@ func (r *Repo) Create(ctx context.Context, in CreateInput) (*Facility, error) {
 		`UPDATE facilities SET vendor_id = v.id FROM vendors v
 		 WHERE facilities.id = $1 AND v.user_id = $2`, id, in.OwnerID); err != nil {
 		return nil, err
+	}
+	if in.HourlyBookingEnabled {
+		if _, err := r.db.Exec(ctx,
+			`UPDATE facilities SET hourly_booking_enabled = TRUE WHERE id = $1`, id); err != nil {
+			return nil, err
+		}
+		for _, pkg := range in.HourlyPackages {
+			if _, err := r.db.Exec(ctx,
+				`INSERT INTO hotel_hourly_packages (facility_id, hours, price)
+				 VALUES ($1, $2, $3)
+				 ON CONFLICT (facility_id, hours) DO UPDATE SET price = EXCLUDED.price, updated_at = CURRENT_TIMESTAMP`,
+				id, pkg.Hours, pkg.Price); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return r.Get(ctx, id)
 }
@@ -757,6 +794,9 @@ func (r *Repo) Get(ctx context.Context, id string) (*Facility, error) {
 	}
 	if f.Reviews, err = r.reviewsOf(ctx, id); err != nil {
 		return nil, err
+	}
+	if hb, err := r.hourlyBookingOf(ctx, id); err == nil && hb != nil {
+		f.HourlyBooking = hb
 	}
 	_ = r.PopulateDiscounts(ctx, []*Facility{f})
 	return f, nil
@@ -827,6 +867,22 @@ func (r *Repo) Update(ctx context.Context, id string, in CreateInput) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if in.HourlyBookingEnabled {
+		if _, err := r.db.Exec(ctx,
+			`UPDATE facilities SET hourly_booking_enabled = TRUE WHERE id = $1`, id); err != nil {
+			return err
+		}
+		if _, err := r.db.Exec(ctx, `DELETE FROM hotel_hourly_packages WHERE facility_id = $1`, id); err != nil {
+			return err
+		}
+		for _, pkg := range in.HourlyPackages {
+			if _, err := r.db.Exec(ctx,
+				`INSERT INTO hotel_hourly_packages (facility_id, hours, price)
+				 VALUES ($1, $2, $3)`, id, pkg.Hours, pkg.Price); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -949,6 +1005,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 	if err != nil {
 		return nil, 0, err
 	}
+	hourlyBookings, _ := r.HourlyBookingOfMany(ctx, ids)
 	for i := range out {
 		out[i].EventCodes = events[out[i].ID]
 		out[i].Faqs = faqs[out[i].ID]
@@ -961,6 +1018,9 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Facility, int64, error
 			out[i].Images = im
 		}
 		out[i].CoverImage = DeriveCoverImage(out[i].Images)
+		if hb, ok := hourlyBookings[out[i].ID]; ok {
+			out[i].HourlyBooking = hb
+		}
 	}
 	ptrs := make([]*Facility, len(out))
 	for i := range out {
@@ -1097,6 +1157,7 @@ func (r *Repo) ByIDs(ctx context.Context, ids []string) ([]Facility, error) {
 	if err != nil {
 		return nil, err
 	}
+	hourlyBookings, _ := r.HourlyBookingOfMany(ctx, ids)
 	for fid, f := range byID {
 		f.EventCodes = events[fid]
 		f.Faqs = faqs[fid]
@@ -1109,6 +1170,9 @@ func (r *Repo) ByIDs(ctx context.Context, ids []string) ([]Facility, error) {
 			f.Images = im
 		}
 		f.CoverImage = DeriveCoverImage(f.Images)
+		if hb, ok := hourlyBookings[fid]; ok {
+			f.HourlyBooking = hb
+		}
 	}
 
 	out := make([]Facility, 0, len(byID))
@@ -1369,6 +1433,77 @@ func (r *Repo) policiesOf(ctx context.Context, id string) ([]Policy, error) {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) hourlyBookingOf(ctx context.Context, id string) (*HourlyBookingConfig, error) {
+	var enabled bool
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(hourly_booking_enabled, FALSE) FROM facilities WHERE id = $1`, id).Scan(&enabled)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, nil
+	}
+	rows, err := r.db.Query(ctx,
+		`SELECT id::text, hours, price
+		 FROM hotel_hourly_packages
+		 WHERE facility_id = $1
+		 ORDER BY hours ASC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	options := []HourlyBookingOption{}
+	for rows.Next() {
+		var opt HourlyBookingOption
+		if err := rows.Scan(&opt.ID, &opt.Hours, &opt.Price); err != nil {
+			return nil, err
+		}
+		opt.DurationHours = opt.Hours
+		options = append(options, opt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &HourlyBookingConfig{
+		Enabled: true,
+		Options: options,
+	}, nil
+}
+
+func (r *Repo) HourlyBookingOfMany(ctx context.Context, ids []string) (map[string]*HourlyBookingConfig, error) {
+	out := map[string]*HourlyBookingConfig{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT f.id::text, p.id::text, p.hours, p.price
+		  FROM facilities f
+		  JOIN hotel_hourly_packages p ON p.facility_id = f.id
+		 WHERE f.id = ANY($1::uuid[]) AND f.hourly_booking_enabled = TRUE
+		 ORDER BY f.id, p.hours ASC`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var facilityID string
+		var opt HourlyBookingOption
+		if err := rows.Scan(&facilityID, &opt.ID, &opt.Hours, &opt.Price); err != nil {
+			return nil, err
+		}
+		opt.DurationHours = opt.Hours
+		if out[facilityID] == nil {
+			out[facilityID] = &HourlyBookingConfig{
+				Enabled: true,
+				Options: []HourlyBookingOption{},
+			}
+		}
+		out[facilityID].Options = append(out[facilityID].Options, opt)
 	}
 	return out, rows.Err()
 }

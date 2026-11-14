@@ -8,6 +8,7 @@ Two ways, pick one:
 
 - **[RUN_WITH_DOCKER.md](RUN_WITH_DOCKER.md)**: `docker compose up`, nothing else to install. Start here.
 - **[RUN_WITH_MAKE.md](RUN_WITH_MAKE.md)**: PostgreSQL, Valkey and Kafka as local services, with the Makefile running the processes.
+- **[PAYMENT_API_DOCUMENTATION.md](PAYMENT_API_DOCUMENTATION.md)**: Complete guide for Cashfree payment gateway, split payments (Advance vs Balance), dynamic venue policies, and webhooks.
 
 ```bash
 make build     # api + worker
@@ -144,5 +145,4 @@ storage and rules are real; only the outbound integration is missing:
   images and videos are no longer in this list: they upload to S3 (see below).
 - **Email/SMS delivery** — the worker consumes the events and logs what it
   would send. Topics, offsets and consumers are real; only delivery is a stub.
-- **Payment gateway** — a `MOCK` gateway issues order ids and accepts
-  HMAC-signed webhooks in the real shape. Swapping in a provider is one adapter.
+- **Payment gateway** — see **[PAYMENT_API_DOCUMENTATION.md](PAYMENT_API_DOCUMENTATION.md)**. Integrated with Cashfree Payment Gateway (`cashfree.go`) supporting UPI, cards, and netbanking, with dynamic advance/balance policies (`068_payment_policies.sql`). Falls back to `MOCK` mode when credentials are not configured in `.env`.

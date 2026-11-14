@@ -159,7 +159,29 @@ func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
 	// The same day rate the booking charges: after the venue's advertised
 	// discount.
 	hallPrice, venueDiscount := 0.0, 0.0
-	if basePrice != nil {
+
+	// For hotels with hourly booking enabled, price from the matching hourly
+	// package when startTime and endTime are both provided.
+	hourlyPriced := false
+	if facType == venuetype.Hotel && startTime != "" && endTime != "" {
+		if dur, err2 := service.HourlyDuration(startTime, endTime); err2 == nil && dur > 0 {
+			var pkgPrice float64
+			qErr := h.svc.Pool().QueryRow(r.Context(),
+				`SELECT p.price
+				   FROM hotel_hourly_packages p
+				   JOIN facilities f ON f.id = p.facility_id
+				  WHERE p.facility_id = $1
+				    AND p.hours = $2
+				    AND COALESCE(f.hourly_booking_enabled, FALSE) = TRUE`,
+				facilityID, dur,
+			).Scan(&pkgPrice)
+			if qErr == nil {
+				hallPrice = pkgPrice
+				hourlyPriced = true
+			}
+		}
+	}
+	if !hourlyPriced && basePrice != nil {
 		rate := service.DayRate(*basePrice, discountPct)
 		hallPrice = rate * float64(days)
 		venueDiscount = (*basePrice - rate) * float64(days)

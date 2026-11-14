@@ -156,6 +156,10 @@ type couponReq struct {
 	MinBookingAmount *float64 `json:"minBookingAmount"`
 	ValidFrom        *string  `json:"validFrom"`
 	ValidUntil       *string  `json:"validUntil"`
+	StartDate        *string  `json:"start_date"`
+	EndDate          *string  `json:"end_date"`
+	StartDateCamel   *string  `json:"startDate"`
+	EndDateCamel     *string  `json:"endDate"`
 	UsageLimit       *int     `json:"usageLimit"`
 	IsActive         *bool    `json:"isActive"`
 
@@ -243,10 +247,18 @@ func (h *Handler) decodeCouponReq(w http.ResponseWriter, r *http.Request) (*coup
 				req.ValidFrom = &v
 			} else if v := strings.TrimSpace(r.FormValue("valid_from")); v != "" {
 				req.ValidFrom = &v
+			} else if v := strings.TrimSpace(r.FormValue("start_date")); v != "" {
+				req.ValidFrom = &v
+			} else if v := strings.TrimSpace(r.FormValue("startDate")); v != "" {
+				req.ValidFrom = &v
 			}
 			if v := strings.TrimSpace(r.FormValue("validUntil")); v != "" {
 				req.ValidUntil = &v
 			} else if v := strings.TrimSpace(r.FormValue("valid_until")); v != "" {
+				req.ValidUntil = &v
+			} else if v := strings.TrimSpace(r.FormValue("end_date")); v != "" {
+				req.ValidUntil = &v
+			} else if v := strings.TrimSpace(r.FormValue("endDate")); v != "" {
 				req.ValidUntil = &v
 			}
 			if v := strings.TrimSpace(r.FormValue("usageLimit")); v != "" {
@@ -289,13 +301,36 @@ func (h *Handler) decodeCouponReq(w http.ResponseWriter, r *http.Request) (*coup
 				}
 			}
 		}
+		normalizeDates(&req)
 		return &req, fh, true
 	}
 
 	if !httpx.Decode(w, r, &req) {
 		return nil, nil, false
 	}
+	normalizeDates(&req)
 	return &req, nil, true
+}
+
+func normalizeDates(req *couponReq) {
+	if req.ValidFrom == nil {
+		if req.StartDate != nil && strings.TrimSpace(*req.StartDate) != "" {
+			v := strings.TrimSpace(*req.StartDate)
+			req.ValidFrom = &v
+		} else if req.StartDateCamel != nil && strings.TrimSpace(*req.StartDateCamel) != "" {
+			v := strings.TrimSpace(*req.StartDateCamel)
+			req.ValidFrom = &v
+		}
+	}
+	if req.ValidUntil == nil {
+		if req.EndDate != nil && strings.TrimSpace(*req.EndDate) != "" {
+			v := strings.TrimSpace(*req.EndDate)
+			req.ValidUntil = &v
+		} else if req.EndDateCamel != nil && strings.TrimSpace(*req.EndDateCamel) != "" {
+			v := strings.TrimSpace(*req.EndDateCamel)
+			req.ValidUntil = &v
+		}
+	}
 }
 
 func (h *Handler) processBannerImage(ctx context.Context, fh *multipart.FileHeader, rawBanner *string, facilityID, vendorID *string) (*string, error) {
@@ -446,11 +481,11 @@ func (r couponReq) validateInto(e *validate.Errors) (from, until *time.Time) {
 		raw  *string
 		name string
 		out  **time.Time
-	}{{r.ValidFrom, "validFrom", &from}, {r.ValidUntil, "validUntil", &until}} {
+	}{{r.ValidFrom, "start_date", &from}, {r.ValidUntil, "end_date", &until}} {
 		if f.raw == nil || *f.raw == "" {
 			continue
 		}
-		t, err := parseWhen(*f.raw, f.name == "validUntil")
+		t, err := parseWhen(*f.raw, f.name == "end_date")
 		if err != nil {
 			*e = append(*e, f.name+" must be YYYY-MM-DD or RFC3339")
 			continue
@@ -458,7 +493,7 @@ func (r couponReq) validateInto(e *validate.Errors) (from, until *time.Time) {
 		*f.out = &t
 	}
 	if from != nil && until != nil && !until.After(*from) {
-		*e = append(*e, "validUntil must be after validFrom")
+		*e = append(*e, "end_date must be after start_date")
 	}
 	return from, until
 }
@@ -662,7 +697,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			MaxDiscount: req.MaxDiscount, CreatedBy: userID,
 		})
 	}
-	respData := map[string]any{"id": id, "code": req.Code, "start_date": nil, "end_date": nil}
+	respData := map[string]any{"id": id, "code": req.Code, "start_date": from, "end_date": until}
 	if bannerURL != nil {
 		respData["bannerImage"] = *bannerURL
 	}
@@ -709,26 +744,25 @@ func (h *Handler) listWhere(w http.ResponseWriter, r *http.Request, where string
 		FacilityID   *string `json:"facilityId"`
 		facilityType *string
 		// AppliesTo is set on an all-venues-of-a-type coupon: "HALL".
-		AppliesTo      *string    `json:"appliesTo"`
-		DiscountType   string     `json:"discountType"`
-		DiscountValue  float64    `json:"discountValue"`
-		MaxDiscount    *float64   `json:"maxDiscount"`
-		MinBooking     *float64   `json:"minBookingAmount"`
-		ValidFrom      *time.Time `json:"validFrom"`
-		ValidUntil     *time.Time `json:"validUntil"`
-		UsageLimit     *int       `json:"usageLimit"`
-		UsedCount      int        `json:"usedCount"`
-		IsActive       bool       `json:"isActive"`
-		BannerImage    *string    `json:"bannerImage,omitempty"`
-		BannerImageURL *string    `json:"bannerImageUrl,omitempty"`
+		AppliesTo     *string    `json:"appliesTo"`
+		DiscountType  string     `json:"discountType"`
+		DiscountValue float64    `json:"discountValue"`
+		MaxDiscount   *float64   `json:"maxDiscount"`
+		MinBooking    *float64   `json:"minBookingAmount"`
+		StartDate     *time.Time `json:"start_date"`
+		EndDate       *time.Time `json:"end_date"`
+		UsageLimit    *int       `json:"usageLimit"`
+		UsedCount     int        `json:"usedCount"`
+		IsActive      bool       `json:"isActive"`
+		BannerImage   *string    `json:"bannerImage,omitempty"`
 	}
 	out := []row{}
 	for rows.Next() {
 		var x row
 		var banner *string
 		if err := rows.Scan(&x.ID, &x.Code, &x.Description, &x.FacilityID, &x.facilityType,
-			&x.DiscountType, &x.DiscountValue, &x.MaxDiscount, &x.MinBooking, &x.ValidFrom,
-			&x.ValidUntil, &x.UsageLimit, &x.UsedCount, &x.IsActive, &banner); err != nil {
+			&x.DiscountType, &x.DiscountValue, &x.MaxDiscount, &x.MinBooking, &x.StartDate,
+			&x.EndDate, &x.UsageLimit, &x.UsedCount, &x.IsActive, &banner); err != nil {
 			httpx.Fail(w, err)
 			return
 		}
@@ -737,7 +771,6 @@ func (h *Handler) listWhere(w http.ResponseWriter, r *http.Request, where string
 			x.AppliesTo = &t
 		}
 		x.BannerImage = banner
-		x.BannerImageURL = banner
 		out = append(out, x)
 	}
 	if err := rows.Err(); err != nil {
@@ -836,14 +869,15 @@ func (h *Handler) adminCreate(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	adminData := map[string]any{
-		"id":        id,
-		"code":      code,
-		"appliesTo": venuetype.API(scope),
-		"announced": h.OnCouponCreated != nil && usableNow,
+		"id":         id,
+		"code":       code,
+		"start_date": from,
+		"end_date":   until,
+		"appliesTo":  venuetype.API(scope),
+		"announced":  h.OnCouponCreated != nil && usableNow,
 	}
 	if bannerURL != nil {
 		adminData["bannerImage"] = *bannerURL
-		adminData["bannerImageUrl"] = *bannerURL
 	}
 	response.Created(w, "Coupon created successfully", "/api/v1/admin/coupons/"+id, adminData)
 }

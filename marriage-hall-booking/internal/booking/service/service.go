@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strings"
@@ -174,7 +175,33 @@ func (s *Service) CreateVenueBooking(ctx context.Context, userID int64, req Venu
 	// charges what the customer was told. It used to charge the full base
 	// price while the card advertised "15% off".
 	total, venueDiscount := 0.0, 0.0
-	if basePrice != nil {
+
+	// For hotels with hourly booking enabled, price from the matching hourly
+	// package when startTime and endTime are both provided. Fall back to the
+	// daily rate when no match is found (e.g. a regular overnight stay).
+	hourlyPriced := false
+	if facilityType == venuetype.Hotel && req.StartTime != "" && req.EndTime != "" {
+		if dur, err2 := HourlyDuration(req.StartTime, req.EndTime); err2 == nil && dur > 0 {
+			var pkgPrice float64
+			var hourlyEnabled bool
+			qErr := s.db.QueryRow(ctx,
+				`SELECT p.price
+				   FROM hotel_hourly_packages p
+				   JOIN facilities f ON f.id = p.facility_id
+				  WHERE p.facility_id = $1
+				    AND p.hours = $2
+				    AND COALESCE(f.hourly_booking_enabled, FALSE) = TRUE`,
+				req.FacilityID, dur,
+			).Scan(&pkgPrice)
+			if qErr == nil {
+				total = pkgPrice
+				hourlyEnabled = true
+				hourlyPriced = true
+			}
+			_ = hourlyEnabled
+		}
+	}
+	if !hourlyPriced && basePrice != nil {
 		rate := DayRate(*basePrice, discountPct)
 		total = rate * float64(days)
 		venueDiscount = (*basePrice - rate) * float64(days)
@@ -338,6 +365,33 @@ func DayRate(base float64, pct *float64) float64 {
 		return base
 	}
 	return math.Round(base * (100 - *pct) / 100)
+}
+
+// HourlyDuration parses two "HH:MM" strings and returns the whole number of
+// hours between them. It returns an error when either string is malformed or
+// endTime is not strictly after startTime.
+func HourlyDuration(startTime, endTime string) (int, error) {
+	parse := func(s string) (int, int, error) {
+		var h, m int
+		if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil {
+			return 0, 0, fmt.Errorf("invalid time %q", s)
+		}
+		return h, m, nil
+	}
+	sh, sm, err := parse(startTime)
+	if err != nil {
+		return 0, err
+	}
+	eh, em, err := parse(endTime)
+	if err != nil {
+		return 0, err
+	}
+	startMins := sh*60 + sm
+	endMins := eh*60 + em
+	if endMins <= startMins {
+		return 0, fmt.Errorf("endTime must be after startTime")
+	}
+	return (endMins - startMins) / 60, nil
 }
 
 // PriceCoupon checks a code against a venue and an amount and returns what it
