@@ -40,12 +40,21 @@ type BookingUser struct {
 	Address     *string `json:"address"`
 }
 
+type BookingVendor struct {
+	ID          *string `json:"id,omitempty"`
+	UserID      int64   `json:"userId,omitempty"`
+	Name        string  `json:"name"`
+	Email       *string `json:"email"`
+	PhoneNumber *string `json:"phoneNumber"`
+}
+
 type Booking struct {
-	ID          string       `json:"id"`
-	ReferenceID string       `json:"referenceId"`
-	UserID      int64        `json:"userId"`
-	User        *BookingUser `json:"user,omitempty"`
-	TargetType  string       `json:"targetType"`
+	ID          string         `json:"id"`
+	ReferenceID string         `json:"referenceId"`
+	UserID      int64          `json:"userId"`
+	User        *BookingUser   `json:"user,omitempty"`
+	Vendor      *BookingVendor `json:"vendor,omitempty"`
+	TargetType  string         `json:"targetType"`
 	TargetID    string       `json:"targetId"`
 	CheckIn     time.Time    `json:"-"`
 	StartDate   time.Time    `json:"startDate"`
@@ -1077,6 +1086,66 @@ func (r *Repo) EnrichUsers(ctx context.Context, bookings []*Booking) error {
 				PhoneNumber: b.GuestPhone,
 				Address:     nil,
 			}
+		}
+	}
+	return nil
+}
+
+// EnrichVendors attaches vendor details (business/owner name, email, phone) to each
+// booking based on the booked facility (TargetID).
+func (r *Repo) EnrichVendors(ctx context.Context, bookings []*Booking) error {
+	if len(bookings) == 0 {
+		return nil
+	}
+	facilityIDs := make([]string, 0, len(bookings))
+	seen := map[string]bool{}
+	for _, b := range bookings {
+		if b != nil && b.TargetID != "" && !seen[b.TargetID] {
+			seen[b.TargetID] = true
+			facilityIDs = append(facilityIDs, b.TargetID)
+		}
+	}
+	if len(facilityIDs) == 0 {
+		return nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT f.id::text,
+		       COALESCE(v.id::text, f.vendor_id::text),
+		       COALESCE(f.owner_id, 0),
+		       COALESCE(NULLIF(TRIM(v.business_name), ''), NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''), 'Vendor') AS name,
+		       COALESCE(NULLIF(TRIM(v.business_email), ''), NULLIF(TRIM(u.email), ''), NULLIF(TRIM(f.contact_email), '')) AS email,
+		       COALESCE(NULLIF(TRIM(v.business_phone), ''), NULLIF(TRIM(u.phone_number), ''), NULLIF(TRIM(f.contact_phone), '')) AS phone_number
+		  FROM facilities f
+		  LEFT JOIN users u ON u.id = f.owner_id
+		  LEFT JOIN user_profiles p ON p.id = u.id
+		  LEFT JOIN vendors v ON (v.id = f.vendor_id OR (f.vendor_id IS NULL AND v.user_id = f.owner_id)) AND v.is_deleted = FALSE
+		 WHERE f.id = ANY($1::uuid[])`, facilityIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	byFacilityID := map[string]BookingVendor{}
+	for rows.Next() {
+		var facilityID string
+		var v BookingVendor
+		if err := rows.Scan(&facilityID, &v.ID, &v.UserID, &v.Name, &v.Email, &v.PhoneNumber); err != nil {
+			return err
+		}
+		byFacilityID[facilityID] = v
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, b := range bookings {
+		if b == nil {
+			continue
+		}
+		if v, ok := byFacilityID[b.TargetID]; ok {
+			vCopy := v
+			b.Vendor = &vCopy
 		}
 	}
 	return nil

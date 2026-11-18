@@ -249,7 +249,7 @@ func (h *Handler) createVenue(w http.ResponseWriter, r *http.Request) {
 
 	// slotType is optional.
 	slot := strings.ToUpper(strings.TrimSpace(req.SlotType))
-	if slot != "" && slot != "MORNING" && slot != "EVENING" && slot != "FULL_DAY" {
+	if slot != "" && slot != "MORNING" && slot != "EVENING" && slot != "FULL_DAY" && slot != "HOURLY" {
 		e = append(e, "slotType must be MORNING, EVENING or FULL_DAY")
 	}
 	if slot == "" {
