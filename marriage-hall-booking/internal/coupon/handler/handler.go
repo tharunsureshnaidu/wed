@@ -955,8 +955,7 @@ func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
 		// for one scoped to this venue or its vendor.
 		AppliesTo      *string `json:"appliesTo"`
 		facilityType   *string
-		BannerImage    *string `json:"bannerImage,omitempty"`
-		BannerImageURL *string `json:"bannerImageUrl,omitempty"`
+		BannerImage  *string `json:"bannerImage,omitempty"`
 	}
 	out := []offer{}
 	for rows.Next() {
@@ -972,7 +971,6 @@ func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
 			o.AppliesTo = &t
 		}
 		o.BannerImage = banner
-		o.BannerImageURL = banner
 		out = append(out, o)
 	}
 	if err := rows.Err(); err != nil {

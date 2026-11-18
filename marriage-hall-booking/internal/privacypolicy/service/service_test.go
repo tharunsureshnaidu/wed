@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,71 +12,187 @@ import (
 )
 
 type mockRepo struct {
-	policy *repository.PrivacyPolicy
-	err    error
+	policies []repository.PrivacyPolicy
+	nextID   int64
+	err      error
+}
+
+func newMockRepo() *mockRepo {
+	return &mockRepo{nextID: 1}
+}
+
+func (m *mockRepo) VersionExists(ctx context.Context, version string, excludeID int64) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	for _, p := range m.policies {
+		if strings.EqualFold(p.Version, strings.TrimSpace(version)) && p.ID != excludeID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *mockRepo) Create(ctx context.Context, p *repository.PrivacyPolicy) error {
 	if m.err != nil {
 		return m.err
 	}
-	if m.policy != nil {
-		return repository.ErrAlreadyExists
-	}
+	p.ID = m.nextID
+	m.nextID++
 	now := time.Now()
 	p.CreatedAt = now
 	p.UpdatedAt = now
-	m.policy = p
+	m.policies = append(m.policies, *p)
 	return nil
 }
 
-func (m *mockRepo) Get(ctx context.Context) (*repository.PrivacyPolicy, error) {
+func (m *mockRepo) GetActive(ctx context.Context) (*repository.PrivacyPolicy, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	if m.policy == nil {
+	for _, p := range m.policies {
+		if p.Status == "ACTIVE" {
+			res := p
+			return &res, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *mockRepo) GetByID(ctx context.Context, id int64) (*repository.PrivacyPolicy, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	for _, p := range m.policies {
+		if p.ID == id {
+			res := p
+			return &res, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *mockRepo) GetAll(ctx context.Context) ([]repository.PrivacyPolicy, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	res := make([]repository.PrivacyPolicy, len(m.policies))
+	copy(res, m.policies)
+	return res, nil
+}
+
+func (m *mockRepo) Update(ctx context.Context, id int64, title, content, version string, updatedBy *int64) (*repository.PrivacyPolicy, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	for i, p := range m.policies {
+		if p.ID == id {
+			m.policies[i].Title = title
+			m.policies[i].Content = content
+			m.policies[i].Version = version
+			m.policies[i].UpdatedBy = updatedBy
+			m.policies[i].UpdatedAt = time.Now()
+			res := m.policies[i]
+			return &res, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *mockRepo) Activate(ctx context.Context, id int64, updatedBy *int64, effectiveFrom time.Time) (*repository.PrivacyPolicy, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	found := false
+	for i, p := range m.policies {
+		if p.ID == id {
+			found = true
+			m.policies[i].Status = "ACTIVE"
+			m.policies[i].EffectiveFrom = &effectiveFrom
+			m.policies[i].UpdatedBy = updatedBy
+			m.policies[i].UpdatedAt = time.Now()
+		} else if p.Status == "ACTIVE" {
+			m.policies[i].Status = "INACTIVE"
+			m.policies[i].UpdatedAt = time.Now()
+		}
+	}
+	if !found {
 		return nil, repository.ErrNotFound
 	}
-	return m.policy, nil
+	return m.GetByID(ctx, id)
 }
 
-func (m *mockRepo) Update(ctx context.Context, p *repository.PrivacyPolicy) error {
+func (m *mockRepo) Deactivate(ctx context.Context, id int64, updatedBy *int64) (*repository.PrivacyPolicy, error) {
 	if m.err != nil {
-		return m.err
+		return nil, m.err
 	}
-	if m.policy == nil {
-		return repository.ErrNotFound
+	for i, p := range m.policies {
+		if p.ID == id {
+			m.policies[i].Status = "INACTIVE"
+			m.policies[i].UpdatedBy = updatedBy
+			m.policies[i].UpdatedAt = time.Now()
+			res := m.policies[i]
+			return &res, nil
+		}
 	}
-	m.policy.Title = p.Title
-	m.policy.Content = p.Content
-	m.policy.UpdatedAt = time.Now()
-	*p = *m.policy
-	return nil
+	return nil, repository.ErrNotFound
 }
 
-func (m *mockRepo) Delete(ctx context.Context) error {
-	if m.err != nil {
-		return m.err
-	}
-	if m.policy == nil {
-		return repository.ErrNotFound
-	}
-	m.policy = nil
-	return nil
-}
+func TestCreate_Success_PreservesHTML(t *testing.T) {
+	repo := newMockRepo()
+	svc := service.New(repo, nil)
+	html := "<h1>Privacy Policy</h1><p>Welcome to our application.</p><ul><li>Name</li><li>Email</li></ul>"
 
-func TestCreate_Success(t *testing.T) {
-	svc := service.New(&mockRepo{}, nil)
-	html := "<h1>Privacy Policy</h1><p>Welcome.</p>"
-	res, err := svc.Create(context.Background(), service.CreateRequest{Title: "Privacy Policy", Content: html})
+	res, err := svc.Create(context.Background(), service.CreateRequest{
+		Title:   "Privacy Policy",
+		Content: html,
+		Version: "1.0",
+	}, nil)
+
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ID == 0 {
+		t.Errorf("expected non-zero ID")
 	}
 	if res.Title != "Privacy Policy" {
 		t.Errorf("expected title 'Privacy Policy', got %q", res.Title)
 	}
 	if res.Content != html {
-		t.Errorf("HTML not preserved: got %q", res.Content)
+		t.Errorf("HTML content not preserved: got %q, expected %q", res.Content, html)
+	}
+	if res.Version != "1.0" {
+		t.Errorf("expected version 1.0, got %q", res.Version)
+	}
+	if res.Status != "INACTIVE" {
+		t.Errorf("expected new policy to be INACTIVE, got %q", res.Status)
+	}
+}
+
+func TestCreate_DuplicateVersion(t *testing.T) {
+	repo := newMockRepo()
+	svc := service.New(repo, nil)
+
+	_, err := svc.Create(context.Background(), service.CreateRequest{
+		Title:   "Policy V1",
+		Content: "<p>Content</p>",
+		Version: "1.0",
+	}, nil)
+	if err != nil {
+		t.Fatalf("first create failed: %v", err)
+	}
+
+	_, err = svc.Create(context.Background(), service.CreateRequest{
+		Title:   "Policy V1 Dup",
+		Content: "<p>Other</p>",
+		Version: "1.0",
+	}, nil)
+	if err == nil {
+		t.Fatal("expected conflict error on duplicate version, got nil")
+	}
+	ae, ok := err.(*apperr.Error)
+	if !ok || ae.Code != "VERSION_EXISTS" {
+		t.Errorf("expected error code VERSION_EXISTS, got %v", err)
 	}
 }
 
@@ -85,13 +202,14 @@ func TestCreate_ValidationFailures(t *testing.T) {
 		req     service.CreateRequest
 		errCode string
 	}{
-		{"empty title", service.CreateRequest{Title: "   ", Content: "<p>ok</p>"}, "INVALID_TITLE"},
-		{"empty content", service.CreateRequest{Title: "Title", Content: "   "}, "INVALID_CONTENT"},
+		{"empty title", service.CreateRequest{Title: "   ", Content: "<p>ok</p>", Version: "1.0"}, "INVALID_TITLE"},
+		{"empty content", service.CreateRequest{Title: "Title", Content: "   ", Version: "1.0"}, "INVALID_CONTENT"},
+		{"empty version", service.CreateRequest{Title: "Title", Content: "<p>ok</p>", Version: "   "}, "INVALID_VERSION"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := service.New(&mockRepo{}, nil)
-			_, err := svc.Create(context.Background(), tc.req)
+			svc := service.New(newMockRepo(), nil)
+			_, err := svc.Create(context.Background(), tc.req, nil)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -103,72 +221,44 @@ func TestCreate_ValidationFailures(t *testing.T) {
 	}
 }
 
-func TestCreate_AlreadyExists(t *testing.T) {
-	repo := &mockRepo{}
+func TestActivate_EnsuresSingleActive(t *testing.T) {
+	repo := newMockRepo()
 	svc := service.New(repo, nil)
-	req := service.CreateRequest{Title: "Privacy Policy", Content: "<p>x</p>"}
-	svc.Create(context.Background(), req)
-	_, err := svc.Create(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected conflict error, got nil")
-	}
-	ae, ok := err.(*apperr.Error)
-	if !ok || ae.Code != "ALREADY_EXISTS" {
-		t.Errorf("expected ALREADY_EXISTS, got %v", err)
-	}
-}
 
-func TestGet_NotFound(t *testing.T) {
-	svc := service.New(&mockRepo{}, nil)
-	_, err := svc.Get(context.Background())
-	if err == nil {
-		t.Fatal("expected 404, got nil")
-	}
-	ae, ok := err.(*apperr.Error)
-	if !ok || ae.Status != 404 {
-		t.Errorf("expected 404, got %v", err)
-	}
-}
+	p1, _ := svc.Create(context.Background(), service.CreateRequest{Title: "P1", Content: "<p>1</p>", Version: "1.0"}, nil)
+	p2, _ := svc.Create(context.Background(), service.CreateRequest{Title: "P2", Content: "<p>2</p>", Version: "2.0"}, nil)
 
-func TestUpdate_Success(t *testing.T) {
-	repo := &mockRepo{}
-	svc := service.New(repo, nil)
-	svc.Create(context.Background(), service.CreateRequest{Title: "Old", Content: "<p>old</p>"})
-
-	res, err := svc.Update(context.Background(), service.UpdateRequest{Title: "New", Content: "<h1>New</h1>"})
+	// Activate p1
+	act1, err := svc.Activate(context.Background(), p1.ID, nil)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("failed to activate p1: %v", err)
 	}
-	if res.Title != "New" || res.Content != "<h1>New</h1>" {
-		t.Errorf("update not applied: %+v", res)
+	if act1.Status != "ACTIVE" {
+		t.Errorf("expected p1 ACTIVE, got %s", act1.Status)
 	}
-}
 
-func TestUpdate_NotFound(t *testing.T) {
-	svc := service.New(&mockRepo{}, nil)
-	_, err := svc.Update(context.Background(), service.UpdateRequest{Title: "T", Content: "<p>x</p>"})
-	if err == nil {
-		t.Fatal("expected 404, got nil")
+	active, err := svc.GetActive(context.Background())
+	if err != nil || active.ID != p1.ID {
+		t.Fatalf("expected active policy to be p1, got %v, err=%v", active, err)
 	}
-}
 
-func TestDelete_Success(t *testing.T) {
-	repo := &mockRepo{}
-	svc := service.New(repo, nil)
-	svc.Create(context.Background(), service.CreateRequest{Title: "T", Content: "<p>x</p>"})
-	if err := svc.Delete(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// Now activate p2
+	act2, err := svc.Activate(context.Background(), p2.ID, nil)
+	if err != nil {
+		t.Fatalf("failed to activate p2: %v", err)
 	}
-	_, err := svc.Get(context.Background())
-	if err == nil {
-		t.Fatal("expected 404 after delete, got nil")
+	if act2.Status != "ACTIVE" {
+		t.Errorf("expected p2 ACTIVE, got %s", act2.Status)
 	}
-}
 
-func TestDelete_NotFound(t *testing.T) {
-	svc := service.New(&mockRepo{}, nil)
-	err := svc.Delete(context.Background())
-	if err == nil {
-		t.Fatal("expected 404, got nil")
+	// p1 should now be INACTIVE
+	p1Check, _ := svc.GetByID(context.Background(), p1.ID)
+	if p1Check.Status != "INACTIVE" {
+		t.Errorf("expected p1 to become INACTIVE after p2 activation, got %s", p1Check.Status)
+	}
+
+	active, err = svc.GetActive(context.Background())
+	if err != nil || active.ID != p2.ID {
+		t.Fatalf("expected active policy to be p2, got %v, err=%v", active, err)
 	}
 }

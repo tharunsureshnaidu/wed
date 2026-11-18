@@ -60,3 +60,22 @@ func TestEnrichUsersEmptyIsNoOp(t *testing.T) {
 	}
 }
 
+// EnrichVendors must tolerate empty slices, nil elements, or bookings with empty
+// targetID without issuing empty ANY() queries or panicking.
+func TestEnrichVendorsEmptyIsNoOp(t *testing.T) {
+	var r *Repo
+	if err := r.EnrichVendors(nil, nil); err != nil {
+		t.Fatalf("nil bookings returned %v", err)
+	}
+	if err := r.EnrichVendors(nil, []*Booking{}); err != nil {
+		t.Fatalf("empty bookings returned %v", err)
+	}
+	if err := r.EnrichVendors(nil, []*Booking{nil}); err != nil {
+		t.Fatalf("nil booking in slice returned %v", err)
+	}
+	if err := r.EnrichVendors(nil, []*Booking{{TargetID: ""}}); err != nil {
+		t.Fatalf("empty targetId booking returned %v", err)
+	}
+}
+
+

@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Marriage Hall & Hotel Booking Platform API",
-    "description": "Comprehensive API testing collection (251 endpoints) for Marriage Hall & Hotel Booking.\n\nIncludes complete coverage for Authentication, Public Catalog, Side-by-side Compare, Bookings, Payments, Quotes, Reviews, Help Center, Admin Moderation, and Push Notifications.",
+    "description": "Comprehensive API testing collection (273 endpoints) for Marriage Hall & Hotel Booking.\n\nIncludes complete coverage for Authentication, Public Catalog, Side-by-side Compare, Bookings, Payments, Quotes, Reviews, Help Center, Admin Moderation, and Push Notifications.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -1593,7 +1593,7 @@
       "description": "Vendor onboarding, business details, KYC verification, and properties management."
     },
     {
-      "name": "Facilities (unified) (17)",
+      "name": "Facilities (unified) (27)",
       "item": [
         {
           "name": "Create facility (hall or hotel)",
@@ -2001,6 +2001,498 @@
             "description": "## GET /api/v1/venues\n- **Module:** Facilities (unified)\n- **Authentication:** Public Endpoint (No Token Required)\n\n### 🔍 Accepted Query Parameters (Params Tab):\n- **`type`** (Sample: `HALL`) — Filter by venue/facility/amenity type (Allowed: ALL, HALL, HOTEL)\n- **`eventType`** (Sample: `WEDDING`) — Filter venues hosting this event type (e.g. WEDDING, RECEPTION, BIRTHDAY)\n- **`search`** (Sample: `(empty)`) — Full-text search keyword for name, address, or business\n- **`city`** (Sample: `Bengaluru`) — City name filter (e.g. Bengaluru, Mumbai, Delhi)\n- **`page`** (Sample: `0`) — 0-indexed page number for pagination (default: 0)\n- **`size`** (Sample: `20`) — Page size limit (default: 20, max: 100)\n- **`lat`** (Sample: `12.9716`) — User/caller latitude coordinate for distance calculation\n- **`lng`** (Sample: `77.5946`) — User/caller longitude coordinate for distance calculation\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
             "auth": {
               "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Contact Us",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/contact-us",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "contact-us"
+              ]
+            },
+            "description": "## GET /api/contact-us\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Contact Us",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/contact-us",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "contact-us"
+              ]
+            },
+            "description": "## POST /api/contact-us\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Contact Us",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/contact-us/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "contact-us",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## GET /api/contact-us/{id}\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Contact Us",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/contact-us/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "contact-us",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## PUT /api/contact-us/{id}\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Contact Us",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contact-us",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "contact-us"
+              ]
+            },
+            "description": "## GET /api/v1/contact-us\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Contact Us",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contact-us",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "contact-us"
+              ]
+            },
+            "description": "## POST /api/v1/contact-us\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Contact Us",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contact-us/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "contact-us",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## GET /api/v1/contact-us/{id}\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Contact Us",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contact-us/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "contact-us",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## PUT /api/v1/contact-us/{id}\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -2554,6 +3046,137 @@
               ]
             },
             "description": "## GET /api/v1/venues/{id}\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE Contact Us",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/contact-us/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "contact-us",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## DELETE /api/contact-us/{id}\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE Contact Us",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contact-us/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "contact-us",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## DELETE /api/v1/contact-us/{id}\n- **Module:** Facilities (unified)\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -4251,7 +4874,7 @@
       "description": "Hall-specific listing details, capacities, and vendor management."
     },
     {
-      "name": "Hotels (5)",
+      "name": "Hotels (8)",
       "item": [
         {
           "name": "Get hotel",
@@ -4538,6 +5161,213 @@
               ]
             },
             "description": "## POST /api/v1/hotels\n- **Module:** Hotels\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Hotels Hourly Packages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/hotels/:id/hourly-packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "hotels",
+                ":id",
+                "hourly-packages"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{hotelId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## GET /api/v1/hotels/{id}/hourly-packages\n- **Module:** Hotels\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST Hotels Hourly Packages",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/hotels/:id/hourly-packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "hotels",
+                ":id",
+                "hourly-packages"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{hotelId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## POST /api/v1/hotels/{id}/hourly-packages\n- **Module:** Hotels\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE Hotels Hourly Packages",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/hotels/:id/hourly-packages/:childId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "hotels",
+                ":id",
+                "hourly-packages",
+                ":childId"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{hotelId}}",
+                  "description": "Target resource UUID or identifier"
+                },
+                {
+                  "key": "childId",
+                  "value": "{{childId}}",
+                  "description": "Path parameter"
+                }
+              ]
+            },
+            "description": "## DELETE /api/v1/hotels/{id}/hourly-packages/{childId}\n- **Module:** Hotels\n- **Authentication:** Venue Owner / Vendor Bearer JWT (`Authorization: Bearer {{ownerToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n- **`:childId`** — Target identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -8466,7 +9296,7 @@
       "description": "Hall and hotel reservations, quotes, hold windows, and owner decision workflow."
     },
     {
-      "name": "Payments (2)",
+      "name": "Payments (6)",
       "item": [
         {
           "name": "Create payment",
@@ -8586,6 +9416,256 @@
                   "language": "json"
                 }
               }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Facilities Payment Policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/facilities/:facilityId/payment-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "facilities",
+                ":facilityId",
+                "payment-policy"
+              ],
+              "variable": [
+                {
+                  "key": "facilityId",
+                  "value": "{{facilityId}}",
+                  "description": "Facility / Venue UUID"
+                }
+              ]
+            },
+            "description": "## GET /api/v1/facilities/{facilityId}/payment-policy\n- **Module:** Payments\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:facilityId`** — Facility / Venue UUID\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Facilities Payment Policy",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/facilities/:facilityId/payment-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "facilities",
+                ":facilityId",
+                "payment-policy"
+              ],
+              "variable": [
+                {
+                  "key": "facilityId",
+                  "value": "{{facilityId}}",
+                  "description": "Facility / Venue UUID"
+                }
+              ]
+            },
+            "description": "## PUT /api/v1/facilities/{facilityId}/payment-policy\n- **Module:** Payments\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:facilityId`** — Facility / Venue UUID\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Payment Policies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payment-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payment-policies"
+              ]
+            },
+            "description": "## GET /api/v1/payment-policies\n- **Module:** Payments\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Payment Policies",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payment-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payment-policies"
+              ]
+            },
+            "description": "## PUT /api/v1/payment-policies\n- **Module:** Payments\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -9834,7 +10914,7 @@
       "description": "Interactive price quote negotiation, counters, messages, and booking conversion."
     },
     {
-      "name": "Reviews (4)",
+      "name": "Reviews (5)",
       "item": [
         {
           "name": "Write a review",
@@ -10062,6 +11142,65 @@
               ]
             },
             "description": "## GET /api/v1/reviews/my-reviews\n- **Module:** Reviews\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Reviews Me",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reviews/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reviews",
+                "me"
+              ]
+            },
+            "description": "## GET /api/v1/reviews/me\n- **Module:** Reviews\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -12168,7 +13307,7 @@
       "description": "Customer app feedback, ratings, and issue reporting."
     },
     {
-      "name": "Privacy Policy (8)",
+      "name": "Privacy Policy (14)",
       "item": [
         {
           "name": "Get active privacy policy (public)",
@@ -12404,79 +13543,6 @@
           ]
         },
         {
-          "name": "Admin: update privacy policy",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "admin",
-                "privacy-policy"
-              ]
-            },
-            "description": "## PUT /api/v1/admin/privacy-policy\n- **Module:** Privacy Policy\n- **Authentication:** Admin / Super Admin Bearer JWT (`Authorization: Bearer {{adminToken}}`)\n\n### 📦 Accepted Request Body Fields (JSON):\n- **`title`** (string) — Sample value: `\"Privacy Policy\"`\n- **`content`** (string) — Sample value: `\"Updated: we now also record the device you signed in from.\"`\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{adminToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"Privacy Policy\",\n  \"content\": \"Updated: we now also record the device you signed in from.\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    pm.test(\"201 carries a Location header\", function () {",
-                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
-                  "    });",
-                  "}",
-                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "if (ct.indexOf(\"text/html\") !== -1) {",
-                  "    pm.test(\"renders a page\", function () {",
-                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
-                  "    });",
-                  "} else {",
-                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
-                  "        const b = pm.response.json();",
-                  "        pm.expect(b).to.have.property(\"success\");",
-                  "        pm.expect(b).to.have.property(\"message\");",
-                  "        pm.expect(b).to.have.property(\"timestamp\");",
-                  "    });",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
           "name": "Admin: get privacy policy audit (alias)",
           "request": {
             "method": "GET",
@@ -12607,45 +13673,509 @@
           ]
         },
         {
-          "name": "Admin: update privacy policy (alias)",
+          "name": "GET Admin Privacy Policy",
           "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "method": "GET",
+            "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/privacy-policy",
+              "raw": "{{baseUrl}}/api/admin/privacy-policy/:id",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "admin",
-                "privacy-policy"
+                "privacy-policy",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
               ]
             },
-            "description": "## PUT /api/admin/privacy-policy\n- **Module:** Privacy Policy\n- **Authentication:** Admin / Super Admin Bearer JWT (`Authorization: Bearer {{adminToken}}`)\n\n### 📦 Accepted Request Body Fields (JSON):\n- **`title`** (string) — Sample value: `\"Privacy Policy\"`\n- **`content`** (string) — Sample value: `\"Updated: we now also record the device you signed in from.\"`\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "description": "## GET /api/admin/privacy-policy/{id}\n- **Module:** Privacy Policy\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminToken}}",
+                  "value": "{{accessToken}}",
                   "type": "string"
                 }
               ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"Privacy Policy\",\n  \"content\": \"Updated: we now also record the device you signed in from.\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
               }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Privacy Policy",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/privacy-policy/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "privacy-policy",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## PUT /api/admin/privacy-policy/{id}\n- **Module:** Privacy Policy\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH Admin Privacy Policy Activate",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/privacy-policy/:id/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "privacy-policy",
+                ":id",
+                "activate"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## PATCH /api/admin/privacy-policy/{id}/activate\n- **Module:** Privacy Policy\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH Admin Privacy Policy Deactivate",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/privacy-policy/:id/deactivate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "privacy-policy",
+                ":id",
+                "deactivate"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## PATCH /api/admin/privacy-policy/{id}/deactivate\n- **Module:** Privacy Policy\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Admin Privacy Policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "privacy-policy",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## GET /api/v1/admin/privacy-policy/{id}\n- **Module:** Privacy Policy\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT Admin Privacy Policy",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "privacy-policy",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## PUT /api/v1/admin/privacy-policy/{id}\n- **Module:** Privacy Policy\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH Admin Privacy Policy Activate",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy/:id/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "privacy-policy",
+                ":id",
+                "activate"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## PATCH /api/v1/admin/privacy-policy/{id}/activate\n- **Module:** Privacy Policy\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.test(\"201 carries a Location header\", function () {",
+                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
+                  "    });",
+                  "}",
+                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
+                  "if (ct.indexOf(\"text/html\") !== -1) {",
+                  "    pm.test(\"renders a page\", function () {",
+                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
+                  "    });",
+                  "} else {",
+                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
+                  "        const b = pm.response.json();",
+                  "        pm.expect(b).to.have.property(\"success\");",
+                  "        pm.expect(b).to.have.property(\"message\");",
+                  "        pm.expect(b).to.have.property(\"timestamp\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH Admin Privacy Policy Deactivate",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy/:id/deactivate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "privacy-policy",
+                ":id",
+                "deactivate"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{facilityId}}",
+                  "description": "Target resource UUID or identifier"
+                }
+              ]
+            },
+            "description": "## PATCH /api/v1/admin/privacy-policy/{id}/deactivate\n- **Module:** Privacy Policy\n- **Authentication:** Customer / Authenticated User Bearer JWT (`Authorization: Bearer {{accessToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:id`** — Target resource UUID or identifier\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -16656,67 +18186,8 @@
       "description": "Platform administration, KYC approvals, user moderation, review approval, and analytics."
     },
     {
-      "name": "Cleanup (destructive) (21)",
+      "name": "Cleanup (destructive) (19)",
       "item": [
-        {
-          "name": "Admin: deactivate privacy policy",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/admin/privacy-policy",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "admin",
-                "privacy-policy"
-              ]
-            },
-            "description": "## DELETE /api/v1/admin/privacy-policy\n- **Module:** Cleanup (destructive)\n- **Authentication:** Admin / Super Admin Bearer JWT (`Authorization: Bearer {{adminToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{adminToken}}",
-                  "type": "string"
-                }
-              ]
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    pm.test(\"201 carries a Location header\", function () {",
-                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
-                  "    });",
-                  "}",
-                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "if (ct.indexOf(\"text/html\") !== -1) {",
-                  "    pm.test(\"renders a page\", function () {",
-                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
-                  "    });",
-                  "} else {",
-                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
-                  "        const b = pm.response.json();",
-                  "        pm.expect(b).to.have.property(\"success\");",
-                  "        pm.expect(b).to.have.property(\"message\");",
-                  "        pm.expect(b).to.have.property(\"timestamp\");",
-                  "    });",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
         {
           "name": "DELETE Admin Faqs",
           "request": {
@@ -17978,64 +19449,6 @@
               ]
             },
             "description": "## DELETE /api/admin/faqs/{faqId}\n- **Module:** Cleanup (destructive)\n- **Authentication:** Admin / Super Admin Bearer JWT (`Authorization: Bearer {{adminToken}}`)\n\n### 📌 Accepted Path Variables (URL Path):\n- **`:faqId`** — FAQ record ID\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{adminToken}}",
-                  "type": "string"
-                }
-              ]
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    pm.test(\"201 carries a Location header\", function () {",
-                  "        pm.expect(pm.response.headers.get(\"Location\")).to.be.a(\"string\").and.not.empty;",
-                  "    });",
-                  "}",
-                  "const ct = pm.response.headers.get(\"Content-Type\") || \"\";",
-                  "if (ct.indexOf(\"text/html\") !== -1) {",
-                  "    pm.test(\"renders a page\", function () {",
-                  "        pm.expect(pm.response.text()).to.include(\"<html\");",
-                  "    });",
-                  "} else {",
-                  "    pm.test(\"returns the ApiResponse envelope\", function () {",
-                  "        const b = pm.response.json();",
-                  "        pm.expect(b).to.have.property(\"success\");",
-                  "        pm.expect(b).to.have.property(\"message\");",
-                  "        pm.expect(b).to.have.property(\"timestamp\");",
-                  "    });",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Admin: deactivate privacy policy (alias)",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/admin/privacy-policy",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "admin",
-                "privacy-policy"
-              ]
-            },
-            "description": "## DELETE /api/admin/privacy-policy\n- **Module:** Cleanup (destructive)\n- **Authentication:** Admin / Super Admin Bearer JWT (`Authorization: Bearer {{adminToken}}`)\n\n### 🧪 Testing Notes:\n- Pre-configured with collection variables like `{{baseUrl}}`, `{{accessToken}}`, `{{ownerToken}}`, `{{adminToken}}`.\n- Automated test scripts verify HTTP 200/201 and valid JSON response envelope.",
             "auth": {
               "type": "bearer",
               "bearer": [

@@ -388,6 +388,8 @@ type Policy struct {
 	ID          string `json:"id"`
 	PolicyType  string `json:"policyType"`
 	Description string `json:"description"`
+	Version     string `json:"version"`
+	Status      string `json:"status"`
 }
 
 type Amenity struct {

@@ -627,6 +627,7 @@ func (s *Service) Get(ctx context.Context, id string, userID int64, isAdmin bool
 	if isOwnerOrAdmin {
 		_ = s.repo.EnrichUsers(ctx, []*repository.Booking{b})
 	}
+	_ = s.repo.EnrichVendors(ctx, []*repository.Booking{b})
 	return b, nil
 }
 
