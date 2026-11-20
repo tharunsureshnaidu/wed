@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -175,6 +176,86 @@ type facilityReq struct {
 	ImageURLs  []string        `json:"imageUrls"`
 	ImageURL   *string         `json:"imageUrl"`
 	CoverImage *string         `json:"coverImage"`
+
+	// Optional hourly booking configuration for hotel facilities
+	HourlyBooking        *HourlyBookingReq `json:"hourlyBooking,omitempty"`
+	HourlyBookingEnabled *bool             `json:"hourlyBookingEnabled,omitempty"`
+	HourlyBookingOptions []HourlyOptionReq `json:"hourlyBookingOptions,omitempty"`
+}
+
+type HourlyOptionReq struct {
+	Hours         int     `json:"hours"`
+	DurationHours int     `json:"durationHours,omitempty"`
+	Price         float64 `json:"price"`
+}
+
+type HourlyBookingReq struct {
+	Enabled *bool             `json:"enabled"`
+	Options []HourlyOptionReq `json:"options"`
+}
+
+func (req *facilityReq) resolveHourlyBooking() (enabled bool, pkgs []repository.HourlyPackageInput, errs validate.Errors) {
+	if req.HourlyBooking != nil && req.HourlyBooking.Enabled != nil {
+		enabled = *req.HourlyBooking.Enabled
+	} else if req.HourlyBookingEnabled != nil {
+		enabled = *req.HourlyBookingEnabled
+	} else if (req.HourlyBooking != nil && len(req.HourlyBooking.Options) > 0) || len(req.HourlyBookingOptions) > 0 {
+		enabled = true
+	}
+
+	if !enabled {
+		return false, nil, nil
+	}
+
+	// Validate venue type: only hotels support hourly booking
+	if req.Type != TypeHotel && venuetype.Stored(req.Type) != venuetype.Hotel {
+		errs = append(errs, "Hourly booking is only available for hotels")
+		return true, nil, errs
+	}
+
+	var rawOptions []HourlyOptionReq
+	if req.HourlyBooking != nil && len(req.HourlyBooking.Options) > 0 {
+		rawOptions = req.HourlyBooking.Options
+	} else if len(req.HourlyBookingOptions) > 0 {
+		rawOptions = req.HourlyBookingOptions
+	}
+
+	if len(rawOptions) == 0 {
+		errs = append(errs, "At least one hourly booking option must be configured when hourly booking is enabled")
+		return true, nil, errs
+	}
+
+	if len(rawOptions) > 3 {
+		errs = append(errs, "A maximum of 3 hourly booking options are allowed")
+		return true, nil, errs
+	}
+
+	seen := make(map[int]bool)
+	for _, opt := range rawOptions {
+		h := opt.Hours
+		if h == 0 && opt.DurationHours > 0 {
+			h = opt.DurationHours
+		}
+		if h <= 0 || h > 24 {
+			errs = append(errs, "Hourly option duration must be between 1 and 24 hours")
+			continue
+		}
+		if opt.Price < 0 {
+			errs = append(errs, "Hourly option price cannot be negative")
+			continue
+		}
+		if seen[h] {
+			errs = append(errs, fmt.Sprintf("Duplicate hourly option duration: %d hours", h))
+			continue
+		}
+		seen[h] = true
+		pkgs = append(pkgs, repository.HourlyPackageInput{
+			Hours: h,
+			Price: opt.Price,
+		})
+	}
+
+	return true, pkgs, errs
 }
 
 type imageInput struct {
@@ -243,6 +324,7 @@ func (req *facilityReq) extractImageInputs() []imageInput {
 }
 
 func (req facilityReq) toInput(ownerID int64) repository.CreateInput {
+	enabled, pkgs, _ := req.resolveHourlyBooking()
 	return repository.CreateInput{
 		OwnerID: ownerID, Name: req.Name, Description: req.Description,
 		Type: venuetype.Stored(req.Type),
@@ -252,6 +334,8 @@ func (req facilityReq) toInput(ownerID int64) repository.CreateInput {
 		CheckOutTime: req.CheckOutTime, CapacityPax: req.CapacityPax, AreaSqft: req.AreaSqft,
 		BasePricePerDay: req.BasePricePerDay, SeatingCapacity: req.SeatingCapacity,
 		FloatingCapacity: req.FloatingCapacity, MinBookingSize: req.MinBookingSize,
+		HourlyBookingEnabled: enabled,
+		HourlyPackages:       pkgs,
 	}
 }
 
@@ -303,6 +387,10 @@ func (h *Handler) createWithType(w http.ResponseWriter, r *http.Request, forcedT
 	if req.BasePricePerDay != nil && *req.BasePricePerDay < 0 {
 		e = append(e, "Base price cannot be negative")
 	}
+
+	// Validate optional hourly booking configuration
+	_, _, hbErrs := req.resolveHourlyBooking()
+	e = append(e, hbErrs...)
 
 	// Minimum 1 image is strictly required for Super Admin and Vendor
 	jsonImages := req.extractImageInputs()
@@ -488,6 +576,8 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	var e validate.Errors
 	e.Required("Name", req.Name)
+	_, _, hbErrs := req.resolveHourlyBooking()
+	e = append(e, hbErrs...)
 	if len(e) > 0 {
 		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
 		return

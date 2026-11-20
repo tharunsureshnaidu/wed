@@ -58,53 +58,133 @@ func (r *Repo) GetRecommendations(ctx context.Context, params dto.Recommendation
 	args := []any{params.Lat, params.Lng, dbType, params.RadiusKm, eventType}
 
 	// 1. Count total matching items within radius
-	var total int64
+	var nearbyTotal int64
 	countQuery := `SELECT count(*)` + facilityrepo.FacilityFrom + whereClause
-	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&nearbyTotal); err != nil {
 		return nil, 0, err
 	}
 
-	if total == 0 {
-		return []facilityrepo.VenueResponse{}, 0, nil
-	}
-
-	// 2. Fetch paginated results ordered by rating DESC, then distance ASC
 	offset := httpx.Offset(params.Page, params.Size)
-	args = append(args, params.Size, offset)
-
-	selectQuery := `
-		SELECT ` + facilityrepo.FacilityCols + facilityrepo.FacilityFrom + whereClause + `
-		 ORDER BY COALESCE(f.avg_rating, 0) DESC,
-		          earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision),
-		                         ll_to_earth($1, $2)) ASC
-		 LIMIT $6 OFFSET $7
-	`
-
-	rows, err := r.db.Query(ctx, selectQuery, args...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-
 	facilities := make([]*facilityrepo.Facility, 0, params.Size)
 	ids := make([]string, 0, params.Size)
-	byID := make(map[string]*facilityrepo.Facility, params.Size)
+	seenIDs := make(map[string]bool)
 
-	for rows.Next() {
-		fac, err := facilityrepo.ScanFacility(rows)
+	// Fetch nearby facilities if offset is within nearby results
+	if offset < int(nearbyTotal) {
+		fetchSize := params.Size
+		selectQuery := `
+			SELECT ` + facilityrepo.FacilityCols + facilityrepo.FacilityFrom + whereClause + `
+			 ORDER BY COALESCE(f.avg_rating, 0) DESC,
+			          earth_distance(ll_to_earth(f.lat::double precision, f.lng::double precision),
+			                         ll_to_earth($1, $2)) ASC
+			 LIMIT $6 OFFSET $7
+		`
+		queryArgs := append(args, fetchSize, offset)
+		rows, err := r.db.Query(ctx, selectQuery, queryArgs...)
 		if err != nil {
 			return nil, 0, err
 		}
-		if fac.Lat != nil && fac.Lng != nil {
-			d := haversineKm(params.Lat, params.Lng, *fac.Lat, *fac.Lng)
-			fac.DistanceKm = &d
+		defer rows.Close()
+
+		for rows.Next() {
+			fac, err := facilityrepo.ScanFacility(rows)
+			if err != nil {
+				return nil, 0, err
+			}
+			if fac.Lat != nil && fac.Lng != nil {
+				d := haversineKm(params.Lat, params.Lng, *fac.Lat, *fac.Lng)
+				fac.DistanceKm = &d
+			}
+			facilities = append(facilities, fac)
+			ids = append(ids, fac.ID)
+			seenIDs[fac.ID] = true
 		}
-		facilities = append(facilities, fac)
-		ids = append(ids, fac.ID)
-		byID[fac.ID] = fac
+		if err := rows.Err(); err != nil {
+			return nil, 0, err
+		}
 	}
-	if err := rows.Err(); err != nil {
+
+	// 2. If needed, backfill with top-rated venues across the platform (5 star -> 4 star -> 3 star)
+	needed := params.Size - len(facilities)
+	var fallbackTotal int64
+
+	fallbackWhere := `
+		WHERE ` + venuetype.LiveSQL("f") + `
+		  AND f.is_verified = TRUE
+		  AND ($1 = 'ALL' OR f.type = $1)
+		  AND ($2 = '' OR EXISTS (
+			SELECT 1 FROM facility_events fe
+			 WHERE fe.facility_id = f.id AND fe.event_code = $2)
+		      OR NOT EXISTS (
+			SELECT 1 FROM facility_events fe WHERE fe.facility_id = f.id))
+		  AND NOT (f.id = ANY($3::uuid[]))
+	`
+
+	var allNearbyIDs []string
+	if nearbyTotal > 0 {
+		nearbyIDsQuery := `SELECT f.id::text` + facilityrepo.FacilityFrom + whereClause
+		nRows, err := r.db.Query(ctx, nearbyIDsQuery, args...)
+		if err == nil {
+			defer nRows.Close()
+			for nRows.Next() {
+				var nid string
+				if err := nRows.Scan(&nid); err == nil {
+					allNearbyIDs = append(allNearbyIDs, nid)
+				}
+			}
+		}
+	}
+
+	fbArgs := []any{dbType, eventType, allNearbyIDs}
+	fbCountQuery := `SELECT count(*)` + facilityrepo.FacilityFrom + fallbackWhere
+	if err := r.db.QueryRow(ctx, fbCountQuery, fbArgs...).Scan(&fallbackTotal); err != nil {
 		return nil, 0, err
+	}
+
+	total := nearbyTotal + fallbackTotal
+
+	if needed > 0 && fallbackTotal > 0 {
+		fbOffset := 0
+		if offset > int(nearbyTotal) {
+			fbOffset = offset - int(nearbyTotal)
+		}
+
+		fbSelectQuery := `
+			SELECT ` + facilityrepo.FacilityCols + facilityrepo.FacilityFrom + fallbackWhere + `
+			 ORDER BY COALESCE(f.avg_rating, 0) DESC,
+			          COALESCE(f.star_rating, 0) DESC,
+			          f.created_at DESC
+			 LIMIT $4 OFFSET $5
+		`
+		fbArgsWithPagination := append(fbArgs, needed, fbOffset)
+		fbRows, err := r.db.Query(ctx, fbSelectQuery, fbArgsWithPagination...)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer fbRows.Close()
+
+		for fbRows.Next() {
+			fac, err := facilityrepo.ScanFacility(fbRows)
+			if err != nil {
+				return nil, 0, err
+			}
+			if !seenIDs[fac.ID] {
+				if fac.Lat != nil && fac.Lng != nil {
+					d := haversineKm(params.Lat, params.Lng, *fac.Lat, *fac.Lng)
+					fac.DistanceKm = &d
+				}
+				facilities = append(facilities, fac)
+				ids = append(ids, fac.ID)
+				seenIDs[fac.ID] = true
+			}
+		}
+		if err := fbRows.Err(); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	if len(facilities) == 0 {
+		return []facilityrepo.VenueResponse{}, 0, nil
 	}
 
 	// Batch-load event codes
