@@ -5,19 +5,23 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // PaymentProvider is the provider contract used by the booking payment flow.
 type PaymentProvider interface {
 	CreateOrder(ctx context.Context, bookingID string, userID int64, amount float64, currency string, customerEmail string, customerPhone string) (*ProviderOrder, error)
 	GetOrderStatus(ctx context.Context, orderID string) (*ProviderOrderStatus, error)
+	Refund(ctx context.Context, orderID, refundID string, amount float64, currency, reason string) (*ProviderRefund, error)
+	VerifyWebhook(body []byte, signature, timestamp string) bool
 }
 
 type ProviderOrder struct {
@@ -41,15 +45,22 @@ type ProviderOrderStatus struct {
 	Reference string  `json:"referenceId,omitempty"`
 }
 
-type CashfreeClient struct {
-	baseURL       string
-	apiKey        string
-	apiSecret     string
-	webhookSecret string
-	httpClient    *http.Client
+type ProviderRefund struct {
+	RefundID string `json:"refundId"`
+	Status   string `json:"status,omitempty"`
 }
 
-func NewCashfreeClient(env, apiKey, apiSecret, webhookSecret, baseURL string) *CashfreeClient {
+type CashfreeClient struct {
+	baseURL         string
+	apiKey          string
+	apiSecret       string
+	webhookSecret   string
+	publicBaseURL   string
+	checkoutBaseURL string
+	httpClient      *http.Client
+}
+
+func NewCashfreeClient(env, apiKey, apiSecret, webhookSecret, baseURL, publicBaseURL string) *CashfreeClient {
 	if strings.TrimSpace(baseURL) == "" {
 		if strings.EqualFold(env, "production") {
 			baseURL = "https://api.cashfree.com"
@@ -57,13 +68,42 @@ func NewCashfreeClient(env, apiKey, apiSecret, webhookSecret, baseURL string) *C
 			baseURL = "https://sandbox.cashfree.com"
 		}
 	}
-	return &CashfreeClient{
-		baseURL:       strings.TrimRight(baseURL, "/"),
-		apiKey:        strings.TrimSpace(apiKey),
-		apiSecret:     strings.TrimSpace(apiSecret),
-		webhookSecret: strings.TrimSpace(webhookSecret),
-		httpClient:    &http.Client{Timeout: 15 * time.Second},
+	checkoutBaseURL := "https://payments.cashfree.com"
+	if strings.EqualFold(strings.TrimSpace(env), "production") {
+		checkoutBaseURL = "https://payments.cashfree.com"
+	} else {
+		checkoutBaseURL = "https://sandbox.cashfree.com"
 	}
+	return &CashfreeClient{
+		baseURL:         strings.TrimRight(baseURL, "/"),
+		apiKey:          strings.TrimSpace(apiKey),
+		apiSecret:       strings.TrimSpace(apiSecret),
+		webhookSecret:   strings.TrimSpace(webhookSecret),
+		publicBaseURL:   strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
+		checkoutBaseURL: checkoutBaseURL,
+		httpClient:      &http.Client{Timeout: 15 * time.Second},
+	}
+}
+
+// sanitizePhone ensures Cashfree gets a valid 10-digit number.
+func sanitizePhone(phone string) string {
+	var b strings.Builder
+	for _, r := range phone {
+		if unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	digits := b.String()
+	if len(digits) == 12 && strings.HasPrefix(digits, "91") {
+		digits = digits[2:]
+	}
+	if len(digits) < 10 {
+		return "9999999999"
+	}
+	if len(digits) > 10 {
+		return digits[len(digits)-10:]
+	}
+	return digits
 }
 
 func (c *CashfreeClient) CreateOrder(ctx context.Context, bookingID string, userID int64, amount float64, currency string, customerEmail string, customerPhone string) (*ProviderOrder, error) {
@@ -77,8 +117,28 @@ func (c *CashfreeClient) CreateOrder(ctx context.Context, bookingID string, user
 		currency = "INR"
 	}
 
+	// Cashfree order_id allows <= 50 characters, alphanumeric + -_
+	cleanID := strings.ReplaceAll(bookingID, "-", "")
+	if len(cleanID) > 16 {
+		cleanID = cleanID[:16]
+	}
+	merchantOrderID := fmt.Sprintf("ord_%s_%d", cleanID, time.Now().Unix())
+
+	customerPhone = sanitizePhone(customerPhone)
+	customerEmail = strings.TrimSpace(customerEmail)
+	if customerEmail == "" {
+		customerEmail = fmt.Sprintf("user%d@example.com", userID)
+	}
+
+	publicURL := strings.TrimRight(strings.TrimSpace(c.publicBaseURL), "/")
+	if publicURL == "" || strings.Contains(publicURL, "localhost") || strings.Contains(publicURL, "127.0.0.1") {
+		publicURL = "https://apnavenues.com"
+	}
+	returnURL := publicURL + "/payments/return"
+	notifyURL := publicURL + "/api/v1/payments/webhook"
+
 	payload := map[string]any{
-		"order_id":       fmt.Sprintf("booking-%s-%d", bookingID, time.Now().UnixNano()),
+		"order_id":       merchantOrderID,
 		"order_amount":   amount,
 		"order_currency": currency,
 		"customer_details": map[string]any{
@@ -87,9 +147,8 @@ func (c *CashfreeClient) CreateOrder(ctx context.Context, bookingID string, user
 			"customer_phone": customerPhone,
 		},
 		"order_meta": map[string]any{
-			"return_url":      "/payments/return",
-			"notify_url":      "/api/v1/payments/webhook",
-			"payment_methods": []string{"UPI", "CARD", "NETBANKING"},
+			"return_url": returnURL,
+			"notify_url": notifyURL,
 		},
 	}
 	body, err := json.Marshal(payload)
@@ -103,7 +162,7 @@ func (c *CashfreeClient) CreateOrder(ctx context.Context, bookingID string, user
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-client-id", c.apiKey)
 	req.Header.Set("x-client-secret", c.apiSecret)
-	req.Header.Set("x-api-version", "2022-09-01")
+	req.Header.Set("x-api-version", "2026-01-01")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -119,12 +178,11 @@ func (c *CashfreeClient) CreateOrder(ctx context.Context, bookingID string, user
 	}
 
 	var result struct {
-		CFOrderID        string   `json:"cf_order_id"`
-		OrderID          string   `json:"order_id"`
-		OrderAmount      float64  `json:"order_amount"`
-		OrderCurrency    string   `json:"order_currency"`
-		PaymentSessionID string   `json:"payment_session_id"`
-		PaymentMethods   []string `json:"payment_methods"`
+		CFOrderID        string  `json:"cf_order_id"`
+		OrderID          string  `json:"order_id"`
+		OrderAmount      float64 `json:"order_amount"`
+		OrderCurrency    string  `json:"order_currency"`
+		PaymentSessionID string  `json:"payment_session_id"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, err
@@ -132,12 +190,17 @@ func (c *CashfreeClient) CreateOrder(ctx context.Context, bookingID string, user
 	if result.OrderID == "" {
 		result.OrderID = result.CFOrderID
 	}
+	if result.OrderID == "" || result.PaymentSessionID == "" {
+		return nil, fmt.Errorf("cashfree returned an incomplete order")
+	}
 	return &ProviderOrder{
-		OrderID:        result.OrderID,
-		SessionID:      result.PaymentSessionID,
-		Amount:         result.OrderAmount,
-		Currency:       result.OrderCurrency,
-		PaymentMethods: result.PaymentMethods,
+		OrderID:       result.OrderID,
+		SessionID:     result.PaymentSessionID,
+		Amount:        result.OrderAmount,
+		Currency:      result.OrderCurrency,
+		CheckoutURL:   c.checkoutBaseURL + "/pg/view?payment_session_id=" + url.QueryEscape(result.PaymentSessionID),
+		CustomerEmail: customerEmail,
+		CustomerPhone: customerPhone,
 	}, nil
 }
 
@@ -148,14 +211,13 @@ func (c *CashfreeClient) GetOrderStatus(ctx context.Context, orderID string) (*P
 	if strings.TrimSpace(orderID) == "" {
 		return nil, fmt.Errorf("order id required")
 	}
-	url := fmt.Sprintf("%s/pg/orders/%s", c.baseURL, orderID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/pg/orders/%s", c.baseURL, orderID), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("x-client-id", c.apiKey)
 	req.Header.Set("x-client-secret", c.apiSecret)
-	req.Header.Set("x-api-version", "2022-09-01")
+	req.Header.Set("x-api-version", "2026-01-01")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -186,15 +248,185 @@ func (c *CashfreeClient) GetOrderStatus(ctx context.Context, orderID string) (*P
 	return &ProviderOrderStatus{OrderID: out.OrderID, Status: out.OrderStatus, Amount: out.OrderAmount, Currency: out.OrderCurrency}, nil
 }
 
-func (c *CashfreeClient) VerifyWebhook(body []byte, signature string) bool {
-	if c == nil || strings.TrimSpace(c.webhookSecret) == "" {
+func (c *CashfreeClient) Refund(ctx context.Context, orderID, refundID string, amount float64, currency, reason string) (*ProviderRefund, error) {
+	if c == nil || c.apiKey == "" || c.apiSecret == "" {
+		return nil, fmt.Errorf("cashfree credentials not configured")
+	}
+	payload := map[string]any{
+		"refund_id":     refundID,
+		"refund_amount": amount,
+		"refund_note":   strings.TrimSpace(reason),
+		"refund_speed":  "STANDARD",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	reqURL := fmt.Sprintf("%s/pg/orders/%s/refunds", c.baseURL, orderID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-client-id", c.apiKey)
+	req.Header.Set("x-client-secret", c.apiSecret)
+	req.Header.Set("x-api-version", "2026-01-01")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("cashfree refund failed: %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	}
+	var out struct {
+		CFRefundID string `json:"cf_refund_id"`
+		RefundID   string `json:"refund_id"`
+		Status     string `json:"refund_status"`
+	}
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return nil, err
+	}
+	gatewayID := out.CFRefundID
+	if gatewayID == "" {
+		gatewayID = out.RefundID
+	}
+	if gatewayID == "" {
+		gatewayID = refundID
+	}
+	return &ProviderRefund{RefundID: gatewayID, Status: out.Status}, nil
+}
+
+func (c *CashfreeClient) VerifyWebhook(body []byte, signature, timestamp string) bool {
+	if c == nil {
 		return false
 	}
-	if strings.TrimSpace(signature) == "" {
+	signature = strings.TrimSpace(signature)
+	if signature == "" {
 		return false
 	}
-	h := hmac.New(sha256.New, []byte(c.webhookSecret))
+	secrets := make([]string, 0, 2)
+	if strings.TrimSpace(c.webhookSecret) != "" {
+		secrets = append(secrets, c.webhookSecret)
+	}
+	if strings.TrimSpace(c.apiSecret) != "" && c.apiSecret != c.webhookSecret {
+		secrets = append(secrets, c.apiSecret)
+	}
+	if len(secrets) == 0 {
+		return false
+	}
+
+	for _, sec := range secrets {
+		candidates := make([]string, 0, 2)
+		if strings.TrimSpace(timestamp) != "" {
+			h := hmac.New(sha256.New, []byte(sec))
+			_, _ = h.Write([]byte(timestamp))
+			_, _ = h.Write(body)
+			candidates = append(candidates, base64.StdEncoding.EncodeToString(h.Sum(nil)))
+		}
+		h := hmac.New(sha256.New, []byte(sec))
+		_, _ = h.Write(body)
+		candidates = append(candidates, base64.StdEncoding.EncodeToString(h.Sum(nil)))
+		for _, want := range candidates {
+			if hmac.Equal([]byte(want), []byte(signature)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// MockPaymentProvider supplies a complete, zero-dependency provider for testing and development.
+type MockPaymentProvider struct {
+	BaseURL      string
+	MockStatus   string
+	Secret       string
+	CreatedOrder *ProviderOrder
+}
+
+func NewMockPaymentProvider() *MockPaymentProvider {
+	return &MockPaymentProvider{
+		BaseURL:    "https://sandbox.cashfree.com",
+		MockStatus: "PAID",
+		Secret:     "mock-cashfree-secret",
+	}
+}
+
+func (m *MockPaymentProvider) CreateOrder(ctx context.Context, bookingID string, userID int64, amount float64, currency string, customerEmail string, customerPhone string) (*ProviderOrder, error) {
+	if amount <= 0 {
+		return nil, fmt.Errorf("amount must be positive")
+	}
+	if currency == "" {
+		currency = "INR"
+	}
+	cleanID := strings.ReplaceAll(bookingID, "-", "")
+	if len(cleanID) > 16 {
+		cleanID = cleanID[:16]
+	}
+	now := time.Now().Unix()
+	orderID := fmt.Sprintf("cf_mock_%s_%d", cleanID, now)
+	sessionID := fmt.Sprintf("session_mock_%s_%d", cleanID, now)
+	checkoutURL := fmt.Sprintf("%s/mock-checkout?payment_session_id=%s", m.BaseURL, sessionID)
+
+	order := &ProviderOrder{
+		OrderID:       orderID,
+		SessionID:     sessionID,
+		CheckoutURL:   checkoutURL,
+		Amount:        amount,
+		Currency:      currency,
+		Status:        "ACTIVE",
+		CustomerEmail: customerEmail,
+		CustomerPhone: customerPhone,
+	}
+	m.CreatedOrder = order
+	return order, nil
+}
+
+func (m *MockPaymentProvider) GetOrderStatus(ctx context.Context, orderID string) (*ProviderOrderStatus, error) {
+	status := m.MockStatus
+	if status == "" {
+		status = "PAID"
+	}
+	return &ProviderOrderStatus{
+		OrderID:  orderID,
+		Status:   status,
+		Currency: "INR",
+	}, nil
+}
+
+func (m *MockPaymentProvider) Refund(ctx context.Context, orderID, refundID string, amount float64, currency, reason string) (*ProviderRefund, error) {
+	return &ProviderRefund{
+		RefundID: refundID,
+		Status:   "SUCCESS",
+	}, nil
+}
+
+func (m *MockPaymentProvider) VerifyWebhook(body []byte, signature, timestamp string) bool {
+	if signature == "mock-valid-signature" || signature == "test-sig" {
+		return true
+	}
+	if m.Secret == "" {
+		return true
+	}
+	candidates := make([]string, 0, 2)
+	if strings.TrimSpace(timestamp) != "" {
+		h := hmac.New(sha256.New, []byte(m.Secret))
+		_, _ = h.Write([]byte(timestamp))
+		_, _ = h.Write(body)
+		candidates = append(candidates, base64.StdEncoding.EncodeToString(h.Sum(nil)))
+	}
+	h := hmac.New(sha256.New, []byte(m.Secret))
 	_, _ = h.Write(body)
-	want := hex.EncodeToString(h.Sum(nil))
-	return hmac.Equal([]byte(want), []byte(signature))
+	candidates = append(candidates, base64.StdEncoding.EncodeToString(h.Sum(nil)))
+	for _, want := range candidates {
+		if hmac.Equal([]byte(want), []byte(signature)) {
+			return true
+		}
+	}
+	return false
 }

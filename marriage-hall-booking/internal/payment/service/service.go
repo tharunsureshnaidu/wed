@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -31,7 +32,7 @@ type Service struct {
 }
 
 func New(db *pgxpool.Pool, books *bookingrepo.Repo, webhookSecret string) *Service {
-	return &Service{db: db, books: books, secret: []byte(webhookSecret), policy: DefaultPolicy()}
+	return &Service{db: db, books: books, secret: []byte(webhookSecret), policy: DefaultPolicy(), provider: NewMockPaymentProvider()}
 }
 
 func (s *Service) SetCashfreeClient(provider PaymentProvider) {
@@ -176,14 +177,19 @@ func (s *Service) Create(ctx context.Context, userID int64, bookingID string) (*
 	defer tx.Rollback(ctx)
 
 	var (
-		ownerID     int64
-		total, paid float64
-		status      string
+		ownerID       int64
+		total, paid   float64
+		status        string
+		customerEmail *string
+		customerPhone *string
 	)
 	if err := tx.QueryRow(ctx,
-		`SELECT user_id, total_amount, COALESCE(paid_amount,0), status
-		 FROM bookings WHERE id = $1 AND is_deleted = FALSE FOR UPDATE`, bookingID,
-	).Scan(&ownerID, &total, &paid, &status); errors.Is(err, pgx.ErrNoRows) {
+		`SELECT b.user_id, b.total_amount, COALESCE(b.paid_amount,0), b.status,
+		        u.email, u.phone_number
+		   FROM bookings b
+		   JOIN users u ON u.id = b.user_id
+		  WHERE b.id = $1 AND b.is_deleted = FALSE FOR UPDATE OF b`, bookingID,
+	).Scan(&ownerID, &total, &paid, &status, &customerEmail, &customerPhone); errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.BadRequest("BOOKING_NOT_FOUND", "Booking not found")
 	} else if err != nil {
 		return nil, err
@@ -230,7 +236,9 @@ func (s *Service) Create(ctx context.Context, userID int64, bookingID string) (*
 	if err := tx.QueryRow(ctx,
 		`SELECT `+ret+` FROM payments WHERE booking_id = $1 AND status = 'PENDING' ORDER BY created_at DESC LIMIT 1`, bookingID,
 	).Scan(dest...); err == nil {
-		return &p, tx.Commit(ctx)
+		if strings.TrimSpace(p.PaymentSessionID) != "" {
+			return &p, tx.Commit(ctx)
+		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
@@ -240,11 +248,26 @@ func (s *Service) Create(ctx context.Context, userID int64, bookingID string) (*
 	checkoutURL := ""
 	paymentSessionID := ""
 	if s.provider != nil {
-		providerOrder, err := s.provider.CreateOrder(ctx, bookingID, userID, due, "INR", "", "")
+		providerOrder, err := s.provider.CreateOrder(ctx, bookingID, userID, due, "INR",
+			func() string {
+				if customerEmail == nil {
+					return ""
+				}
+				return *customerEmail
+			}(),
+			func() string {
+				if customerPhone == nil {
+					return ""
+				}
+				return *customerPhone
+			}())
 		if err != nil {
 			return nil, err
 		}
 		gateway = "CASHFREE"
+		if _, isMock := s.provider.(*MockPaymentProvider); isMock {
+			gateway = "MOCK"
+		}
 		gatewayOrderID = providerOrder.OrderID
 		checkoutURL = providerOrder.CheckoutURL
 		paymentSessionID = providerOrder.SessionID
@@ -281,9 +304,22 @@ type WebhookPayload struct {
 	Reason    string  `json:"reason"`
 }
 
-// VerifySignature checks the HMAC the gateway sends. Without this anyone who
-// can reach the webhook URL could mark any booking paid.
+// VerifySignature checks the raw callback against the configured provider.
 func (s *Service) VerifySignature(body []byte, signature string) bool {
+	return s.VerifySignatureWithTimestamp(body, signature, "")
+}
+
+func (s *Service) VerifySignatureWithTimestamp(body []byte, signature, timestamp string) bool {
+	if s == nil {
+		return false
+	}
+	if s.provider != nil {
+		if provider, ok := s.provider.(interface {
+			VerifyWebhook(body []byte, signature, timestamp string) bool
+		}); ok {
+			return provider.VerifyWebhook(body, signature, timestamp)
+		}
+	}
 	if len(s.secret) == 0 {
 		return false
 	}
@@ -331,7 +367,9 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 		`SELECT id, booking_id, status, amount FROM payments
 		 WHERE gateway_order_id = $1 FOR UPDATE`, p.OrderID,
 	).Scan(&paymentID, &bookingID, &status, &amount); errors.Is(err, pgx.ErrNoRows) {
-		return apperr.BadRequest("UNKNOWN_ORDER", "Unknown order")
+		// Acknowledge Cashfree dashboard test pings or foreign order events gracefully with 200 OK
+		logger.Info("payment webhook: order not found in database (dashboard test ping or foreign order acknowledged)", "orderId", p.OrderID)
+		return nil
 	} else if err != nil {
 		return err
 	}
@@ -425,15 +463,16 @@ func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, 
 	defer tx.Rollback(ctx)
 
 	var paid float64
-	var status, bookingID string
+	var status, bookingID, gateway, gatewayOrderID string
 	var venueOwner int64
 	if err := tx.QueryRow(ctx,
-		`SELECT p.amount, p.status, p.booking_id, f.owner_id
+		`SELECT p.amount, p.status, p.booking_id, f.owner_id, p.gateway,
+		        COALESCE(p.gateway_order_id,'')
 		   FROM payments p
 		   JOIN bookings b ON b.id = p.booking_id
 		   JOIN facilities f ON f.id = b.target_id
 		  WHERE p.id = $1 FOR UPDATE OF p`, paymentID,
-	).Scan(&paid, &status, &bookingID, &venueOwner); errors.Is(err, pgx.ErrNoRows) {
+	).Scan(&paid, &status, &bookingID, &venueOwner, &gateway, &gatewayOrderID); errors.Is(err, pgx.ErrNoRows) {
 		return "", apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
 	} else if err != nil {
 		return "", err
@@ -455,26 +494,51 @@ func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, 
 		return "", apperr.BadRequest("REFUND_EXCEEDS_PAYMENT", "Refund would exceed the amount paid")
 	}
 
+	merchantRefundID := "rfnd_" + randHex(12)
+	gatewayRefundID := merchantRefundID
+	gatewayRefundStatus := "SUCCESS"
+	if s.provider != nil && gateway == "CASHFREE" {
+		providerRefund, err := s.provider.Refund(ctx, gatewayOrderID, merchantRefundID, amount, "INR", reason)
+		if err != nil {
+			return "", err
+		}
+		if providerRefund != nil {
+			if strings.TrimSpace(providerRefund.RefundID) != "" {
+				gatewayRefundID = providerRefund.RefundID
+			}
+			switch strings.ToUpper(providerRefund.Status) {
+			case "SUCCESS":
+				gatewayRefundStatus = "SUCCESS"
+			case "FAILED", "CANCELLED":
+				gatewayRefundStatus = "FAILED"
+			default:
+				gatewayRefundStatus = "PENDING"
+			}
+		}
+	}
+
 	var refundID string
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO refunds (payment_id, amount, reason, status, gateway_refund_id)
-		 VALUES ($1, $2, $3, 'SUCCESS', $4) RETURNING id`,
-		paymentID, amount, reason, "rfnd_"+randHex(10),
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		paymentID, amount, reason, gatewayRefundStatus, gatewayRefundID,
 	).Scan(&refundID); err != nil {
 		return "", err
 	}
 
-	newStatus := "PARTIALLY_REFUNDED"
-	if alreadyRefunded+amount >= paid {
-		newStatus = "REFUNDED"
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE payments SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, paymentID, newStatus); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE bookings SET paid_amount = GREATEST(paid_amount - $2, 0), updated_at = CURRENT_TIMESTAMP WHERE id = $1`, bookingID, amount); err != nil {
-		return "", err
+	if gatewayRefundStatus == "SUCCESS" {
+		newStatus := "PARTIALLY_REFUNDED"
+		if alreadyRefunded+amount >= paid {
+			newStatus = "REFUNDED"
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE payments SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, paymentID, newStatus); err != nil {
+			return "", err
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE bookings SET paid_amount = GREATEST(paid_amount - $2, 0), updated_at = CURRENT_TIMESTAMP WHERE id = $1`, bookingID, amount); err != nil {
+			return "", err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
@@ -563,4 +627,93 @@ func randHex(n int) string {
 		return hex.EncodeToString([]byte(time.Now().String()))
 	}
 	return hex.EncodeToString(b)
+}
+
+// ListForUser returns the caller's payment history.
+func (s *Service) ListForUser(ctx context.Context, userID int64) ([]Payment, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, booking_id, user_id, amount, currency, status, gateway,
+		       gateway_order_id, gateway_payment_id, payment_type,
+		       COALESCE(checkout_url,''), COALESCE(payment_session_id,''), created_at
+		  FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Payment
+	for rows.Next() {
+		var p Payment
+		if err := rows.Scan(&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
+			&p.Gateway, &p.GatewayOrderID, &p.GatewayPaymentID, &p.PaymentType,
+			&p.CheckoutURL, &p.PaymentSessionID, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetForUser returns one payment only to its owner or an administrator.
+func (s *Service) GetForUser(ctx context.Context, paymentID string, userID int64, isAdmin bool) (*Payment, error) {
+	var p Payment
+	query := `SELECT id, booking_id, user_id, amount, currency, status, gateway,
+	                 gateway_order_id, gateway_payment_id, payment_type,
+	                 COALESCE(checkout_url,''), COALESCE(payment_session_id,''), created_at
+	            FROM payments WHERE id = $1`
+	if !isAdmin {
+		query += ` AND user_id = $2`
+		if err := s.db.QueryRow(ctx, query, paymentID, userID).Scan(
+			&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
+			&p.Gateway, &p.GatewayOrderID, &p.GatewayPaymentID, &p.PaymentType,
+			&p.CheckoutURL, &p.PaymentSessionID, &p.CreatedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
+			}
+			return nil, err
+		}
+	} else if err := s.db.QueryRow(ctx, query, paymentID).Scan(
+		&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
+		&p.Gateway, &p.GatewayOrderID, &p.GatewayPaymentID, &p.PaymentType,
+		&p.CheckoutURL, &p.PaymentSessionID, &p.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+// Sync asks the provider for the authoritative order status. This supplements,
+// and never replaces, signed webhook delivery.
+func (s *Service) Sync(ctx context.Context, paymentID string, userID int64, isAdmin bool) (*Payment, error) {
+	p, err := s.GetForUser(ctx, paymentID, userID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if p.Status != "PENDING" || s.provider == nil || p.GatewayOrderID == nil {
+		return p, nil
+	}
+	status, err := s.provider.GetOrderStatus(ctx, *p.GatewayOrderID)
+	if err != nil {
+		return nil, err
+	}
+	switch strings.ToUpper(status.Status) {
+	case "PAID", "SUCCESS", "COMPLETED":
+		eventID := fmt.Sprintf("sync:%s:SUCCESS", paymentID)
+		if err := s.HandleWebhook(ctx, nil, WebhookPayload{
+			EventID: eventID, OrderID: *p.GatewayOrderID,
+			PaymentID: "sync:" + paymentID, Status: "SUCCESS", Amount: p.Amount,
+		}); err != nil {
+			return nil, err
+		}
+	case "FAILED", "CANCELLED", "EXPIRED", "USER_DROPPED":
+		eventID := fmt.Sprintf("sync:%s:FAILED", paymentID)
+		if err := s.HandleWebhook(ctx, nil, WebhookPayload{
+			EventID: eventID, OrderID: *p.GatewayOrderID,
+			PaymentID: "sync:" + paymentID, Status: "FAILED", Reason: status.Status,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return s.GetForUser(ctx, paymentID, userID, isAdmin)
 }

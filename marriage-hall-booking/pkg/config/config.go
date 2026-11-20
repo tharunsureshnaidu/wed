@@ -21,6 +21,7 @@ type Config struct {
 	ResetPasswordURL      string
 	LogOtpCodes           bool
 	WebhookSecret         string
+	PublicBaseURL         string
 	CashfreeEnv           string
 	CashfreeClientID      string
 	CashfreeClientSecret  string
@@ -69,8 +70,9 @@ func Load() Config {
 		ResetPasswordURL:      env("FRONTEND_RESET_PASSWORD_URL", "http://localhost:3000/reset-password"),
 		LogOtpCodes:           env("LOG_OTP_CODES", "true") == "true",
 		WebhookSecret:         env("PAYMENT_WEBHOOK_SECRET", ""),
+		PublicBaseURL:         env("PUBLIC_BASE_URL", "https://apnavenues.com"),
 		CashfreeEnv:           env("CASHFREE_ENV", "sandbox"),
-		CashfreeClientID:      env("CASHFREE_CLIENT_ID", ""),
+		CashfreeClientID:      env("CASHFREE_CLIENT_ID", env("CASHFREE_APP_ID", "")),
 		CashfreeClientSecret:  env("CASHFREE_CLIENT_SECRET", ""),
 		CashfreeWebhookSecret: env("CASHFREE_WEBHOOK_SECRET", env("PAYMENT_WEBHOOK_SECRET", "")),
 		CashfreeBaseURL:       env("CASHFREE_BASE_URL", "https://sandbox.cashfree.com"),

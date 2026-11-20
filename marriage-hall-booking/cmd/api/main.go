@@ -220,6 +220,7 @@ func main() {
 			cfg.CashfreeClientSecret,
 			cfg.CashfreeWebhookSecret,
 			cfg.CashfreeBaseURL,
+			cfg.PublicBaseURL,
 		))
 	}
 

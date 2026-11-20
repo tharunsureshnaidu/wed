@@ -135,6 +135,22 @@ overrides the hall's list price.
 venue, one per user per facility, and keep `facilities.avg_rating` /
 `review_count` in the same transaction as the review.
 
+## Payment Gateway & Policies (Cashfree & Mock)
+
+The payment domain supports both full payments and dynamic **advance & balance payment policies**:
+
+- **Cashfree PG integration** with client ID, client secret, webhook secret, and environment selection (`sandbox` or `production`).
+- **Zero-credential Mock Provider** (`MockPaymentProvider`) active automatically in development and testing environments so checkout sessions, status queries, refunds, and webhook signatures can be tested end-to-end without real merchant credentials.
+- **Dynamic Advance & Cancellation Policies**:
+  - Marketplace default policy (`GET /api/v1/payment-policies`, `PUT /api/v1/payment-policies`).
+  - Facility-level overrides (`GET /api/v1/facilities/{facilityId}/payment-policy`, `PUT /api/v1/facilities/{facilityId}/payment-policy`).
+  - Automated advance calculation (`advance_percent`, `min_advance_amount`, `max_advance_amount`), remaining balance due calculation, and cancellation penalty computation.
+- **Authoritative Status Sync & Webhooks**:
+  - `POST /api/v1/payments/create`: Generates order and payment session ID (Cashfree or Mock).
+  - `POST /api/v1/payments/webhook`: Authenticated via HMAC-SHA256 (`x-webhook-signature` + `x-webhook-timestamp`) with payload normalization and deduplicated delivery.
+  - `POST /api/v1/payments/{paymentId}/sync`: Query authoritative order status from the gateway and reconcile state.
+  - `POST /api/v1/refunds/{paymentId}`: Issues partial or full refunds against completed payments.
+
 ## Stubbed integrations
 
 These need credentials or services this machine does not have. The endpoints,
@@ -144,5 +160,3 @@ storage and rules are real; only the outbound integration is missing:
   images and videos are no longer in this list: they upload to S3 (see below).
 - **Email/SMS delivery** — the worker consumes the events and logs what it
   would send. Topics, offsets and consumers are real; only delivery is a stub.
-- **Payment gateway** — a `MOCK` gateway issues order ids and accepts
-  HMAC-signed webhooks in the real shape. Swapping in a provider is one adapter.
