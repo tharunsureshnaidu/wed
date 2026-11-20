@@ -128,8 +128,8 @@ func TestWebhookHandler_SignatureVerification(t *testing.T) {
 	signer, _ := jwt.NewSigner("A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2W3x4Y5z6A7b8C9d0E1f2", time.Hour)
 	h := New(svc, signer)
 
-	// 1. Request with invalid signature should return 401
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/webhook", bytes.NewReader([]byte(`{}`)))
+	// 1. Request with invalid signature and real payload should return 401
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/webhook", bytes.NewReader([]byte(`{"order_id":"real_123"}`)))
 	req.Header.Set("x-webhook-signature", "invalid-sig")
 	rec := httptest.NewRecorder()
 	h.webhook(rec, req)
@@ -138,7 +138,23 @@ func TestWebhookHandler_SignatureVerification(t *testing.T) {
 		t.Errorf("got status %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 
-	// 2. Request with valid mock signature but pending status acknowledges with 200
+	// 2. Empty ping from dashboard should acknowledge with 200 OK
+	reqEmpty := httptest.NewRequest(http.MethodPost, "/api/v1/payments/webhook", bytes.NewReader([]byte(``)))
+	recEmpty := httptest.NewRecorder()
+	h.webhook(recEmpty, reqEmpty)
+	if recEmpty.Code != http.StatusOK {
+		t.Errorf("empty ping got status %d, want 200", recEmpty.Code)
+	}
+
+	// 3. Test ping from dashboard should acknowledge with 200 OK
+	reqTestProbe := httptest.NewRequest(http.MethodPost, "/api/v1/payments/webhook", bytes.NewReader([]byte(`{"type":"TEST_NOTIFICATION"}`)))
+	recTestProbe := httptest.NewRecorder()
+	h.webhook(recTestProbe, reqTestProbe)
+	if recTestProbe.Code != http.StatusOK {
+		t.Errorf("test probe got status %d, want 200", recTestProbe.Code)
+	}
+
+	// 4. Request with valid mock signature but pending status acknowledges with 200
 	pendingBody := []byte(`{
 		"data": {
 			"order": {"order_id": "ord_p1"},
