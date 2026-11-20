@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,5 +95,19 @@ func TestLimitsPerKind(t *testing.T) {
 	}
 	if Limit(Video) != MaxVideoBytes || Limit(Document) != MaxDocumentBytes {
 		t.Error("per-kind limits do not match Java's")
+	}
+}
+
+func TestFileServerRefusesDirectories(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "spool"), 0o755)
+	os.WriteFile(filepath.Join(dir, "spool", "a.jpg"), []byte("x"), 0o644)
+	h := FileServer(dir)
+	for path, want := range map[string]int{"/": 404, "/spool/": 404, "/spool": 404, "/spool/a.jpg": 200} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s = %d, want %d", path, rec.Code, want)
+		}
 	}
 }

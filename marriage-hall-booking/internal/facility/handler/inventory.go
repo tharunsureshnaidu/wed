@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -28,6 +29,10 @@ func (h *Handler) RegisterInventory(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/hotels/{id}/room-types", h.listRoomTypes)
 	mux.Handle("POST /api/v1/hotels/{id}/room-types", owner(h.createRoomType))
 	mux.Handle("DELETE /api/v1/hotels/{id}/room-types/{childId}", owner(h.deleteRoomType))
+
+	mux.HandleFunc("GET /api/v1/hotels/{id}/hourly-packages", h.listHourlyPackages)
+	mux.Handle("POST /api/v1/hotels/{id}/hourly-packages", owner(h.createHourlyPackage))
+	mux.Handle("DELETE /api/v1/hotels/{id}/hourly-packages/{childId}", owner(h.deleteHourlyPackage))
 
 	mux.HandleFunc("GET /api/v1/halls/{id}/packages", h.listPackages)
 	mux.Handle("POST /api/v1/halls/{id}/packages", owner(h.createPackage))
@@ -211,11 +216,134 @@ func (h *Handler) listRoomTypes(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Room types retrieved successfully", out)
 }
 
 func (h *Handler) deleteRoomType(w http.ResponseWriter, r *http.Request) {
 	h.softDeleteChild(w, r, "room_types")
+}
+
+// --- hotel hourly packages ---
+
+type hourlyPackageReq struct {
+	Hours int     `json:"hours"`
+	Price float64 `json:"price"`
+}
+
+func (h *Handler) listHourlyPackages(w http.ResponseWriter, r *http.Request) {
+	facilityID, ok := parent(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.repo.Pool().Query(r.Context(),
+		`SELECT id, facility_id, hours, price, created_at, updated_at
+		 FROM hotel_hourly_packages
+		 WHERE facility_id = $1
+		 ORDER BY hours ASC`, facilityID)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	defer rows.Close()
+	type row struct {
+		ID         string    `json:"id"`
+		FacilityID string    `json:"facilityId"`
+		Hours      int       `json:"hours"`
+		Price      float64   `json:"price"`
+		CreatedAt  time.Time `json:"createdAt"`
+		UpdatedAt  time.Time `json:"updatedAt"`
+	}
+	out := []row{}
+	for rows.Next() {
+		var item row
+		if err := rows.Scan(&item.ID, &item.FacilityID, &item.Hours, &item.Price, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	response.OK(w, "Hourly packages retrieved successfully", out)
+}
+
+func (h *Handler) createHourlyPackage(w http.ResponseWriter, r *http.Request) {
+	facilityID, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	var req hourlyPackageReq
+	if !httpx.Decode(w, r, &req) {
+		return
+	}
+	var e validate.Errors
+	if req.Hours <= 0 || req.Hours > 24 {
+		e = append(e, "hours must be between 1 and 24")
+	}
+	if req.Price < 0 {
+		e = append(e, "price cannot be negative")
+	}
+	var count int
+	_ = h.repo.Pool().QueryRow(r.Context(),
+		`SELECT COUNT(*) FROM hotel_hourly_packages WHERE facility_id = $1`, facilityID).Scan(&count)
+	if count >= 3 {
+		e = append(e, "A maximum of 3 hourly booking options are allowed")
+	}
+	if len(e) > 0 {
+		response.Error(w, http.StatusBadRequest, e.Message(), "VALIDATION_ERROR")
+		return
+	}
+
+	var id string
+	if err := h.repo.Pool().QueryRow(r.Context(),
+		`INSERT INTO hotel_hourly_packages (facility_id, hours, price)
+		 VALUES ($1, $2, $3)
+		 RETURNING id`, facilityID, req.Hours, req.Price).Scan(&id); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	_, _ = h.repo.Pool().Exec(r.Context(),
+		`UPDATE facilities SET hourly_booking_enabled = TRUE WHERE id = $1`, facilityID)
+
+	response.Created(w, "Hourly package created successfully",
+		"/api/v1/hotels/"+facilityID+"/hourly-packages/"+id, map[string]any{
+			"id": id, "facilityId": facilityID, "hours": req.Hours, "price": req.Price,
+		})
+}
+
+func (h *Handler) deleteHourlyPackage(w http.ResponseWriter, r *http.Request) {
+	facilityID, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	childID, ok := child(w, r)
+	if !ok {
+		return
+	}
+	tag, err := h.repo.Pool().Exec(r.Context(),
+		`DELETE FROM hotel_hourly_packages WHERE id = $1 AND facility_id = $2`, childID, facilityID)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		response.Error(w, http.StatusNotFound, "Not found", "NOT_FOUND")
+		return
+	}
+	var count int
+	_ = h.repo.Pool().QueryRow(r.Context(),
+		`SELECT COUNT(*) FROM hotel_hourly_packages WHERE facility_id = $1`, facilityID).Scan(&count)
+	if count == 0 {
+		_, _ = h.repo.Pool().Exec(r.Context(),
+			`UPDATE facilities SET hourly_booking_enabled = FALSE WHERE id = $1`, facilityID)
+	}
+	response.OK(w, "Deleted successfully", nil)
 }
 
 // --- hall packages ---
@@ -300,6 +428,10 @@ func (h *Handler) listPackages(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Packages retrieved successfully", out)
 }
 
@@ -380,6 +512,10 @@ func (h *Handler) listAddons(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, "Add-ons retrieved successfully", out)
 }
@@ -585,6 +721,10 @@ func (h *Handler) listPolicies(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Policies retrieved successfully", out)
 }
 
@@ -715,6 +855,10 @@ func (h *Handler) listPricing(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
 	}
 	response.OK(w, "Pricing rules retrieved successfully", out)
 }

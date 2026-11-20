@@ -109,6 +109,8 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	// The refresh tokens died in SoftDelete; the access token in hand must too.
+	middleware.RevokeAccessTokens(r.Context(), userID)
 	response.OK(w, "Account deleted successfully", nil)
 }
 

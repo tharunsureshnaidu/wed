@@ -7,6 +7,8 @@ import (
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/service"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/geo"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
@@ -41,23 +43,43 @@ type comparePrice struct {
 }
 
 type compareVenue struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Type       string  `json:"type"`
-	City       *string `json:"city"`
-	Address    *string `json:"fullAddress"`
-	CoverImage *string `json:"coverImage"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Type        string  `json:"type"`
+	Description *string `json:"description"`
+	City        *string `json:"city"`
+	Address     *string `json:"fullAddress"`
+	State       *string `json:"state"`
+	Zipcode     *string `json:"zipcode"`
+	Country     *string `json:"country"`
+	CoverImage  *string `json:"coverImage"`
 
+	Status      string  `json:"status"`
+	IsVerified  bool    `json:"isVerified"`
+	IsFeatured  bool    `json:"isFeatured"`
 	AvgRating   float64 `json:"avgRating"`
 	ReviewCount int     `json:"reviewCount"`
 	StarRating  *int    `json:"starRating"`
 
+	StartingPrice           *float64 `json:"startingPrice"`
+	DiscountPercent         *float64 `json:"discountPercent"`
+	DiscountLabel           *string  `json:"discountLabel"`
+	DiscountedPrice         *float64 `json:"discountedPrice"`
+	HasDiscount             bool     `json:"hasDiscount"`
+	AdminDiscountCouponCode *string  `json:"adminDiscountCouponCode"`
+	AdminDiscountPrice      *float64 `json:"adminDiscountPrice"`
+	AdminDiscountPercentage *float64 `json:"adminDiscountPercentage"`
+
 	Price comparePrice `json:"price"`
 
-	CapacityPax      *int `json:"capacityPax"`
-	SeatingCapacity  *int `json:"seatingCapacity"`
-	FloatingCapacity *int `json:"floatingCapacity"`
-	AreaSqft         *int `json:"areaSqft"`
+	CheckInTime      *string  `json:"checkInTime"`
+	CheckOutTime     *string  `json:"checkOutTime"`
+	CapacityPax      *int     `json:"capacityPax"`
+	AreaSqft         *int     `json:"areaSqft"`
+	BasePricePerDay  *float64 `json:"basePricePerDay"`
+	SeatingCapacity  *int     `json:"seatingCapacity"`
+	FloatingCapacity *int     `json:"floatingCapacity"`
+	MinBookingSize   *int     `json:"minBookingSize"`
 
 	Lat *float64 `json:"lat"`
 	Lng *float64 `json:"lng"`
@@ -66,6 +88,14 @@ type compareVenue struct {
 	// its live location as ?lat=&lng=. nil when it did not, or when the venue
 	// has no coordinates - never 0, which would read as "you are here".
 	DistanceKm *float64 `json:"distanceKm"`
+
+	EventCodes []string               `json:"eventCodes"`
+	Events     []eventtypes.EventType `json:"events"`
+	Policies   []repository.Policy    `json:"policies"`
+	Faqs       []repository.FAQ       `json:"faqs"`
+	Reviews    []repository.Review    `json:"reviews"`
+	Images     []repository.Image     `json:"images"`
+	Amenities  []repository.Amenity   `json:"amenities"`
 
 	// AmenityCodes is what the matrix is built from; the full objects stay out
 	// of the per-venue block so the same amenity is not repeated three times.
@@ -99,9 +129,16 @@ func (h *Handler) compareVenues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if here := parseUserLocation(r); here.OK {
+	if here := geo.Parse(r); here.OK {
 		req.UserLat = &here.Lat
 		req.UserLng = &here.Lng
+	}
+
+	if req.EventType == "" {
+		req.EventType = r.URL.Query().Get("eventType")
+		if req.EventType == "" {
+			req.EventType = r.URL.Query().Get("event_type")
+		}
 	}
 
 	svc := h.compareSvc
@@ -124,9 +161,19 @@ func (h *Handler) compareVenues(w http.ResponseWriter, r *http.Request) {
 // visitor does before signing up.
 func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
 	reqType := r.URL.Query().Get("type")
+	eventType := strings.TrimSpace(r.URL.Query().Get("eventType"))
+	if eventType == "" {
+		eventType = strings.TrimSpace(r.URL.Query().Get("event_type"))
+	}
 	venueIDsRaw := r.URL.Query().Get("venue_ids")
 	if venueIDsRaw == "" {
 		venueIDsRaw = r.URL.Query().Get("ids")
+	}
+
+	var userLat, userLng *float64
+	if here := geo.Parse(r); here.OK {
+		userLat = &here.Lat
+		userLng = &here.Lng
 	}
 
 	if reqType != "" {
@@ -143,16 +190,12 @@ func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
 		if svc == nil {
 			svc = service.NewCompareService(h.repo)
 		}
-		var userLat, userLng *float64
-		if here := parseUserLocation(r); here.OK {
-			userLat = &here.Lat
-			userLng = &here.Lng
-		}
 		resp, err := svc.Compare(r.Context(), service.CompareRequest{
-			Type:     reqType,
-			VenueIDs: cleanParts,
-			UserLat:  userLat,
-			UserLng:  userLng,
+			Type:      reqType,
+			EventType: eventType,
+			VenueIDs:  cleanParts,
+			UserLat:   userLat,
+			UserLng:   userLng,
 		})
 		if err != nil {
 			httpx.Fail(w, err)
@@ -162,7 +205,7 @@ func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ids, errMsg := parseCompareIDs(r.URL.Query().Get("ids"))
+	ids, errMsg := parseCompareIDs(venueIDsRaw)
 	if errMsg != "" {
 		response.Error(w, http.StatusBadRequest, errMsg, "VALIDATION_ERROR")
 		return
@@ -182,11 +225,34 @@ func (h *Handler) compare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	here := parseUserLocation(r)
+	// If all found venues are of the same type, use CompareService for full rich comparison
+	if !mixedTypes(found) && len(found) >= 2 {
+		detectedType := "hall"
+		if found[0].Type == "HOTEL" {
+			detectedType = "hotel"
+		}
+		svc := h.compareSvc
+		if svc == nil {
+			svc = service.NewCompareService(h.repo)
+		}
+		resp, err := svc.Compare(r.Context(), service.CompareRequest{
+			Type:      detectedType,
+			EventType: eventType,
+			VenueIDs:  ids,
+			UserLat:   userLat,
+			UserLng:   userLng,
+		})
+		if err == nil {
+			response.OK(w, "Venues retrieved for comparison successfully", resp)
+			return
+		}
+	}
+
+	here := geo.Parse(r)
 	venues := make([]compareVenue, 0, len(found))
 	for _, f := range found {
 		v := toCompareVenue(f)
-		v.DistanceKm = here.distanceFrom(f.Lat, f.Lng)
+		v.DistanceKm = here.DistanceFrom(f.Lat, f.Lng)
 		venues = append(venues, v)
 	}
 
@@ -238,11 +304,53 @@ func parseCompareIDs(raw string) ([]string, string) {
 }
 
 func toCompareVenue(f repository.Facility) compareVenue {
+	status := f.Status
+	if status == "" {
+		status = "APPROVED"
+	}
+	eventCodes := f.EventCodes
+	if eventCodes == nil {
+		eventCodes = []string{}
+	}
+	events := eventtypes.Views(f.EventCodes)
+	if events == nil {
+		events = []eventtypes.EventType{}
+	}
+	policies := f.Policies
+	if policies == nil {
+		policies = []repository.Policy{}
+	}
+	faqs := f.Faqs
+	if faqs == nil {
+		faqs = []repository.FAQ{}
+	}
+	reviews := f.Reviews
+	if reviews == nil {
+		reviews = []repository.Review{}
+	}
+	images := f.Images
+	if images == nil {
+		images = []repository.Image{}
+	}
+	amenities := f.Amenities
+	if amenities == nil {
+		amenities = []repository.Amenity{}
+	}
+
 	v := compareVenue{
-		ID: f.ID, Name: f.Name, Type: venuetype.API(f.Type), City: f.City, Address: f.FullAddress,
+		ID: f.ID, Name: f.Name, Type: venuetype.API(f.Type), Description: f.Description,
+		City: f.City, Address: f.FullAddress,
+		State: f.State, Zipcode: f.Zipcode, Country: f.Country,
+		Status: status, IsVerified: f.IsVerified, IsFeatured: f.IsFeatured,
 		AvgRating: f.AvgRating, ReviewCount: f.ReviewCount, StarRating: f.StarRating,
+		StartingPrice: f.StartingPrice, DiscountPercent: f.DiscountPercent, DiscountLabel: f.DiscountLabel,
+		DiscountedPrice: f.DiscountedPrice, HasDiscount: f.HasDiscount,
+		AdminDiscountCouponCode: f.AdminDiscountCouponCode, AdminDiscountPrice: f.AdminDiscountPrice,
+		AdminDiscountPercentage: f.AdminDiscountPercentage,
+		CheckInTime:             f.CheckInTime, CheckOutTime: f.CheckOutTime,
 		CapacityPax: f.CapacityPax, SeatingCapacity: f.SeatingCapacity,
 		FloatingCapacity: f.FloatingCapacity, AreaSqft: f.AreaSqft,
+		BasePricePerDay: f.BasePricePerDay, MinBookingSize: f.MinBookingSize,
 		Lat: f.Lat, Lng: f.Lng,
 		Price: comparePrice{
 			StartingPrice: f.StartingPrice, DiscountedPrice: f.DiscountedPrice,
@@ -250,17 +358,24 @@ func toCompareVenue(f repository.Facility) compareVenue {
 			HasDiscount: f.HasDiscount,
 			Unit:        priceUnit(f.Type), Display: priceLabel(f.Type),
 		},
+		EventCodes:   eventCodes,
+		Events:       events,
+		Policies:     policies,
+		Faqs:         faqs,
+		Reviews:      reviews,
+		Images:       images,
+		Amenities:    amenities,
 		AmenityCodes: []string{},
 		Missing:      []string{},
 	}
-	for _, a := range f.Images {
+	for _, a := range images {
 		if a.URL != "" {
 			url := a.URL
 			v.CoverImage = &url
 			break
 		}
 	}
-	for _, a := range f.Amenities {
+	for _, a := range amenities {
 		v.AmenityCodes = append(v.AmenityCodes, amenityKey(a))
 	}
 
@@ -388,7 +503,7 @@ func distanceMatrix(fs []repository.Facility) [][]*float64 {
 			if fs[i].Lat == nil || fs[i].Lng == nil || fs[j].Lat == nil || fs[j].Lng == nil {
 				continue
 			}
-			d := haversineKm(*fs[i].Lat, *fs[i].Lng, *fs[j].Lat, *fs[j].Lng)
+			d := geo.HaversineKm(*fs[i].Lat, *fs[i].Lng, *fs[j].Lat, *fs[j].Lng)
 			out[i][j] = &d
 		}
 	}

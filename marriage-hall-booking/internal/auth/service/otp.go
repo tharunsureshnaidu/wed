@@ -48,6 +48,30 @@ type OtpService struct {
 	// outside development by NewOtpService, and must never be set in an
 	// environment with real users.
 	FixedCode string
+	// Send delivers a code or reset link to its target (an email address or a
+	// phone number), wired in cmd/api/main.go to the notify senders. Sent
+	// directly rather than through the notification outbox: a code must not sit
+	// in the notifications table or be retried for days after it expired.
+	Send func(ctx context.Context, target, subject, body string) error
+}
+
+// deliver hands a message to Send without making the request wait on, or fail
+// because of, a mail or SMS provider: the code is stored, and /otp/resend
+// exists for one that never arrives.
+//
+// ponytail: fire-and-forget goroutine; move to a bounded queue if signup
+// volume ever makes unbounded goroutines a concern.
+func (s *OtpService) deliver(ctx context.Context, target, subject, body string) {
+	if s.Send == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	go func() {
+		defer cancel()
+		if err := s.Send(ctx, target, subject, body); err != nil {
+			logger.Error("OTP delivery failed", "target", target, logger.Err(err))
+		}
+	}()
 }
 
 func NewOtpService(repo *repository.Repo, logCodes bool) *OtpService {
@@ -128,7 +152,14 @@ func (s *OtpService) store(ctx context.Context, userID *int64, target string, t 
 	}
 
 	if s.LogCodes {
-		logger.Warn("OTP logged instead of sent (LOG_OTP_CODES=true)", "type", string(t), "target", target, "code", raw)
+		logger.Warn("OTP logged (LOG_OTP_CODES=true)", "type", string(t), "target", target, "code", raw)
+	}
+	// A reset token travels inside a link, which ForgotPassword builds and
+	// sends itself.
+	if t != domain.OtpPasswordReset {
+		s.deliver(ctx, target, "Your verification code",
+			fmt.Sprintf("Your verification code is %s. It expires in %d minutes. Do not share it with anyone.",
+				raw, int(otpExpiry.Minutes())))
 	}
 	return raw, nil
 }
@@ -154,8 +185,12 @@ func (s *OtpService) Verify(ctx context.Context, target string, t domain.OtpType
 	}
 
 	match := subtle.ConstantTimeCompare([]byte(hashCode(raw)), []byte(otp.OtpCode)) == 1
-	if err := s.repo.BumpOtpAttempt(ctx, otp.ID, match); err != nil {
+	spent, err := s.repo.BumpOtpAttempt(ctx, otp.ID, match, otpMaxAttempts)
+	if err != nil {
 		return err
+	}
+	if !spent { // a concurrent guess took the last attempt, or used the code
+		return apperr.TooMany("OTP_MAX_ATTEMPTS_EXCEEDED", "Maximum OTP attempts exceeded.")
 	}
 	if !match {
 		return apperr.BadRequest("INVALID_OTP", "Invalid OTP")

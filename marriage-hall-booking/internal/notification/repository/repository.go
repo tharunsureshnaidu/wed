@@ -205,7 +205,7 @@ func (r *Repo) ClaimDue(ctx context.Context, limit int, backoff time.Duration) (
 		   -- ordering of the two can chase an owner about a dead booking.
 		   AND NOT EXISTS (SELECT 1 FROM bookings b
 		                    WHERE b.id = notifications.booking_id
-		                      AND b.status IN ('CANCELLED', 'EXPIRED'))
+		                      AND b.status IN ('CANCELLED', 'EXPIRED', 'REJECTED'))
 		 ORDER BY next_attempt_at
 		 LIMIT $1
 		   FOR UPDATE SKIP LOCKED`, limit)
@@ -316,6 +316,23 @@ func (r *Repo) Ack(ctx context.Context, bookingID string, ownerID int64) (int64,
 		   AND f.owner_id = $2
 		   AND n.recipient_role = 'OWNER'
 		   AND n.status IN ('PENDING', 'SENT')`, bookingID, ownerID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// AckDecided stops the OWNER and ADMIN retries for a booking that has been
+// confirmed or rejected. No ownership join: the caller is the decide path,
+// which has already checked that the actor owns the venue or is an admin.
+func (r *Repo) AckDecided(ctx context.Context, bookingID string) (int64, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE notifications
+		   SET status = 'ACKED', acked_at = CURRENT_TIMESTAMP,
+		       next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP
+		 WHERE booking_id = $1
+		   AND recipient_role IN ('OWNER', 'ADMIN')
+		   AND status IN ('PENDING', 'SENT')`, bookingID)
 	if err != nil {
 		return 0, err
 	}

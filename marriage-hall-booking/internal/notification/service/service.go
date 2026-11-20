@@ -345,6 +345,12 @@ func (s *Service) Ack(ctx context.Context, bookingID string, ownerID int64) (int
 	return s.repo.Ack(ctx, bookingID, ownerID)
 }
 
+// AckDecided stops the OWNER and ADMIN retries for a booking the venue has
+// confirmed or rejected - the decision is the acknowledgement.
+func (s *Service) AckDecided(ctx context.Context, bookingID string) (int64, error) {
+	return s.repo.AckDecided(ctx, bookingID)
+}
+
 // AckAdmin is ops confirming the same, for the admin copy only. Caller must
 // already have checked ROLE_ADMIN.
 func (s *Service) AckAdmin(ctx context.Context, bookingID string) (int64, error) {

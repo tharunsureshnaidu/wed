@@ -177,6 +177,10 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, u)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Users retrieved successfully", httpx.NewPaged(out, page, size, total))
 }
 
@@ -368,6 +372,11 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusNotFound, "User not found", "USER_NOT_FOUND")
 		return
 	}
+	// Closing an account ends the sessions already open, as blocking does.
+	// Refresh is refused by the status itself; the access token needs this.
+	if req.Status != nil && (*req.Status == "SUSPENDED" || *req.Status == "INACTIVE") {
+		middleware.RevokeAccessTokens(r.Context(), id)
+	}
 	response.OK(w, "User updated successfully", nil)
 }
 
@@ -403,6 +412,7 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	middleware.RevokeAccessTokens(r.Context(), id)
 	response.OK(w, "User deleted successfully", nil)
 }
 
@@ -565,6 +575,10 @@ func (h *Handler) listVendors(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, v)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Vendors retrieved successfully", httpx.NewPaged(out, page, size, total))
 }
 
@@ -636,11 +650,12 @@ func (h *Handler) setKyc(w http.ResponseWriter, r *http.Request, status, reason 
 func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
 	page, size := httpx.Page(r)
 	rows, err := h.db.Query(r.Context(),
-		`SELECT id, name, type, status, owner_id, COALESCE(city,'')
-		 FROM facilities WHERE is_deleted = FALSE
-		   AND ($1 = '' OR type = $1)
-		   AND ($2 = '' OR name ILIKE '%'||$2||'%')
-		 ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+		`SELECT f.id, f.name, f.type, f.status, f.owner_id, COALESCE(f.city,''), count(*) OVER (),
+		        (SELECT url FROM facility_images WHERE facility_id = f.id ORDER BY is_cover DESC, sort_order ASC, created_at ASC LIMIT 1)
+		 FROM facilities f WHERE f.is_deleted = FALSE
+		   AND ($1 = '' OR f.type = $1)
+		   AND ($2 = '' OR f.name ILIKE '%'||$2||'%')
+		 ORDER BY f.created_at DESC LIMIT $3 OFFSET $4`,
 		r.URL.Query().Get("type"), r.URL.Query().Get("search"), size, httpx.Offset(page, size))
 	if err != nil {
 		httpx.Fail(w, err)
@@ -649,24 +664,30 @@ func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type row struct {
-		ID      string `json:"id"`
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Status  string `json:"status"`
-		OwnerID int64  `json:"ownerId"`
-		City    string `json:"city"`
+		ID         string  `json:"id"`
+		Name       string  `json:"name"`
+		Type       string  `json:"type"`
+		Status     string  `json:"status"`
+		OwnerID    int64   `json:"ownerId"`
+		City       string  `json:"city"`
+		CoverImage *string `json:"coverImage"`
 	}
 	out := []row{}
+	var total int64 // the page length was reported before, so totalPages was always 1
 	for rows.Next() {
 		var f row
-		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.Status, &f.OwnerID, &f.City); err != nil {
+		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.Status, &f.OwnerID, &f.City, &total, &f.CoverImage); err != nil {
 			httpx.Fail(w, err)
 			return
 		}
 		f.Type = venuetype.API(f.Type)
 		out = append(out, f)
 	}
-	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(out, page, size, int64(len(out))))
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	response.OK(w, "Facilities retrieved successfully", httpx.NewPaged(out, page, size, total))
 }
 
 func (h *Handler) approveFacility(w http.ResponseWriter, r *http.Request) {
@@ -701,6 +722,13 @@ func (h *Handler) approveFacility(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	actor, _ := middleware.UserID(r.Context())
+	audit.Record(r.Context(), h.db, audit.Decision{
+		Actor: actor, Action: "SET_FACILITY_STATUS_" + status,
+		Entity: audit.EntityFacility, EntityID: id,
+		Status: status, IP: httpx.IP(r),
+		Extra: map[string]any{"name": name, "ownerId": ownerID},
+	})
 	h.notifyStatus(r.Context(), StatusChange{
 		Entity: "facility", EntityID: id, UserID: ownerID,
 		Status: status, Name: name,

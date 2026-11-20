@@ -416,6 +416,10 @@ func (h *Handler) properties(w http.ResponseWriter, r *http.Request) {
 		f.Type = venuetype.API(f.Type)
 		out = append(out, f)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Properties retrieved successfully", httpx.NewPaged(out, page, size, int64(len(out))))
 }
 

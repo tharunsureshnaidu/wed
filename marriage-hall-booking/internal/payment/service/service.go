@@ -8,66 +8,195 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	bookingrepo "github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/logger"
 )
 
 type Service struct {
 	db       *pgxpool.Pool
 	books    *bookingrepo.Repo
 	secret   []byte
+	provider PaymentProvider
+	policy   Policy
 	OnPaid   func(ctx context.Context, bookingID, paymentID string, amount float64)
 	OnFailed func(ctx context.Context, bookingID, paymentID string, reason string)
 }
 
 func New(db *pgxpool.Pool, books *bookingrepo.Repo, webhookSecret string) *Service {
-	return &Service{db: db, books: books, secret: []byte(webhookSecret)}
+	return &Service{db: db, books: books, secret: []byte(webhookSecret), policy: DefaultPolicy(), provider: NewMockPaymentProvider()}
+}
+
+func (s *Service) SetCashfreeClient(provider PaymentProvider) {
+	s.provider = provider
+}
+
+func (s *Service) SetPolicy(policy Policy) {
+	s.policy = policy.normalized()
+}
+
+func (s *Service) Policy() Policy {
+	if s == nil {
+		return DefaultPolicy()
+	}
+	if s.policy.AdvancePercent == 0 && s.policy.CancellationPenaltyPercent == 0 && s.policy.BalanceDueHoursBeforeEvent == 0 && s.policy.CancellationWindowHours == 0 && s.policy.MinAdvanceAmount == 0 && s.policy.MaxAdvanceAmount == 0 {
+		return DefaultPolicy()
+	}
+	return s.policy.normalized()
+}
+
+func (s *Service) ComputeDueAmount(totalAmount, paidAmount float64) float64 {
+	if s == nil {
+		return 0
+	}
+	return s.Policy().DueForBooking(totalAmount, paidAmount)
+}
+
+func (s *Service) LoadPolicyForFacility(ctx context.Context, facilityID string) (Policy, error) {
+	if s == nil {
+		return DefaultPolicy(), nil
+	}
+	if strings.TrimSpace(facilityID) == "" {
+		return s.Policy(), nil
+	}
+
+	var (
+		advancePercent             float64
+		minAdvanceAmount           float64
+		maxAdvanceAmount           float64
+		balanceDueHoursBeforeEvent int
+		cancellationWindowHours    int
+		cancellationPenaltyPercent float64
+	)
+	query := `
+		SELECT advance_percent, min_advance_amount, max_advance_amount,
+		       balance_due_hours_before_event, cancellation_window_hours,
+		       cancellation_penalty_percent
+		  FROM payment_policies
+		 WHERE facility_id = $1 AND scope = 'VENUE'
+		 ORDER BY updated_at DESC, id DESC
+		 LIMIT 1`
+	if err := s.db.QueryRow(ctx, query, facilityID).Scan(
+		&advancePercent,
+		&minAdvanceAmount,
+		&maxAdvanceAmount,
+		&balanceDueHoursBeforeEvent,
+		&cancellationWindowHours,
+		&cancellationPenaltyPercent,
+	); err == nil {
+		return Policy{
+			AdvancePercent:             advancePercent,
+			MinAdvanceAmount:           minAdvanceAmount,
+			MaxAdvanceAmount:           maxAdvanceAmount,
+			BalanceDueHoursBeforeEvent: balanceDueHoursBeforeEvent,
+			CancellationWindowHours:    cancellationWindowHours,
+			CancellationPenaltyPercent: cancellationPenaltyPercent,
+		}.normalized(), nil
+	}
+
+	if err := s.db.QueryRow(ctx, `
+		SELECT advance_percent, min_advance_amount, max_advance_amount,
+		       balance_due_hours_before_event, cancellation_window_hours,
+		       cancellation_penalty_percent
+		  FROM payment_policies
+		 WHERE scope = 'MARKETPLACE' AND facility_id IS NULL
+		 ORDER BY updated_at DESC, id DESC
+		 LIMIT 1`,
+	).Scan(&advancePercent,
+		&minAdvanceAmount,
+		&maxAdvanceAmount,
+		&balanceDueHoursBeforeEvent,
+		&cancellationWindowHours,
+		&cancellationPenaltyPercent,
+	); err == nil {
+		return Policy{
+			AdvancePercent:             advancePercent,
+			MinAdvanceAmount:           minAdvanceAmount,
+			MaxAdvanceAmount:           maxAdvanceAmount,
+			BalanceDueHoursBeforeEvent: balanceDueHoursBeforeEvent,
+			CancellationWindowHours:    cancellationWindowHours,
+			CancellationPenaltyPercent: cancellationPenaltyPercent,
+		}.normalized(), nil
+	}
+
+	return s.Policy(), nil
+}
+
+func (s *Service) LoadPolicyForBooking(ctx context.Context, bookingID string) (Policy, error) {
+	if s == nil {
+		return DefaultPolicy(), nil
+	}
+	if strings.TrimSpace(bookingID) == "" {
+		return s.Policy(), nil
+	}
+	var facilityID string
+	if err := s.db.QueryRow(ctx, `SELECT target_id FROM bookings WHERE id = $1 AND is_deleted = FALSE`, bookingID).Scan(&facilityID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return s.Policy(), nil
+		}
+		return DefaultPolicy(), err
+	}
+	return s.LoadPolicyForFacility(ctx, facilityID)
 }
 
 type Payment struct {
-	ID             string    `json:"id"`
-	BookingID      string    `json:"bookingId"`
-	UserID         int64     `json:"userId"`
-	Amount         float64   `json:"amount"`
-	Currency       string    `json:"currency"`
-	Status         string    `json:"status"`
-	Gateway        string    `json:"gateway"`
-	GatewayOrderID *string   `json:"gatewayOrderId"`
-	PaymentType    string    `json:"paymentType"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID               string    `json:"id"`
+	BookingID        string    `json:"bookingId"`
+	UserID           int64     `json:"userId"`
+	Amount           float64   `json:"amount"`
+	Currency         string    `json:"currency"`
+	Status           string    `json:"status"`
+	Gateway          string    `json:"gateway"`
+	GatewayOrderID   *string   `json:"gatewayOrderId"`
+	GatewayPaymentID *string   `json:"gatewayPaymentId,omitempty"`
+	PaymentType      string    `json:"paymentType"`
+	CheckoutURL      string    `json:"checkoutUrl,omitempty"`
+	PaymentSessionID string    `json:"paymentSessionId,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
 }
 
 // Create opens a payment against a booking. The amount is the booking's own
 // outstanding balance - never a number supplied by the caller.
+//
+// One open order per booking: a double-tap or a second device gets the same
+// PENDING order back. Two orders each for the full balance could both be paid,
+// charging the customer twice. The booking row lock serialises the check.
 func (s *Service) Create(ctx context.Context, userID int64, bookingID string) (*Payment, error) {
-	var (
-		ownerID     int64
-		total, paid float64
-		status      string
-	)
-	err := s.db.QueryRow(ctx,
-		`SELECT user_id, total_amount, COALESCE(paid_amount,0), status
-		 FROM bookings WHERE id = $1 AND is_deleted = FALSE`, bookingID).
-		Scan(&ownerID, &total, &paid, &status)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, apperr.BadRequest("BOOKING_NOT_FOUND", "Booking not found")
-	}
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		ownerID       int64
+		total, paid   float64
+		status        string
+		customerEmail *string
+		customerPhone *string
+	)
+	if err := tx.QueryRow(ctx,
+		`SELECT b.user_id, b.total_amount, COALESCE(b.paid_amount,0), b.status,
+		        u.email, u.phone_number
+		   FROM bookings b
+		   JOIN users u ON u.id = b.user_id
+		  WHERE b.id = $1 AND b.is_deleted = FALSE FOR UPDATE OF b`, bookingID,
+	).Scan(&ownerID, &total, &paid, &status, &customerEmail, &customerPhone); errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.BadRequest("BOOKING_NOT_FOUND", "Booking not found")
+	} else if err != nil {
 		return nil, err
 	}
 	if ownerID != userID {
 		return nil, apperr.Forbidden("NOT_BOOKING_OWNER", "You cannot pay for this booking")
 	}
-	// CONFIRMED is payable as well as PENDING. A venue owner can accept a
-	// booking before the money arrives - that is what confirmation means here,
-	// and the balance is usually paid afterwards. Refusing payment on a
-	// confirmed booking would leave it owing money it could never settle.
 	if status != "PENDING" && status != "CONFIRMED" {
 		return nil, apperr.Conflict("INVALID_STATE", "Booking is not awaiting payment")
 	}
@@ -76,24 +205,91 @@ func (s *Service) Create(ctx context.Context, userID int64, bookingID string) (*
 		return nil, apperr.Conflict("ALREADY_PAID", "Booking is already paid")
 	}
 
-	// Derived, never taken from the caller: the charge is always the outstanding
-	// balance, so anything already paid makes this the closing BALANCE payment.
+	policy, err := s.LoadPolicyForBooking(ctx, bookingID)
+	if err != nil {
+		logger.Warn("payment: policy lookup failed, using default policy", "bookingId", bookingID, "err", err)
+		policy = DefaultPolicy()
+	}
+	if paid <= 0 {
+		due = policy.DueForBooking(total, 0)
+	} else {
+		due = policy.RemainingBalance(total, paid)
+	}
+	if due <= 0 {
+		return nil, apperr.Conflict("ALREADY_PAID", "Booking is already paid")
+	}
+
 	payType := "FULL"
 	if paid > 0 {
 		payType = "BALANCE"
+	} else if policy.AdvancePercent > 0 && policy.AdvancePercent < 100 {
+		payType = "ADVANCE"
 	}
 
-	orderID := "order_" + randHex(12)
+	const ret = ` id, booking_id, user_id, amount, currency, status, gateway,
+		           gateway_order_id, gateway_payment_id, payment_type, checkout_url, payment_session_id, created_at`
 	var p Payment
-	err = s.db.QueryRow(ctx,
-		`INSERT INTO payments (booking_id, user_id, amount, gateway, gateway_order_id, payment_type)
-		 VALUES ($1, $2, $3, 'MOCK', $4, $5)
-		 RETURNING id, booking_id, user_id, amount, currency, status, gateway,
-		           gateway_order_id, payment_type, created_at`,
-		bookingID, userID, due, orderID, payType).
-		Scan(&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
-			&p.Gateway, &p.GatewayOrderID, &p.PaymentType, &p.CreatedAt)
-	if err != nil {
+	dest := []any{&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
+		&p.Gateway, &p.GatewayOrderID, &p.GatewayPaymentID, &p.PaymentType, &p.CheckoutURL,
+		&p.PaymentSessionID, &p.CreatedAt}
+
+	if err := tx.QueryRow(ctx,
+		`SELECT `+ret+` FROM payments WHERE booking_id = $1 AND status = 'PENDING' ORDER BY created_at DESC LIMIT 1`, bookingID,
+	).Scan(dest...); err == nil {
+		if strings.TrimSpace(p.PaymentSessionID) != "" {
+			return &p, tx.Commit(ctx)
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	gateway := "MOCK"
+	gatewayOrderID := "order_" + randHex(12)
+	checkoutURL := ""
+	paymentSessionID := ""
+	if s.provider != nil {
+		providerOrder, err := s.provider.CreateOrder(ctx, bookingID, userID, due, "INR",
+			func() string {
+				if customerEmail == nil {
+					return ""
+				}
+				return *customerEmail
+			}(),
+			func() string {
+				if customerPhone == nil {
+					return ""
+				}
+				return *customerPhone
+			}())
+		if err != nil {
+			return nil, err
+		}
+		gateway = "CASHFREE"
+		if _, isMock := s.provider.(*MockPaymentProvider); isMock {
+			gateway = "MOCK"
+		}
+		gatewayOrderID = providerOrder.OrderID
+		checkoutURL = providerOrder.CheckoutURL
+		paymentSessionID = providerOrder.SessionID
+	}
+
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO payments (booking_id, user_id, amount, currency, gateway, gateway_order_id, payment_type, checkout_url, payment_session_id)
+		 VALUES ($1, $2, $3, 'INR', $4, $5, $6, $7, $8)
+		 RETURNING `+ret,
+		bookingID, userID, due, gateway, gatewayOrderID, payType, checkoutURL, paymentSessionID,
+	).Scan(dest...); err != nil {
+		return nil, err
+	}
+
+	p.Gateway = gateway
+	p.GatewayOrderID = &gatewayOrderID
+	p.PaymentType = payType
+	p.Currency = "INR"
+	p.Amount = due
+	p.CheckoutURL = checkoutURL
+	p.PaymentSessionID = paymentSessionID
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -103,19 +299,32 @@ type WebhookPayload struct {
 	EventID   string  `json:"eventId"`
 	OrderID   string  `json:"orderId"`
 	PaymentID string  `json:"paymentId"`
-	Status    string  `json:"status"` // SUCCESS or FAILED
+	Status    string  `json:"status"`
 	Amount    float64 `json:"amount"`
 	Reason    string  `json:"reason"`
 }
 
-// VerifySignature checks the HMAC the gateway sends. Without this anyone who
-// can reach the webhook URL could mark any booking paid.
+// VerifySignature checks the raw callback against the configured provider.
 func (s *Service) VerifySignature(body []byte, signature string) bool {
+	return s.VerifySignatureWithTimestamp(body, signature, "")
+}
+
+func (s *Service) VerifySignatureWithTimestamp(body []byte, signature, timestamp string) bool {
+	if s == nil {
+		return false
+	}
+	if s.provider != nil {
+		if provider, ok := s.provider.(interface {
+			VerifyWebhook(body []byte, signature, timestamp string) bool
+		}); ok {
+			return provider.VerifyWebhook(body, signature, timestamp)
+		}
+	}
 	if len(s.secret) == 0 {
 		return false
 	}
 	m := hmac.New(sha256.New, s.secret)
-	m.Write(body)
+	_, _ = m.Write(body)
 	want := hex.EncodeToString(m.Sum(nil))
 	return hmac.Equal([]byte(want), []byte(signature))
 }
@@ -125,21 +334,14 @@ func (s *Service) VerifySignature(body []byte, signature string) bool {
 // The UNIQUE event_id insert is the idempotency guard: a gateway that retries a
 // delivery (they all do) hits a duplicate key and the event is ignored rather
 // than crediting the booking twice.
+//
+// The insert is inside the transaction that applies the payment. Committed on
+// its own first, a transient failure later on rolled the work back but kept the
+// event row, so the gateway's retry was told "already processed" - the money
+// taken, the booking never credited.
 func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayload) error {
 	if p.EventID == "" || p.OrderID == "" {
 		return apperr.BadRequest("INVALID_WEBHOOK", "eventId and orderId are required")
-	}
-
-	payload, _ := json.Marshal(p)
-	_, err := s.db.Exec(ctx,
-		`INSERT INTO payment_webhook_events (event_id, payload) VALUES ($1, $2)`,
-		p.EventID, payload)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil // already processed; replay is a no-op
-		}
-		return err
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -148,21 +350,31 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 	}
 	defer tx.Rollback(ctx)
 
-	// FOR UPDATE so two concurrent deliveries for the same order serialise.
-	var paymentID, bookingID, status string
-	var amount float64
-	err = tx.QueryRow(ctx,
-		`SELECT id, booking_id, status, amount FROM payments
-		 WHERE gateway_order_id = $1 FOR UPDATE`, p.OrderID).
-		Scan(&paymentID, &bookingID, &status, &amount)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return apperr.BadRequest("UNKNOWN_ORDER", "Unknown order")
-	}
+	payload, _ := json.Marshal(p)
+	tag, err := tx.Exec(ctx,
+		`INSERT INTO payment_webhook_events (event_id, payload) VALUES ($1, $2)
+		 ON CONFLICT (event_id) DO NOTHING`, p.EventID, payload)
 	if err != nil {
 		return err
 	}
+	if tag.RowsAffected() == 0 {
+		return nil
+	}
+
+	var paymentID, bookingID, status string
+	var amount float64
+	if err := tx.QueryRow(ctx,
+		`SELECT id, booking_id, status, amount FROM payments
+		 WHERE gateway_order_id = $1 FOR UPDATE`, p.OrderID,
+	).Scan(&paymentID, &bookingID, &status, &amount); errors.Is(err, pgx.ErrNoRows) {
+		// Acknowledge Cashfree dashboard test pings or foreign order events gracefully with 200 OK
+		logger.Info("payment webhook: order not found in database (dashboard test ping or foreign order acknowledged)", "orderId", p.OrderID)
+		return nil
+	} else if err != nil {
+		return err
+	}
 	if status != "PENDING" {
-		return nil // terminal already
+		return nil
 	}
 
 	switch p.Status {
@@ -172,24 +384,31 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 			    updated_at = CURRENT_TIMESTAMP WHERE id = $1`, paymentID, p.PaymentID); err != nil {
 			return err
 		}
-		// Captured before the update: once the row is written the previous
-		// status is gone, and the history row would have to guess at it.
 		var wasStatus string
+		var total, paid float64
 		if err := tx.QueryRow(ctx,
-			`SELECT status FROM bookings WHERE id = $1`, bookingID).Scan(&wasStatus); err != nil {
+			`SELECT status, total_amount, COALESCE(paid_amount,0) FROM bookings WHERE id = $1 FOR UPDATE`,
+			bookingID,
+		).Scan(&wasStatus, &total, &paid); err != nil {
 			return err
+		}
+		if paid+amount > total {
+			logger.Warn("payment: overpayment", "bookingId", bookingID, "paymentId", paymentID,
+				"total", total, "paidBefore", paid, "amount", amount)
+		}
+		live := wasStatus == "PENDING" || wasStatus == "CONFIRMED"
+		if !live {
+			logger.Error("payment: received for a booking that has ended - refund due",
+				"bookingId", bookingID, "paymentId", paymentID, "status", wasStatus, "amount", amount)
 		}
 		if _, err := tx.Exec(ctx,
 			`UPDATE bookings SET paid_amount = paid_amount + $2,
-			    status = CASE WHEN paid_amount + $2 >= total_amount THEN 'CONFIRMED' ELSE status END,
-			    expires_at = CASE WHEN paid_amount + $2 >= total_amount THEN NULL ELSE expires_at END,
+			    status = CASE WHEN $3 AND paid_amount + $2 >= total_amount THEN 'CONFIRMED' ELSE status END,
+			    expires_at = CASE WHEN $3 AND paid_amount + $2 >= total_amount THEN NULL ELSE expires_at END,
 			    updated_at = CURRENT_TIMESTAMP
-			 WHERE id = $1`, bookingID, amount); err != nil {
+			 WHERE id = $1`, bookingID, amount, live); err != nil {
 			return err
 		}
-		// The real previous status, not a hardcoded PENDING: an owner may have
-		// confirmed the booking before the money arrived, and a history row
-		// claiming PENDING -> CONFIRMED would be a false record.
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO booking_status_history (booking_id, from_status, to_status, reason)
 			 SELECT $1, $2, status, 'Payment received' FROM bookings WHERE id = $1`,
@@ -225,9 +444,16 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte, p WebhookPayloa
 
 // Refund issues a refund against a successful payment. The total refunded can
 // never exceed what was paid.
-func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, reason string) (string, error) {
-	if amount <= 0 {
+//
+// Only the owner of the venue the payment was for, or an admin, may refund it.
+// The route admits any ROLE_HALL_OWNER, and without this check one vendor
+// could refund every other vendor's customers.
+func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, reason string, callerID int64, isAdmin bool) (string, error) {
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
 		return "", apperr.BadRequest("INVALID_AMOUNT", "Refund amount must be positive")
+	}
+	if _, err := s.db.Exec(ctx, "SELECT 1"); err != nil {
+		return "", err
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -237,15 +463,22 @@ func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, 
 	defer tx.Rollback(ctx)
 
 	var paid float64
-	var status, bookingID string
-	err = tx.QueryRow(ctx,
-		`SELECT amount, status, booking_id FROM payments WHERE id = $1 FOR UPDATE`,
-		paymentID).Scan(&paid, &status, &bookingID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	var status, bookingID, gateway, gatewayOrderID string
+	var venueOwner int64
+	if err := tx.QueryRow(ctx,
+		`SELECT p.amount, p.status, p.booking_id, f.owner_id, p.gateway,
+		        COALESCE(p.gateway_order_id,'')
+		   FROM payments p
+		   JOIN bookings b ON b.id = p.booking_id
+		   JOIN facilities f ON f.id = b.target_id
+		  WHERE p.id = $1 FOR UPDATE OF p`, paymentID,
+	).Scan(&paid, &status, &bookingID, &venueOwner, &gateway, &gatewayOrderID); errors.Is(err, pgx.ErrNoRows) {
 		return "", apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
-	}
-	if err != nil {
+	} else if err != nil {
 		return "", err
+	}
+	if !isAdmin && venueOwner != callerID {
+		return "", apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
 	}
 	if status != "SUCCESS" && status != "PARTIALLY_REFUNDED" {
 		return "", apperr.Conflict("INVALID_STATE", "Only a successful payment can be refunded")
@@ -253,46 +486,234 @@ func (s *Service) Refund(ctx context.Context, paymentID string, amount float64, 
 
 	var alreadyRefunded float64
 	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(sum(amount),0) FROM refunds
-		 WHERE payment_id = $1 AND status <> 'FAILED'`, paymentID).Scan(&alreadyRefunded); err != nil {
+		`SELECT COALESCE(sum(amount),0) FROM refunds WHERE payment_id = $1 AND status <> 'FAILED'`, paymentID,
+	).Scan(&alreadyRefunded); err != nil {
 		return "", err
 	}
 	if alreadyRefunded+amount > paid {
-		return "", apperr.BadRequest("REFUND_EXCEEDS_PAYMENT",
-			"Refund would exceed the amount paid")
+		return "", apperr.BadRequest("REFUND_EXCEEDS_PAYMENT", "Refund would exceed the amount paid")
+	}
+
+	merchantRefundID := "rfnd_" + randHex(12)
+	gatewayRefundID := merchantRefundID
+	gatewayRefundStatus := "SUCCESS"
+	if s.provider != nil && gateway == "CASHFREE" {
+		providerRefund, err := s.provider.Refund(ctx, gatewayOrderID, merchantRefundID, amount, "INR", reason)
+		if err != nil {
+			return "", err
+		}
+		if providerRefund != nil {
+			if strings.TrimSpace(providerRefund.RefundID) != "" {
+				gatewayRefundID = providerRefund.RefundID
+			}
+			switch strings.ToUpper(providerRefund.Status) {
+			case "SUCCESS":
+				gatewayRefundStatus = "SUCCESS"
+			case "FAILED", "CANCELLED":
+				gatewayRefundStatus = "FAILED"
+			default:
+				gatewayRefundStatus = "PENDING"
+			}
+		}
 	}
 
 	var refundID string
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO refunds (payment_id, amount, reason, status, gateway_refund_id)
-		 VALUES ($1, $2, $3, 'SUCCESS', $4) RETURNING id`,
-		paymentID, amount, reason, "rfnd_"+randHex(10)).Scan(&refundID); err != nil {
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		paymentID, amount, reason, gatewayRefundStatus, gatewayRefundID,
+	).Scan(&refundID); err != nil {
 		return "", err
 	}
 
-	newStatus := "PARTIALLY_REFUNDED"
-	if alreadyRefunded+amount >= paid {
-		newStatus = "REFUNDED"
+	if gatewayRefundStatus == "SUCCESS" {
+		newStatus := "PARTIALLY_REFUNDED"
+		if alreadyRefunded+amount >= paid {
+			newStatus = "REFUNDED"
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE payments SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, paymentID, newStatus); err != nil {
+			return "", err
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE bookings SET paid_amount = GREATEST(paid_amount - $2, 0), updated_at = CURRENT_TIMESTAMP WHERE id = $1`, bookingID, amount); err != nil {
+			return "", err
+		}
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE payments SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		paymentID, newStatus); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE bookings SET paid_amount = GREATEST(paid_amount - $2, 0),
-		    updated_at = CURRENT_TIMESTAMP WHERE id = $1`, bookingID, amount); err != nil {
-		return "", err
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
 	return refundID, nil
 }
 
+func (s *Service) UpsertPolicy(ctx context.Context, scope, facilityID string, policy Policy) (Policy, error) {
+	if s == nil {
+		return DefaultPolicy(), nil
+	}
+	p := policy.normalized()
+	if strings.TrimSpace(scope) == "" {
+		scope = "MARKETPLACE"
+	}
+
+	var rowID string
+	if scope == "VENUE" {
+		if strings.TrimSpace(facilityID) == "" {
+			return DefaultPolicy(), apperr.BadRequest("INVALID_POLICY", "facilityId is required for venue policy")
+		}
+		if err := s.db.QueryRow(ctx, `
+			INSERT INTO payment_policies (scope, facility_id, advance_percent, min_advance_amount, max_advance_amount,
+				balance_due_hours_before_event, cancellation_window_hours, cancellation_penalty_percent, is_active, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, CURRENT_TIMESTAMP)
+			ON CONFLICT (scope, facility_id) DO UPDATE SET
+				advance_percent = EXCLUDED.advance_percent,
+				min_advance_amount = EXCLUDED.min_advance_amount,
+				max_advance_amount = EXCLUDED.max_advance_amount,
+				balance_due_hours_before_event = EXCLUDED.balance_due_hours_before_event,
+				cancellation_window_hours = EXCLUDED.cancellation_window_hours,
+				cancellation_penalty_percent = EXCLUDED.cancellation_penalty_percent,
+				updated_at = CURRENT_TIMESTAMP,
+				is_active = TRUE
+			RETURNING id::text`,
+			scope, facilityID, p.AdvancePercent, p.MinAdvanceAmount, p.MaxAdvanceAmount,
+			p.BalanceDueHoursBeforeEvent, p.CancellationWindowHours, p.CancellationPenaltyPercent,
+		).Scan(&rowID); err != nil {
+			return DefaultPolicy(), err
+		}
+	} else {
+		if err := s.db.QueryRow(ctx, `
+			INSERT INTO payment_policies (scope, facility_id, advance_percent, min_advance_amount, max_advance_amount,
+				balance_due_hours_before_event, cancellation_window_hours, cancellation_penalty_percent, is_active, updated_at)
+			VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, TRUE, CURRENT_TIMESTAMP)
+			ON CONFLICT (scope, facility_id) DO UPDATE SET
+				advance_percent = EXCLUDED.advance_percent,
+				min_advance_amount = EXCLUDED.min_advance_amount,
+				max_advance_amount = EXCLUDED.max_advance_amount,
+				balance_due_hours_before_event = EXCLUDED.balance_due_hours_before_event,
+				cancellation_window_hours = EXCLUDED.cancellation_window_hours,
+				cancellation_penalty_percent = EXCLUDED.cancellation_penalty_percent,
+				updated_at = CURRENT_TIMESTAMP,
+				is_active = TRUE
+			RETURNING id::text`,
+			scope, p.AdvancePercent, p.MinAdvanceAmount, p.MaxAdvanceAmount,
+			p.BalanceDueHoursBeforeEvent, p.CancellationWindowHours, p.CancellationPenaltyPercent,
+		).Scan(&rowID); err != nil {
+			return DefaultPolicy(), err
+		}
+	}
+	_ = rowID
+	return p, nil
+}
+
+func (s *Service) ResolvePolicy(ctx context.Context, facilityID string) (Policy, error) {
+	if s == nil {
+		return DefaultPolicy(), nil
+	}
+	if strings.TrimSpace(facilityID) == "" {
+		return s.Policy(), nil
+	}
+	return s.LoadPolicyForFacility(ctx, facilityID)
+}
+
+func (s *Service) Pool() *pgxpool.Pool {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
 func randHex(n int) string {
 	b := make([]byte, n)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return hex.EncodeToString([]byte(time.Now().String()))
+	}
 	return hex.EncodeToString(b)
+}
+
+// ListForUser returns the caller's payment history.
+func (s *Service) ListForUser(ctx context.Context, userID int64) ([]Payment, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, booking_id, user_id, amount, currency, status, gateway,
+		       gateway_order_id, gateway_payment_id, payment_type,
+		       COALESCE(checkout_url,''), COALESCE(payment_session_id,''), created_at
+		  FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Payment
+	for rows.Next() {
+		var p Payment
+		if err := rows.Scan(&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
+			&p.Gateway, &p.GatewayOrderID, &p.GatewayPaymentID, &p.PaymentType,
+			&p.CheckoutURL, &p.PaymentSessionID, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetForUser returns one payment only to its owner or an administrator.
+func (s *Service) GetForUser(ctx context.Context, paymentID string, userID int64, isAdmin bool) (*Payment, error) {
+	var p Payment
+	query := `SELECT id, booking_id, user_id, amount, currency, status, gateway,
+	                 gateway_order_id, gateway_payment_id, payment_type,
+	                 COALESCE(checkout_url,''), COALESCE(payment_session_id,''), created_at
+	            FROM payments WHERE id = $1`
+	if !isAdmin {
+		query += ` AND user_id = $2`
+		if err := s.db.QueryRow(ctx, query, paymentID, userID).Scan(
+			&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
+			&p.Gateway, &p.GatewayOrderID, &p.GatewayPaymentID, &p.PaymentType,
+			&p.CheckoutURL, &p.PaymentSessionID, &p.CreatedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
+			}
+			return nil, err
+		}
+	} else if err := s.db.QueryRow(ctx, query, paymentID).Scan(
+		&p.ID, &p.BookingID, &p.UserID, &p.Amount, &p.Currency, &p.Status,
+		&p.Gateway, &p.GatewayOrderID, &p.GatewayPaymentID, &p.PaymentType,
+		&p.CheckoutURL, &p.PaymentSessionID, &p.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.BadRequest("PAYMENT_NOT_FOUND", "Payment not found")
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+// Sync asks the provider for the authoritative order status. This supplements,
+// and never replaces, signed webhook delivery.
+func (s *Service) Sync(ctx context.Context, paymentID string, userID int64, isAdmin bool) (*Payment, error) {
+	p, err := s.GetForUser(ctx, paymentID, userID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if p.Status != "PENDING" || s.provider == nil || p.GatewayOrderID == nil {
+		return p, nil
+	}
+	status, err := s.provider.GetOrderStatus(ctx, *p.GatewayOrderID)
+	if err != nil {
+		return nil, err
+	}
+	switch strings.ToUpper(status.Status) {
+	case "PAID", "SUCCESS", "COMPLETED":
+		eventID := fmt.Sprintf("sync:%s:SUCCESS", paymentID)
+		if err := s.HandleWebhook(ctx, nil, WebhookPayload{
+			EventID: eventID, OrderID: *p.GatewayOrderID,
+			PaymentID: "sync:" + paymentID, Status: "SUCCESS", Amount: p.Amount,
+		}); err != nil {
+			return nil, err
+		}
+	case "FAILED", "CANCELLED", "EXPIRED", "USER_DROPPED":
+		eventID := fmt.Sprintf("sync:%s:FAILED", paymentID)
+		if err := s.HandleWebhook(ctx, nil, WebhookPayload{
+			EventID: eventID, OrderID: *p.GatewayOrderID,
+			PaymentID: "sync:" + paymentID, Status: "FAILED", Reason: status.Status,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return s.GetForUser(ctx, paymentID, userID, isAdmin)
 }

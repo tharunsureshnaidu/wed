@@ -103,8 +103,8 @@ LOG_LEVEL=debug ./bin/api >> logs/app.log 2>&1 &
 ## Reading a line
 
 ```
-21:57:54 WARN  api  request rejected  id=2ddd7583  method=GET  path=/api/v1/auth/me  status=401  took=0s
-└ time   └ level └ component          └ fields
+2026-09-12 21:57:54 WARN  api  request rejected  id=2ddd7583  method=GET  path=/api/v1/auth/me  status=401  took=0s
+└ date + time       └ level └ component          └ fields
 ```
 
 `id` is also returned to the caller as the `X-Request-Id` header, so a response
@@ -125,6 +125,8 @@ For a log shipper, set `LOG_FORMAT=json` in `.env`:
 {"time":"2026-09-12T21:58:35+05:30","level":"WARN","msg":"request rejected",
  "component":"api","id":"b141654f","method":"GET","path":"/api/v1/auth/me","status":401}
 ```
+
+With `APP_ENV=production` JSON is the default; `LOG_FORMAT=text` overrides it.
 
 ## Infrastructure logs
 

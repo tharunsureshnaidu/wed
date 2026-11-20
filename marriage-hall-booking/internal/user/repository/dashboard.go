@@ -236,7 +236,7 @@ func (r *Repo) recommended(ctx context.Context, userID int64, lat, lng *float64,
 		                                       ll_to_earth(me.lat, me.lng)) / 1000.0)::numeric, 2)
 		       END
 		  FROM facilities f CROSS JOIN me
-		 WHERE f.is_deleted = FALSE AND f.status = 'APPROVED'
+		 WHERE `+venuetype.LiveSQL("f")+`
 		   AND f.type = 'MARRIAGE_HALL'
 		 ORDER BY
 		   CASE WHEN me.lat IS NOT NULL AND f.lat IS NOT NULL
