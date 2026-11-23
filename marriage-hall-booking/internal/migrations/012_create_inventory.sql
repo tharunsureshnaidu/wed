@@ -38,7 +38,7 @@ CREATE TABLE hall_availability (
     facility_id UUID NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
     date DATE NOT NULL,
     slot_type VARCHAR(20) NOT NULL DEFAULT 'FULL_DAY'
-        CHECK (slot_type IN ('MORNING', 'EVENING', 'FULL_DAY')),
+        CHECK (slot_type IN ('MORNING', 'EVENING', 'FULL_DAY', 'HOURLY')),
     status VARCHAR(20) NOT NULL DEFAULT 'AVAILABLE'
         CHECK (status IN ('AVAILABLE', 'BOOKED', 'BLOCKED')),
     booking_id UUID,

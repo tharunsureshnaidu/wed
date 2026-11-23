@@ -89,6 +89,36 @@ func TestVenueReqWithOptionalKeysProvided(t *testing.T) {
 	}
 }
 
+func TestVenueReqWithHourlySlotType(t *testing.T) {
+	rawJSON := `{
+		"hotelId": "afbfccb6-c5a7-44af-8b92-fcd068281258",
+		"startDate": "2027-12-22",
+		"endDate": "2027-12-22",
+		"startTime": "14:00",
+		"endTime": "16:00",
+		"slotType": "HOURLY",
+		"roomCount": 1,
+		"guestCount": 2,
+		"couponCode": "DIWALI200",
+		"idempotentKey": "hourly-booking-user1-20261215-8"
+	}`
+
+	var req venueReq
+	if err := json.Unmarshal([]byte(rawJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if req.HotelID != "afbfccb6-c5a7-44af-8b92-fcd068281258" {
+		t.Errorf("want hotelId, got %q", req.HotelID)
+	}
+	if req.SlotType != "HOURLY" {
+		t.Errorf("want slotType HOURLY, got %q", req.SlotType)
+	}
+	if req.StartTime != "14:00" || req.EndTime != "16:00" {
+		t.Errorf("unexpected times: %s - %s", req.StartTime, req.EndTime)
+	}
+}
+
 func TestRoutesRegistered(t *testing.T) {
 	h := &Handler{}
 	mux := http.NewServeMux()
