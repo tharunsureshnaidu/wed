@@ -283,6 +283,7 @@ type VenueResponse struct {
 	Policies                []Policy               `json:"policies"`
 	Faqs                    []FAQ                  `json:"faqs"`
 	Reviews                 []Review               `json:"reviews"`
+	HourlyBooking           *HourlyBookingConfig   `json:"hourlyBooking,omitempty"`
 }
 
 func (f Facility) ToVenueResponse() VenueResponse {
@@ -353,6 +354,7 @@ func (f Facility) ToVenueResponse() VenueResponse {
 		Policies:                policies,
 		Faqs:                    faqs,
 		Reviews:                 reviews,
+		HourlyBooking:           f.HourlyBooking,
 	}
 }
 

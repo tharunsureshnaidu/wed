@@ -279,4 +279,78 @@ func TestVenueResponseCoverImageScenarios(t *testing.T) {
 			t.Errorf("expected json coverImage null, got %v (exists=%v)", val, exists)
 		}
 	})
+
+	t.Run("Includes HourlyBooking When Configured", func(t *testing.T) {
+		f := Facility{
+			ID:   "hotel-hb-1",
+			Name: "OYO Grand Royal Hotel",
+			Type: "HOTEL",
+			HourlyBooking: &HourlyBookingConfig{
+				Enabled: true,
+				Options: []HourlyBookingOption{
+					{ID: "opt-1", Hours: 2, DurationHours: 2, Price: 800},
+					{ID: "opt-2", Hours: 4, DurationHours: 4, Price: 1400},
+					{ID: "opt-3", Hours: 6, DurationHours: 6, Price: 1900},
+				},
+			},
+		}
+
+		resp := f.ToVenueResponse()
+		if resp.HourlyBooking == nil || !resp.HourlyBooking.Enabled {
+			t.Fatalf("expected HourlyBooking enabled on VenueResponse, got %+v", resp.HourlyBooking)
+		}
+		if len(resp.HourlyBooking.Options) != 3 {
+			t.Fatalf("expected 3 options on VenueResponse, got %d", len(resp.HourlyBooking.Options))
+		}
+
+		b, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatalf("failed to marshal VenueResponse: %v", err)
+		}
+
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		hbRaw, ok := m["hourlyBooking"]
+		if !ok || hbRaw == nil {
+			t.Fatalf("expected hourlyBooking in VenueResponse JSON, got: %s", string(b))
+		}
+		hbMap := hbRaw.(map[string]any)
+		if hbMap["enabled"] != true {
+			t.Errorf("expected enabled=true, got %v", hbMap["enabled"])
+		}
+		opts := hbMap["options"].([]any)
+		if len(opts) != 3 {
+			t.Fatalf("expected 3 options, got %d", len(opts))
+		}
+	})
+
+	t.Run("Omits HourlyBooking When Nil", func(t *testing.T) {
+		f := Facility{
+			ID:   "hall-no-hb",
+			Name: "Standard Wedding Hall",
+			Type: "MARRIAGE_HALL",
+		}
+
+		resp := f.ToVenueResponse()
+		if resp.HourlyBooking != nil {
+			t.Errorf("expected nil HourlyBooking, got %+v", resp.HourlyBooking)
+		}
+
+		b, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatalf("failed to marshal VenueResponse: %v", err)
+		}
+
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+
+		if _, exists := m["hourlyBooking"]; exists {
+			t.Errorf("expected hourlyBooking to be omitted when nil, got %v", m["hourlyBooking"])
+		}
+	})
 }
