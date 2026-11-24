@@ -83,15 +83,8 @@ CREATE TABLE facility_policies (
     facility_id UUID NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
     policy_type VARCHAR(30) NOT NULL,
     description TEXT NOT NULL,
-    version VARCHAR(50) NOT NULL,
+    version VARCHAR(50) DEFAULT '1.0',
     status VARCHAR(20) NOT NULL DEFAULT 'INACTIVE' CHECK (status IN ('ACTIVE','INACTIVE')),
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-)
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    facility_id UUID NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
-    policy_type VARCHAR(30) NOT NULL,
-    description TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
 )
 
 // PaymentProvider is the provider contract used by the booking payment flow.
@@ -174,7 +176,12 @@ func (c *CashfreeClient) CreateOrder(ctx context.Context, bookingID string, user
 		return nil, err
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("cashfree: %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		cleanBody := strings.TrimSpace(string(respBody))
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, apperr.BadGateway("PAYMENT_GATEWAY_AUTH_FAILED",
+				"Cashfree authentication failed: please ensure your CASHFREE_CLIENT_ID and CASHFREE_CLIENT_SECRET in .env are generated from Payment Gateway (PG), not Secure ID")
+		}
+		return nil, apperr.BadGateway("PAYMENT_GATEWAY_ERROR", fmt.Sprintf("Cashfree error (%d): %s", resp.StatusCode, cleanBody))
 	}
 
 	var result struct {
