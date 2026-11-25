@@ -76,7 +76,7 @@ func TestHotelBookingRejectsMoreThanTwoCoupons(t *testing.T) {
 	}
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest("POST", "/api/v1/bookings/hotels", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/v1/bookings", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+customerToken)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()

@@ -45,14 +45,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// Search is public; the caller's identity is used only to personalise
 	// recent/recently-viewed, and is optional everywhere.
 	mux.HandleFunc("GET /api/v1/search/venues", h.searchVenues)
-	mux.HandleFunc("GET /api/v1/search/autocomplete", h.autocomplete)
-	mux.HandleFunc("GET /api/v1/search/suggestions", h.suggestions)
-	mux.HandleFunc("GET /api/v1/search/venues/{id}/similar", h.similar)
-	mux.HandleFunc("POST /api/v1/search/venues/{id}/view", h.recordView)
 	mux.HandleFunc("GET /api/v1/search/recent", h.recentSearches)
-	mux.HandleFunc("GET /api/v1/search/recently-viewed", h.recentlyViewed)
-	mux.HandleFunc("GET /api/v1/search/trending", h.trending)
-	mux.HandleFunc("GET /api/v1/search/popular-cities", h.popularCities)
 	// Clearing history is the other half of having it: a user who searched
 	// something they would rather not see again needs a way to remove it.
 	mux.HandleFunc("DELETE /api/v1/search/recent", h.clearRecentSearches)

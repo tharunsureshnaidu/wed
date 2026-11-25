@@ -63,7 +63,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/bookings/venues", customer(h.createVenue))
 	mux.Handle("POST /api/v1/bookings", customer(h.createVenue))
 	mux.Handle("POST /api/v1/bookings/halls", customer(h.createVenue))
-	mux.Handle("POST /api/v1/bookings/hotels", customer(h.createHotel))
 	mux.Handle("GET /api/v1/bookings", auth(http.HandlerFunc(h.list)))
 	mux.Handle("GET /api/v1/bookings/reference/{ref}", auth(http.HandlerFunc(h.getByReference)))
 	mux.Handle("GET /api/v1/bookings/{id}", auth(http.HandlerFunc(h.get)))
@@ -81,7 +80,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("PATCH /api/v1/bookings/{id}/status", owner(h.status))
 	mux.Handle("POST /api/v1/bookings/{id}/confirm", owner(h.confirm))
 	mux.Handle("POST /api/v1/bookings/{id}/reject", owner(h.reject))
-	h.registerQuote(mux)
 }
 
 // venueReq is the booking form the app submits (date, guests, event type,

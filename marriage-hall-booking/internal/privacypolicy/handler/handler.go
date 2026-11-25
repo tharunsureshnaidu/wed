@@ -45,16 +45,13 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	// Protected Admin APIs
 	mux.Handle("POST /api/admin/privacy-policy", admin(h.create))
-	mux.Handle("POST /api/v1/admin/privacy-policy", admin(h.create))
 
 	mux.Handle("GET /api/admin/privacy-policy", admin(h.getAll))
-	mux.Handle("GET /api/v1/admin/privacy-policy", admin(h.getAll))
 
 	mux.Handle("GET /api/admin/privacy-policy/{id}", admin(h.getByID))
 	mux.Handle("GET /api/v1/admin/privacy-policy/{id}", admin(h.getByID))
 
 	mux.Handle("PUT /api/admin/privacy-policy/{id}", admin(h.update))
-	mux.Handle("PUT /api/v1/admin/privacy-policy/{id}", admin(h.update))
 
 	mux.Handle("PATCH /api/admin/privacy-policy/{id}/activate", admin(h.activate))
 	mux.Handle("PATCH /api/v1/admin/privacy-policy/{id}/activate", admin(h.activate))
@@ -64,7 +61,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	// Public User / Mobile API — NO TOKEN REQUIRED
 	mux.HandleFunc("GET /api/privacy-policy", h.getActive)
-	mux.HandleFunc("GET /api/v1/privacy-policy", h.getActive)
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {

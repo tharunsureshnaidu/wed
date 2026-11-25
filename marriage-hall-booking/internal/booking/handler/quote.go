@@ -8,7 +8,6 @@ import (
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/booking/service"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/coupon"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
-	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/middleware"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/response"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/validate"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
@@ -338,6 +337,4 @@ func round2(v float64) float64 {
 }
 
 func (h *Handler) registerQuote(mux *http.ServeMux) {
-	auth := middleware.RequireAuth(h.signer)
-	mux.Handle("POST /api/v1/bookings/quote", auth(http.HandlerFunc(h.quote)))
 }

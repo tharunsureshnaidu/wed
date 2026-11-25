@@ -236,7 +236,7 @@ func TestAdminCreate_NonAdminForbidden(t *testing.T) {
 	mux, signer, _ := setupTest(t)
 
 	body := `{"title":"Policy","content":"<p>text</p>","version":"1.0"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/privacy-policy", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/privacy-policy", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+customerToken(t, signer))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -252,7 +252,7 @@ func TestAdminCreate_NoTokenUnauthorized(t *testing.T) {
 	mux, _, _ := setupTest(t)
 
 	body := `{"title":"Policy","content":"<p>text</p>","version":"1.0"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/privacy-policy", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/privacy-policy", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -278,7 +278,7 @@ func TestAdminFlow_Create_Get_Update_Activate(t *testing.T) {
 	body, _ := json.Marshal(createReq)
 
 	// 1. Create
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/privacy-policy", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/privacy-policy", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -316,7 +316,7 @@ func TestAdminFlow_Create_Get_Update_Activate(t *testing.T) {
 		"version": "1.1",
 	}
 	body, _ = json.Marshal(updateReq)
-	req = httptest.NewRequest(http.MethodPut, "/api/v1/admin/privacy-policy/1", bytes.NewReader(body))
+	req = httptest.NewRequest(http.MethodPut, "/api/admin/privacy-policy/1", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -337,7 +337,7 @@ func TestAdminFlow_Create_Get_Update_Activate(t *testing.T) {
 	}
 
 	// 5. Verify public endpoint now returns the activated updated policy
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/privacy-policy", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/privacy-policy", nil)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
