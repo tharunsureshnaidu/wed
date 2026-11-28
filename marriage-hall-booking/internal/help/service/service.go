@@ -166,24 +166,15 @@ func toDTO(item *domain.HelpCenterMessage) *dto.HelpMessageResponse {
 		return nil
 	}
 
-	createdAt := item.CreatedAt
-	updatedAt := item.UpdatedAt
-
 	return &dto.HelpMessageResponse{
-		ID:             item.ID,
-		UserID:         item.UserID,
-		UserIDSnake:    item.UserID,
-		UserName:       item.UserName,
-		UserNameSnake:  item.UserName,
-		UserEmail:      item.UserEmail,
-		UserEmailSnake: item.UserEmail,
-		UserPhone:      item.UserPhone,
-		UserPhoneSnake: item.UserPhone,
-		Message:        item.Message,
-		Status:         string(item.Status),
-		CreatedAt:      createdAt,
-		CreatedAtSnake: &createdAt,
-		UpdatedAt:      updatedAt,
-		UpdatedAtSnake: &updatedAt,
+		ID:        item.ID,
+		UserID:    item.UserID,
+		UserName:  item.UserName,
+		UserEmail: item.UserEmail,
+		UserPhone: item.UserPhone,
+		Message:   item.Message,
+		Status:    string(item.Status),
+		CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt,
 	}
 }

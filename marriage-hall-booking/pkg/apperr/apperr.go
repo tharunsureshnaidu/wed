@@ -22,4 +22,5 @@ func Unauthorized(code, msg string) *Error { return New(http.StatusUnauthorized,
 func Forbidden(code, msg string) *Error    { return New(http.StatusForbidden, code, msg) }
 func Conflict(code, msg string) *Error     { return New(http.StatusConflict, code, msg) }
 func TooMany(code, msg string) *Error      { return New(http.StatusTooManyRequests, code, msg) }
+func BadGateway(code, msg string) *Error   { return New(http.StatusBadGateway, code, msg) }
 func Internal(code, msg string) *Error     { return New(http.StatusInternalServerError, code, msg) }

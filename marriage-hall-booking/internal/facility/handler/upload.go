@@ -94,6 +94,15 @@ func decodeMultipart(r *http.Request, dst *facilityReq) ([]*multipart.FileHeader
 	}
 
 	files := r.MultipartForm.File["images"]
+	if len(files) == 0 {
+		files = r.MultipartForm.File["image"]
+	}
+	if len(files) == 0 {
+		files = r.MultipartForm.File["photos"]
+	}
+	if len(files) == 0 {
+		files = r.MultipartForm.File["coverImage"]
+	}
 	if len(files) > maxImages {
 		return nil, fmt.Errorf("at most %d images per request", maxImages)
 	}
@@ -234,12 +243,6 @@ func baseURLOf(r *http.Request) string {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host
-}
-
-// ServeUploads registers the static handler for saved files.
-func ServeUploads(mux *http.ServeMux) {
-	fs := http.FileServer(http.Dir(uploadDir))
-	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", fs))
 }
 
 // decodeFormNumbers fills the numeric and boolean fields from a plain HTML

@@ -457,5 +457,50 @@ func TestCompareVenuesAPI(t *testing.T) {
 			t.Fatalf("expected 200 OK, got %d: %s", rr.Code, rr.Body.String())
 		}
 	})
+
+	t.Run("POST /api/v1/facilities/compare - All Venue API keys are present", func(t *testing.T) {
+		body := map[string]any{
+			"type":      "hall",
+			"venue_ids": []string{m1, m2},
+		}
+		data, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/v1/facilities/compare", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rr.Code, rr.Body.String())
+		}
+
+		var raw struct {
+			Data struct {
+				Venues []map[string]any `json:"venues"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(raw.Data.Venues) != 2 {
+			t.Fatalf("expected 2 venues, got %d", len(raw.Data.Venues))
+		}
+
+		requiredKeys := []string{
+			"id", "type", "name", "description", "city", "fullAddress", "state", "zipcode", "country",
+			"lat", "lng", "status", "isVerified", "isFeatured", "avgRating", "reviewCount",
+			"startingPrice", "discountPercent", "discountLabel", "discountedPrice", "hasDiscount",
+			"adminDiscountCouponCode", "adminDiscountPrice", "adminDiscountPercentage",
+			"starRating", "checkInTime", "checkOutTime", "capacityPax", "areaSqft", "basePricePerDay",
+			"seatingCapacity", "floatingCapacity", "minBookingSize", "eventCodes",
+			"amenities", "images", "coverImage", "events", "policies", "faqs", "reviews",
+		}
+
+		v0 := raw.Data.Venues[0]
+		for _, key := range requiredKeys {
+			if _, exists := v0[key]; !exists {
+				t.Errorf("missing key %q in compare venue object", key)
+			}
+		}
+	})
 }
 

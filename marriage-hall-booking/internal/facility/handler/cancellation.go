@@ -121,6 +121,10 @@ func (h *Handler) listCancellation(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, x)
 	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
 	response.OK(w, "Cancellation policies retrieved successfully", out)
 }
 

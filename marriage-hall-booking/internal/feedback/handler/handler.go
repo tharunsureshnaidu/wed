@@ -70,22 +70,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	}
 
 	// User Feedback Submission (Authenticated)
-	mux.Handle("POST /api/feedback", auth(http.HandlerFunc(h.submit)))
 	mux.Handle("POST /api/v1/feedback", auth(http.HandlerFunc(h.submit)))
 	mux.Handle("GET /api/v1/feedback/my-feedback", auth(http.HandlerFunc(h.listMine)))
 
 	// Admin Feedback Management (ROLE_ADMIN only)
 	mux.Handle("GET /api/admin/feedback", admin(h.listAll))
-	mux.Handle("GET /api/v1/admin/feedback", admin(h.listAll))
-
-	mux.Handle("GET /api/admin/feedback/summary", admin(h.summary))
-	mux.Handle("GET /api/v1/admin/feedback/summary", admin(h.summary))
-
-	mux.Handle("GET /api/admin/feedback/{id}", admin(h.getByID))
-	mux.Handle("GET /api/v1/admin/feedback/{id}", admin(h.getByID))
-
-	mux.Handle("PUT /api/admin/feedback/{id}", admin(h.update))
-	mux.Handle("PUT /api/v1/admin/feedback/{id}", admin(h.update))
 }
 
 // submit processes user feedback submissions (supports both JSON and multipart form-data).

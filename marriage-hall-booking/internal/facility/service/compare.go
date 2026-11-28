@@ -9,6 +9,7 @@ import (
 
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/internal/facility/repository"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/apperr"
+	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/eventtypes"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/httpx"
 	"github.com/tharunsureshnaidu/wed/marriage-hall-booking/pkg/venuetype"
 )
@@ -36,10 +37,12 @@ type Repository interface {
 
 // CompareRequest carries the payload for comparing venues.
 type CompareRequest struct {
-	Type          string   `json:"type"`
-	VenueIDs      []string `json:"venue_ids"`
-	VenueIDsCamel []string `json:"venueIds,omitempty"`
-	IDs           []string `json:"ids,omitempty"`
+	Type           string   `json:"type"`
+	EventType      string   `json:"eventType,omitempty"`
+	EventTypeSnake string   `json:"event_type,omitempty"`
+	VenueIDs       []string `json:"venue_ids"`
+	VenueIDsCamel  []string `json:"venueIds,omitempty"`
+	IDs            []string `json:"ids,omitempty"`
 
 	UserLat *float64 `json:"lat,omitempty"`
 	UserLng *float64 `json:"lng,omitempty"`
@@ -48,6 +51,7 @@ type CompareRequest struct {
 // CompareResponse holds comparison results conforming to the API specification.
 type CompareResponse struct {
 	Type      string                          `json:"type"`
+	EventType string                          `json:"eventType,omitempty"`
 	Total     int                             `json:"total"`
 	Venues    []repository.VenueCompareDetail `json:"venues"`
 	Amenities []repository.CompareAmenityRow  `json:"amenities,omitempty"`
@@ -157,6 +161,18 @@ func (s *CompareService) Compare(ctx context.Context, req CompareRequest) (*Comp
 		}
 	}
 
+	// Populate discounts if repository supports it
+	type discountPopulator interface {
+		PopulateDiscounts(ctx context.Context, facilities []*repository.Facility) error
+	}
+	if dp, ok := s.repo.(discountPopulator); ok {
+		ptrs := make([]*repository.Facility, len(ordered))
+		for i := range ordered {
+			ptrs[i] = &ordered[i]
+		}
+		_ = dp.PopulateDiscounts(ctx, ptrs)
+	}
+
 	// 8. Fetch auxiliary details in batch (No N+1 queries)
 	imagesMap, err := s.repo.AllImagesOfMany(ctx, cleanIDs)
 	if err != nil {
@@ -198,8 +214,14 @@ func (s *CompareService) Compare(ctx context.Context, req CompareRequest) (*Comp
 	// 10. Compute amenity matrix across venues
 	matrix := computeAmenityMatrix(ordered)
 
+	cleanEvent := strings.ToUpper(strings.TrimSpace(req.EventType))
+	if cleanEvent == "" && req.EventTypeSnake != "" {
+		cleanEvent = strings.ToUpper(strings.TrimSpace(req.EventTypeSnake))
+	}
+
 	return &CompareResponse{
 		Type:      wireType,
+		EventType: cleanEvent,
 		Total:     len(venues),
 		Venues:    venues,
 		Amenities: matrix,
@@ -247,6 +269,9 @@ func buildVenueCompareDetail(
 		images = []repository.Image{}
 	}
 	if reviews == nil {
+		reviews = f.Reviews
+	}
+	if reviews == nil {
 		reviews = []repository.Review{}
 	}
 
@@ -255,46 +280,88 @@ func buildVenueCompareDetail(
 		amenities = []repository.Amenity{}
 	}
 
-	detail := repository.VenueCompareDetail{
-		ID:          f.ID,
-		Name:        f.Name,
-		Type:        venuetype.API(f.Type),
-		Description: f.Description,
-		City:        f.City,
-		Address:     f.FullAddress,
-		FullAddress: f.FullAddress,
-		State:       f.State,
-		Zipcode:     f.Zipcode,
-		Country:     f.Country,
-		Location:    loc,
-		CoverImage:  coverImage,
-		Images:      images,
-		AvgRating:   f.AvgRating,
-		ReviewCount: f.ReviewCount,
-		Reviews:     reviews,
-		Lat:         f.Lat,
-		Lng:         f.Lng,
-		Amenities:   amenities,
+	status := f.Status
+	if status == "" {
+		status = "APPROVED"
+	}
 
-		StartingPrice:   f.StartingPrice,
-		DiscountedPrice: f.DiscountedPrice,
-		DiscountPercent: f.DiscountPercent,
-		DiscountLabel:   f.DiscountLabel,
-		HasDiscount:     f.HasDiscount,
+	eventCodes := f.EventCodes
+	if eventCodes == nil {
+		eventCodes = []string{}
+	}
+
+	events := eventtypes.Views(f.EventCodes)
+	if events == nil {
+		events = []eventtypes.EventType{}
+	}
+
+	policies := f.Policies
+	if policies == nil {
+		policies = []repository.Policy{}
+	}
+
+	faqs := f.Faqs
+	if faqs == nil {
+		faqs = []repository.FAQ{}
+	}
+
+	detail := repository.VenueCompareDetail{
+		ID:                      f.ID,
+		Name:                    f.Name,
+		Type:                    venuetype.API(f.Type),
+		Description:             f.Description,
+		City:                    f.City,
+		Address:                 f.FullAddress,
+		FullAddress:             f.FullAddress,
+		State:                   f.State,
+		Zipcode:                 f.Zipcode,
+		Country:                 f.Country,
+		Location:                loc,
+		CoverImage:              coverImage,
+		Images:                  images,
+		AvgRating:               f.AvgRating,
+		ReviewCount:             f.ReviewCount,
+		Reviews:                 reviews,
+		Lat:                     f.Lat,
+		Lng:                     f.Lng,
+		Status:                  status,
+		IsVerified:              f.IsVerified,
+		IsFeatured:              f.IsFeatured,
+		StartingPrice:           f.StartingPrice,
+		DiscountedPrice:         f.DiscountedPrice,
+		DiscountPercent:         f.DiscountPercent,
+		DiscountLabel:           f.DiscountLabel,
+		HasDiscount:             f.HasDiscount,
+		AdminDiscountCouponCode: f.AdminDiscountCouponCode,
+		AdminDiscountPrice:      f.AdminDiscountPrice,
+		AdminDiscountPercentage: f.AdminDiscountPercentage,
+		StarRating:              f.StarRating,
+		CheckInTime:             f.CheckInTime,
+		CheckOutTime:            f.CheckOutTime,
+		CapacityPax:             f.CapacityPax,
+		AreaSqft:                f.AreaSqft,
+		BasePricePerDay:         f.BasePricePerDay,
+		SeatingCapacity:         f.SeatingCapacity,
+		FloatingCapacity:        f.FloatingCapacity,
+		MinBookingSize:          f.MinBookingSize,
+		EventCodes:              eventCodes,
+		Events:                  events,
+		Policies:                policies,
+		Faqs:                    faqs,
+		Amenities:               amenities,
 	}
 
 	// Distance from caller location if coordinates provided
 	if userLat != nil && userLng != nil && f.Lat != nil && f.Lng != nil {
 		d := haversineKm(*userLat, *userLng, *f.Lat, *f.Lng)
 		detail.DistanceKm = &d
+	} else if f.DistanceKm != nil {
+		detail.DistanceKm = f.DistanceKm
 	}
 
 	if f.Type == "HOTEL" {
 		detail.PriceUnit = UnitPerNight
 		detail.PriceUnitLabel = LabelPerNight
-		detail.StarRating = f.StarRating
-		detail.CheckInTime = f.CheckInTime
-		detail.CheckOutTime = f.CheckOutTime
 
 		if roomTypes == nil {
 			roomTypes = []repository.RoomType{}
@@ -331,12 +398,6 @@ func buildVenueCompareDetail(
 	} else {
 		detail.PriceUnit = UnitPerEventDay
 		detail.PriceUnitLabel = LabelPerEventDay
-		detail.CapacityPax = f.CapacityPax
-		detail.SeatingCapacity = f.SeatingCapacity
-		detail.FloatingCapacity = f.FloatingCapacity
-		detail.AreaSqft = f.AreaSqft
-		detail.BasePricePerDay = f.BasePricePerDay
-		detail.MinBookingSize = f.MinBookingSize
 
 		if packages == nil {
 			packages = []repository.HallPackage{}

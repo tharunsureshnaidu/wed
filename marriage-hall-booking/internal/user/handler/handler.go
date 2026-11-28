@@ -27,7 +27,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	auth := middleware.RequireAuth(h.signer)
 	get := func(p string, fn http.HandlerFunc) { mux.Handle(p, auth(fn)) }
 
-	get("GET /api/v1/users/me", h.get)
 	get("GET /api/v1/users/me/dashboard", h.dashboard)
 	get("PUT /api/v1/users/me", h.update)
 	get("DELETE /api/v1/users/me", h.delete)
@@ -35,16 +34,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	get("POST /api/v1/users/me/favourites", h.toggleFavourite)
 	get("POST /api/v1/users/me/favourites/{facilityId}", h.addFavourite)
 	get("DELETE /api/v1/users/me/favourites/{facilityId}", h.removeFavourite)
-
-	// The Postman collection still has the pre-merge hotel/hall split. The Java
-	// controller unified them onto favourites/{facilityId}; these aliases keep
-	// the older collection working against the same storage.
-	get("POST /api/v1/users/me/favourites/hotels/{facilityId}", h.addFavourite)
-	get("DELETE /api/v1/users/me/favourites/hotels/{facilityId}", h.removeFavourite)
-	get("GET /api/v1/users/me/favourites/hotels", h.listHotelFavourites)
-	get("POST /api/v1/users/me/favourites/halls/{facilityId}", h.addFavourite)
-	get("DELETE /api/v1/users/me/favourites/halls/{facilityId}", h.removeFavourite)
-	get("GET /api/v1/users/me/favourites/halls", h.listHallFavourites)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +98,8 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
+	// The refresh tokens died in SoftDelete; the access token in hand must too.
+	middleware.RevokeAccessTokens(r.Context(), userID)
 	response.OK(w, "Account deleted successfully", nil)
 }
 
