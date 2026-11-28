@@ -38,10 +38,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 			middleware.RequireRole(domain.RoleAdmin))
 	}
 
-	// Public and unauthenticated: a customer who cannot sign in is exactly the
-	// person who needs the helpline.
-	mux.HandleFunc("GET /api/v1/support", h.get)
-
 	// Admin edits. GET here too, because the edit form needs the audit fields
 	// the public read deliberately omits.
 	mux.Handle("GET /api/v1/admin/support", admin(h.getAdmin))

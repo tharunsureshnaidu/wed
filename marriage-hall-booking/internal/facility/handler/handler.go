@@ -83,7 +83,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// (a visitor picks an occasion before signing up); setting the list is the
 	// owner's, via requireOwner inside the handler.
 	mux.HandleFunc("GET /api/v1/events", h.listEventTypes)
-	mux.HandleFunc("GET /api/v1/facilities/{id}/events", h.getFacilityEvents)
 	mux.Handle("PUT /api/v1/facilities/{id}/events", owner(h.setFacilityEvents))
 
 	// Per-venue FAQs. The read is public and also embedded in the detail
@@ -103,11 +102,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/halls", owner(h.createHall))
 	mux.Handle("POST /api/v1/hotels", owner(h.createHotel))
 	mux.Handle("PUT /api/v1/hotels/{id}", owner(h.update))
-	mux.Handle("PUT /api/v1/halls/{id}", owner(h.update))
-	mux.Handle("DELETE /api/v1/hotels/{id}", owner(h.delete))
 	mux.Handle("DELETE /api/v1/halls/{id}", owner(h.delete))
-	mux.Handle("GET /api/v1/hotels/my-hotels", owner(h.myHotels))
-	mux.Handle("GET /api/v1/halls/my-halls", owner(h.myHalls))
 	mux.Handle("POST /api/v1/facilities/{id}/amenities/{amenityId}", owner(h.addAmenity))
 	mux.Handle("DELETE /api/v1/facilities/{id}/amenities/{amenityId}", owner(h.removeAmenity))
 }

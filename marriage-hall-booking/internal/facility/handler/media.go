@@ -33,9 +33,6 @@ func (h *Handler) RegisterMedia(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/v1/facilities/{id}/images/{childId}", owner(h.deleteImage))
 	mux.Handle("PUT /api/v1/facilities/{id}/images/{childId}/cover", owner(h.setCover))
 	mux.Handle("PUT /api/v1/facilities/{id}/images/reorder", owner(h.reorderImages))
-	mux.Handle("POST /api/v1/facilities/{id}/videos", owner(h.addVideo))
-	mux.Handle("DELETE /api/v1/facilities/{id}/videos/{childId}", owner(h.deleteVideo))
-	mux.Handle("PUT /api/v1/facilities/{id}/videos/reorder", owner(h.reorderVideos))
 	mux.Handle("POST /api/v1/facilities/{id}/block", owner(h.block))
 	mux.Handle("POST /api/v1/facilities/{id}/unblock", owner(h.unblock))
 }

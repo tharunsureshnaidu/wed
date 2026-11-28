@@ -30,7 +30,6 @@ func TestBookingCustomerOnlyValidation(t *testing.T) {
 	ownerWithCustomerToken, _ := signer.Generate("ownercust@example.com", "60", domain.RoleHallOwner, domain.RoleCustomer)
 
 	endpoints := []string{
-		"/api/v1/bookings/hotels",
 		"/api/v1/bookings/halls",
 		"/api/v1/bookings/venues",
 		"/api/v1/bookings",

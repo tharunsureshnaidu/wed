@@ -2176,12 +2176,6 @@ if (d) {
           "Upload image (multipart file)",
           "Uploads image file directly to server storage / S3.",
         ],
-        [
-          "video",
-          "video",
-          "Upload video (multipart file)",
-          "Uploads video file directly to server storage / S3.",
-        ],
       ]) {
         const p = `/api/v1/facilities/{id}/${suffix}s`;
         const v = {

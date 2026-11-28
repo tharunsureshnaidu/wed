@@ -34,15 +34,12 @@ func (h *Handler) RegisterInventory(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/hotels/{id}/hourly-packages", owner(h.createHourlyPackage))
 	mux.Handle("DELETE /api/v1/hotels/{id}/hourly-packages/{childId}", owner(h.deleteHourlyPackage))
 
-	mux.HandleFunc("GET /api/v1/halls/{id}/packages", h.listPackages)
 	mux.Handle("POST /api/v1/halls/{id}/packages", owner(h.createPackage))
 	mux.Handle("DELETE /api/v1/halls/{id}/packages/{childId}", owner(h.deletePackage))
 
-	mux.HandleFunc("GET /api/v1/halls/{id}/addons", h.listAddons)
 	mux.Handle("POST /api/v1/halls/{id}/addons", owner(h.createAddon))
 	mux.Handle("DELETE /api/v1/halls/{id}/addons/{childId}", owner(h.deleteAddon))
 
-	mux.HandleFunc("GET /api/v1/halls/{id}/advance-rules", h.getAdvanceRule)
 	mux.Handle("POST /api/v1/halls/{id}/advance-rules", owner(h.setAdvanceRule))
 
 	mux.HandleFunc("GET /api/v1/facilities/{id}/policies", h.listPolicies)
@@ -50,7 +47,6 @@ func (h *Handler) RegisterInventory(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/facilities/{id}/policies/{childId}", owner(h.updatePolicy))
 	mux.Handle("DELETE /api/v1/facilities/{id}/policies/{childId}", owner(h.deletePolicy))
 
-	mux.HandleFunc("GET /api/v1/facilities/{id}/pricing", h.listPricing)
 	mux.Handle("POST /api/v1/facilities/{id}/pricing", owner(h.createPricing))
 	mux.Handle("PUT /api/v1/facilities/{id}/pricing/{childId}", owner(h.updatePricing))
 	mux.Handle("DELETE /api/v1/facilities/{id}/pricing/{childId}", owner(h.deletePricing))
